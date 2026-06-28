@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   }
   const core = buildCore();
   console.log(`Seeding template brain into user ${userId} (backend: ${core.backend})...`);
-  const imported = await seedTemplateBrain(core.brain, userId);
+  const imported = await seedTemplateBrain(core.brain, userId, { fromDisk: true });
   for (const rel of imported) console.log(`  ✓ ${rel}`);
   console.log(`Done — ${imported.length} notes.`);
 }

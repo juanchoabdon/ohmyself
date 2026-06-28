@@ -165,9 +165,38 @@ key only; the service role key is server-side.
 
 ## Deploy
 
-The server is a single Node HTTP process (REST + MCP). Deploy `server/` to any Node host
-(Fly.io / Railway / Render) with the env vars above; deploy `web/` to Vercel. Both talk
-to the same Supabase project, so the brain is reachable from web, iOS, and your agents.
+Live deployment (Vercel):
+
+- **Web app:** https://ohmyself.vercel.app
+- **API + MCP:** https://ohmyself-api.vercel.app (`/health`, REST `/v1/*`, MCP `POST /mcp`)
+
+Both are deployed as two Vercel projects that share the same Supabase project, so the brain
+is reachable from web, iOS, and your agents.
+
+### Vercel layout
+
+- **`server/`** → a Vercel project serving REST + MCP. The build runs `tsc` to `dist/`, and
+  `api/index.js` (a serverless function) reuses the same request dispatcher as the local
+  Node server (`src/http.ts`). All routes are rewritten to that function via `vercel.json`.
+  The default brain is embedded (`src/templates.generated.ts`) so onboarding works without
+  filesystem access. Set these env vars on the project: `SUPABASE_URL`,
+  `SUPABASE_SERVICE_ROLE`, `SUPABASE_ANON_KEY`, `BRAIN_BUCKET`, `VAULT_BACKEND=supabase`
+  (and optionally `PUBLIC_AGENT_TOKEN` / `PUBLIC_AGENT_USER_ID` for the public agent).
+- **`web/`** → a Next.js Vercel project. Set `NEXT_PUBLIC_SUPABASE_URL`,
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_API_URL` (the API project's URL).
+
+Deploy from each package directory:
+
+```bash
+cd server && vercel deploy --prod
+cd ../web && vercel deploy --prod
+```
+
+> If a Vercel build hits pnpm's `ERR_INVALID_THIS` on the build image, the configs here
+> force `npm install` for the standalone packages, which sidesteps it.
+
+The server is also a single Node HTTP process (REST + MCP), so `server/` can alternatively
+run on any Node host (Fly.io / Railway / Render) with the env vars above.
 
 ## License
 
