@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Secrets — NEVER commit. Open source repo.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+.supabase/.temp/
+
+# Local vault (personal brain content lives outside the repo)
+vault/
+.vault/
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Supabase CLI local artifacts
+supabase/.branches/
+supabase/.temp/

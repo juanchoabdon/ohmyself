@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "visibilityLevels": ["public", "private", "secret"],
+  "defaultVisibility": "private",
+  "noteTypes": [
+    { "id": "identity",   "label": "Identity",   "folder": "identity",   "defaultVisibility": "private" },
+    { "id": "goal",       "label": "Goal",       "folder": "goals",      "defaultVisibility": "private" },
+    { "id": "project",    "label": "Project",    "folder": "projects",   "defaultVisibility": "private" },
+    { "id": "prd",        "label": "PRD",        "folder": "projects",   "defaultVisibility": "private" },
+    { "id": "spec",       "label": "Spec",       "folder": "projects",   "defaultVisibility": "private" },
+    { "id": "transcript", "label": "Transcript", "folder": "projects",   "defaultVisibility": "private" },
+    { "id": "person",     "label": "Person",     "folder": "people",     "defaultVisibility": "private" },
+    { "id": "journal",    "label": "Journal",    "folder": "journal",    "defaultVisibility": "private" },
+    { "id": "finance",    "label": "Finance",    "folder": "finance",    "defaultVisibility": "secret" },
+    { "id": "note",       "label": "Note",       "folder": "notes",      "defaultVisibility": "private" },
+    { "id": "todo",       "label": "Todo",       "folder": "todos",      "defaultVisibility": "private" }
+  ]
+}

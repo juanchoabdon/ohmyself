@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Light mode only — see DESIGN.md. OKLCH throughout. */
+:root {
+  --bg: oklch(0.99 0.002 270);
+  --surface: oklch(1 0 0);
+  --border: oklch(0.92 0.004 270);
+  --ink: oklch(0.24 0.02 270);
+  --muted: oklch(0.5 0.02 270);
+  --brand: oklch(0.52 0.17 275);
+  --brand-weak: oklch(0.96 0.03 275);
+
+  --vis-public: oklch(0.5 0.13 150);
+  --vis-private: oklch(0.5 0.02 270);
+  --vis-secret: oklch(0.55 0.18 25);
+
+  color-scheme: light;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-feature-settings: "cv05", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: var(--brand-weak);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}
+
+/* Rendered markdown */
+.prose {
+  max-width: 70ch;
+  line-height: 1.62;
+  color: var(--ink);
+}
+.prose h1 {
+  font-size: 1.6rem;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0 0 0.6em;
+}
+.prose h2 {
+  font-size: 1.2rem;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  margin: 1.4em 0 0.5em;
+}
+.prose h3 {
+  font-size: 1.02rem;
+  font-weight: 620;
+  margin: 1.2em 0 0.4em;
+}
+.prose p,
+.prose li {
+  text-wrap: pretty;
+}
+.prose p {
+  margin: 0.7em 0;
+}
+.prose ul,
+.prose ol {
+  margin: 0.6em 0;
+  padding-left: 1.3em;
+}
+.prose ul {
+  list-style: disc;
+}
+.prose ol {
+  list-style: decimal;
+}
+.prose li {
+  margin: 0.25em 0;
+}
+.prose a {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  background: var(--brand-weak);
+  padding: 0.1em 0.35em;
+  border-radius: 0.3em;
+}
+.prose pre {
+  background: oklch(0.97 0.004 270);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  margin: 0.9em 0;
+}
+.prose pre code {
+  background: none;
+  padding: 0;
+}
+.prose blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.9rem;
+  color: var(--muted);
+  margin: 0.9em 0;
+}
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.6em 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
