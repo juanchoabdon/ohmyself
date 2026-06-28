@@ -34,7 +34,7 @@ export default function LoginPage() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
-      router.push("/");
+      router.push("/app");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -46,8 +46,10 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center px-5">
       <div className="w-full max-w-sm">
         <div className="mb-8">
-          <h1 className="text-[1.75rem] font-bold tracking-tight text-balance">ohmyself!</h1>
-          <p className="mt-1 text-[0.95rem] text-muted">
+          <a href="/" className="font-display text-[1.9rem] font-semibold leading-none tracking-tight">
+            <span className="brand-gradient">ohmyself!</span>
+          </a>
+          <p className="mt-2 text-[0.95rem] text-muted">
             Your second brain — view it, search it, ask it.
           </p>
         </div>
