@@ -1,10 +1,16 @@
 import type { Metadata } from "next";
-import { Inter, Fredoka } from "next/font/google";
+import { Plus_Jakarta_Sans, Space_Grotesk, Fredoka } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
   variable: "--font-sans",
+  display: "swap",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-heading",
   display: "swap",
 });
 
@@ -23,7 +29,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${fredoka.variable}`}>
+    <html lang="en" className={`${jakarta.variable} ${spaceGrotesk.variable} ${fredoka.variable}`}>
       <body className="min-h-screen font-sans antialiased">{children}</body>
     </html>
   );

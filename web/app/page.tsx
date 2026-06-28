@@ -113,7 +113,7 @@ function Hero() {
           Markdown second brain · open source
         </span>
 
-        <h1 className="reveal mt-6 text-balance text-5xl font-bold leading-[1.05] tracking-tight md:text-7xl">
+        <h1 className="reveal mt-6 font-heading text-balance text-5xl font-bold leading-[1.05] tracking-tight md:text-7xl">
           Everything about you,
           <br />
           in one <Logo className="text-5xl md:text-7xl" />
@@ -163,7 +163,7 @@ function HowItWorks() {
   return (
     <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal mx-auto max-w-2xl text-center">
-        <h2 className="text-balance text-3xl font-bold tracking-tight md:text-4xl">
+        <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
           From scattered life to one mind
         </h2>
         <p className="mt-3 text-pretty text-muted">
@@ -336,7 +336,7 @@ function Features() {
   return (
     <section id="features" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal mx-auto max-w-2xl text-center">
-        <h2 className="text-balance text-3xl font-bold tracking-tight md:text-4xl">
+        <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
           A brain that actually grows with you
         </h2>
         <p className="mt-3 text-pretty text-muted">
@@ -350,7 +350,7 @@ function Features() {
             className="reveal rounded-2xl border border-border bg-surface/90 p-6 shadow-sm transition-transform duration-200 ease-out-quart hover:-translate-y-1"
             style={{ transitionDelay: `${(i % 3) * 60}ms` }}
           >
-            <h3 className="text-lg font-semibold tracking-tight">{f.title}</h3>
+            <h3 className="font-heading text-lg font-semibold tracking-tight">{f.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-muted">{f.body}</p>
           </div>
         ))}
@@ -383,7 +383,7 @@ function Privacy() {
     <section id="privacy" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal rounded-3xl border border-border bg-surface/80 p-8 shadow-sm md:p-12">
         <div className="mx-auto max-w-2xl text-center">
-          <h2 className="text-balance text-3xl font-bold tracking-tight md:text-4xl">
+          <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
             You decide what it can say
           </h2>
           <p className="mt-3 text-pretty text-muted">
@@ -394,7 +394,7 @@ function Privacy() {
           {levels.map((l) => (
             <div key={l.v} className="rounded-2xl border border-border bg-bg p-5">
               <VisDot v={l.v} />
-              <h3 className="mt-3 text-lg font-semibold tracking-tight">{l.title}</h3>
+              <h3 className="mt-3 font-heading text-lg font-semibold tracking-tight">{l.title}</h3>
               <p className="mt-1.5 text-sm leading-relaxed text-muted">{l.body}</p>
             </div>
           ))}
@@ -413,7 +413,7 @@ function FinalCta() {
           className="animate-blob absolute -right-16 -top-16 h-64 w-64 rounded-full"
           style={{ background: "var(--brand)", opacity: 0.16 }}
         />
-        <h2 className="relative text-balance text-3xl font-bold tracking-tight md:text-5xl">
+        <h2 className="relative font-heading text-balance text-3xl font-bold tracking-tight md:text-5xl">
           Start your <Logo className="text-3xl md:text-5xl" />
         </h2>
         <p className="relative mx-auto mt-4 max-w-md text-pretty text-muted">

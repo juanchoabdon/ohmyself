@@ -23,6 +23,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        heading: ["var(--font-heading)", "var(--font-sans)", "ui-sans-serif", "sans-serif"],
         display: ["var(--font-display)", "var(--font-sans)", "ui-sans-serif", "sans-serif"],
       },
       borderRadius: {
