@@ -7,9 +7,11 @@ import {
   getDisplayName,
   getUserConfig,
   serializeNote,
+  setUserConfig,
   slugify,
   todayISO,
   type AuthContext,
+  type NoteType,
   type UserConfig,
 } from "../core/index.js";
 import { ForbiddenError } from "../core/errors.js";
@@ -206,7 +208,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Get structure & conventions",
       description:
-        "Return the taxonomy (categories + folders) and the conventions for where things live. Call this first when you're unsure where to write something.",
+        "Return the taxonomy (categories + folders) and the conventions for where things live. Call this first when you're unsure where to write something — or before changing the taxonomy itself. To customize the top level (add a new category like 'Social media', rename or refile one) use upsert_category; to drop one use remove_category.",
       annotations: { readOnlyHint: true },
       inputSchema: {},
     },
@@ -226,6 +228,77 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           memory: "memory/log.md — quick durable facts learned in conversation (use remember)",
         },
       });
+    },
+  );
+
+  // ── Customize the taxonomy (level-1 categories) ───────────────────────────
+
+  server.registerTool(
+    "upsert_category",
+    {
+      title: "Create or update a top-level category",
+      description:
+        "Create or update a level-1 category (note type) in the taxonomy — e.g. add a new 'Social media' category, or rename/refile an existing one. This is how the person customizes the TOP level of their brain. Call get_structure first to see current categories and ids. Existing notes are not moved; this only changes the category definition.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        name: z.string().describe("display label, e.g. 'Social media'"),
+        id: z
+          .string()
+          .optional()
+          .describe("stable id/slug; defaults to a slug of the name. Pass an existing id to UPDATE that category."),
+        folder: z
+          .string()
+          .optional()
+          .describe("folder its notes live in; defaults to a slug of the id/name"),
+        defaultVisibility: VisibilityEnum.optional().describe(
+          "default visibility for notes in this category; defaults to 'private'",
+        ),
+      },
+    },
+    async ({ name, id, folder, defaultVisibility }) => {
+      requireWrite();
+      const current = await config();
+      const catId = slugify(id ?? name);
+      if (!catId) throw new ForbiddenError("a category needs a non-empty name or id");
+      const noteTypes = [...current.noteTypes];
+      const idx = noteTypes.findIndex((t) => t.id === catId);
+      const existing = idx >= 0 ? noteTypes[idx] : undefined;
+      const next: NoteType = {
+        id: catId,
+        label: name.trim() || catId,
+        folder: slugify(folder ?? catId),
+        defaultVisibility: defaultVisibility ?? existing?.defaultVisibility ?? "private",
+      };
+      const created = !existing;
+      if (created) noteTypes.push(next);
+      else noteTypes[idx] = next;
+      _config = await setUserConfig(auth.userId, { ...current, noteTypes });
+      return text({ ok: true, created, category: next, categories: _config.noteTypes });
+    },
+  );
+
+  server.registerTool(
+    "remove_category",
+    {
+      title: "Remove a top-level category",
+      description:
+        "Remove a level-1 category (note type) from the taxonomy by id. Existing notes/files are left untouched — only the category definition goes away. The taxonomy must keep at least one category. Call get_structure first to find the id.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+      inputSchema: { id: z.string().describe("the category id to remove (see get_structure)") },
+    },
+    async ({ id }) => {
+      requireWrite();
+      const current = await config();
+      const catId = slugify(id);
+      const noteTypes = current.noteTypes.filter((t) => t.id !== catId);
+      if (noteTypes.length === current.noteTypes.length) {
+        return text({ ok: false, error: `no category with id '${catId}'`, categories: current.noteTypes });
+      }
+      if (noteTypes.length === 0) {
+        throw new ForbiddenError("cannot remove the last category; the taxonomy needs at least one");
+      }
+      _config = await setUserConfig(auth.userId, { ...current, noteTypes });
+      return text({ ok: true, removed: catId, categories: _config.noteTypes });
     },
   );
 
