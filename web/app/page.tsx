@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { siClaude, siGooglecalendar, siNotion, siGmail, siWhatsapp } from "simple-icons";
 import { supabase } from "@/lib/supabaseClient";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { BrainMap } from "@/components/BrainMap";
+import type { IndexedNote } from "@/lib/types";
 
 const GITHUB = "https://github.com/juanchoabdon/ohmyself";
 
@@ -58,6 +60,7 @@ export default function Landing() {
       <Nav />
       <Hero />
       <HowItWorks />
+      <BrainPreview />
       <Features />
       <Privacy />
       <FinalCta />
@@ -118,6 +121,9 @@ function Nav() {
         <nav className="hidden items-center gap-7 text-sm text-muted md:flex">
           <a href="#how" className="transition-colors hover:text-ink">
             How it works
+          </a>
+          <a href="#brain" className="transition-colors hover:text-ink">
+            Brain map
           </a>
           <a href="#features" className="transition-colors hover:text-ink">
             Features
@@ -553,6 +559,75 @@ function Connector({ reverse = false }: { reverse?: boolean }) {
         <span className="text-lg text-brand">↓</span>
       </div>
     </>
+  );
+}
+
+/* ---------------- Brain map preview ---------------- */
+
+/** A believable example "second self" — enough notes, links, folders and shared
+ *  tags that the force graph wires itself into a real little constellation.
+ *  Purely illustrative; nothing here is fetched. */
+const DEMO_NOTES: IndexedNote[] = [
+  { path: "identity/about-me.md", title: "About me", type: "identity", visibility: "public", tags: ["bio", "identity"], links: ["identity/ambitions.md", "projects/ohmyself/_index.md", "goals/2026/_index.md", "skills/product.md"], updated: "2026-06-12" },
+  { path: "identity/ambitions.md", title: "Ambitions", type: "identity", visibility: "private", tags: ["ambition", "north-star"], links: ["goals/2026/_index.md"], updated: "2026-05-30" },
+  { path: "projects/ohmyself/_index.md", title: "ohmyself!", type: "project", visibility: "public", tags: ["second-brain", "mcp", "ship"], links: ["projects/ohmyself/prd-v1.md", "goals/2026/q3.md", "memory/first-launch.md"], updated: "2026-06-28" },
+  { path: "projects/ohmyself/prd-v1.md", title: "v1 PRD", type: "prd", visibility: "public", tags: ["prd", "mcp"], links: ["projects/ohmyself/_index.md"], updated: "2026-06-20" },
+  { path: "projects/flowya/_index.md", title: "Flowya", type: "project", visibility: "public", tags: ["productivity", "ship"], links: ["projects/flowya/ios.md", "people/cofounder.md"], updated: "2026-04-02" },
+  { path: "projects/flowya/ios.md", title: "Flowya iOS", type: "project", visibility: "private", tags: ["ios", "swift", "productivity"], links: ["projects/flowya/_index.md"], updated: "2026-03-12" },
+  { path: "projects/flowya/standup.md", title: "Standup notes", type: "transcript", visibility: "secret", tags: ["work"], links: ["projects/flowya/_index.md"], updated: "2026-03-10" },
+  { path: "goals/2026/_index.md", title: "2026 Goals", type: "goal", visibility: "private", tags: ["goals", "2026"], links: ["goals/2026/q3.md", "identity/ambitions.md"], updated: "2026-01-04" },
+  { path: "goals/2026/q3.md", title: "2026 Q3", type: "goal", visibility: "private", tags: ["goals", "2026", "ship"], links: ["todos/life.md"], updated: "2026-06-25" },
+  { path: "journal/2026-06-28.md", title: "Jun 28", type: "journal", visibility: "private", tags: ["journal"], links: ["projects/ohmyself/_index.md"], updated: "2026-06-28" },
+  { path: "journal/2026-06-14.md", title: "Jun 14", type: "journal", visibility: "private", tags: ["journal"], links: ["people/mentor.md"], updated: "2026-06-14" },
+  { path: "people/mentor.md", title: "A. Mentor", type: "person", visibility: "private", tags: ["mentor", "relationship"], links: ["identity/ambitions.md"], updated: "2026-06-08" },
+  { path: "people/cofounder.md", title: "Co-founder", type: "person", visibility: "private", tags: ["relationship", "work"], links: [], updated: "2026-05-19" },
+  { path: "skills/product.md", title: "Product sense", type: "skill", visibility: "public", tags: ["product"], links: [], updated: "2026-02-11" },
+  { path: "skills/typescript.md", title: "TypeScript", type: "skill", visibility: "public", tags: ["engineering"], links: [], updated: "2026-02-11" },
+  { path: "memory/first-launch.md", title: "First launch", type: "memory", visibility: "private", tags: ["milestone"], links: [], updated: "2025-11-30" },
+  { path: "todos/life.md", title: "Life to-dos", type: "todo", visibility: "private", tags: ["todo", "life"], links: [], updated: "2026-06-26" },
+  { path: "finances/overview.md", title: "Finances", type: "note", visibility: "secret", tags: ["finance", "confidential"], links: ["goals/2026/_index.md"], updated: "2026-06-01" },
+];
+
+function BrainPreview() {
+  return (
+    <section id="brain" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
+      <div className="reveal mx-auto max-w-2xl text-center">
+        <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1 text-xs font-medium text-muted shadow-sm">
+          <span className="h-1.5 w-1.5 rounded-full bg-brand" />
+          Live preview · drag it around
+        </span>
+        <h2 className="mt-5 font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
+          Your whole self, as one living map
+        </h2>
+        <p className="mt-3 text-pretty text-muted">
+          Every note becomes a node. They wire themselves together by their links,
+          their folders, and the tags they share — so your projects, people, goals
+          and journal turn into a single mind you can actually see.
+        </p>
+      </div>
+
+      <div className="reveal mt-12">
+        <div className="relative h-[460px] overflow-hidden rounded-3xl border border-border shadow-lg shadow-brand/10 md:h-[560px]">
+          <BrainMap notes={DEMO_NOTES} onOpenNote={() => {}} />
+        </div>
+        <p className="mx-auto mt-5 max-w-lg text-center text-sm text-muted">
+          This is a sample second self. Sign up and yours fills in as you capture —
+          color = type, the ring = privacy (
+          <span className="font-medium text-ink">public</span> /{" "}
+          <span className="font-medium text-ink">private</span> /{" "}
+          <span className="font-medium text-ink">secret</span>).
+        </p>
+        <div className="mt-7 flex justify-center">
+          <Link
+            href="/login?mode=signup"
+            className="group inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 font-semibold text-white shadow-lg shadow-brand/25 transition-transform duration-200 ease-out-quart hover:-translate-y-0.5 hover:opacity-95"
+          >
+            Map your own mind
+            <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }
 
