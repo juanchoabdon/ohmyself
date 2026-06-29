@@ -116,9 +116,9 @@ function Nav() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-border/70 bg-bg/70 backdrop-blur-md">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
-        <Logo className="text-xl" />
-        <nav className="hidden items-center gap-7 text-sm text-muted md:flex">
+      <div className="mx-auto grid max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-4 px-5 py-3.5">
+        <Logo className="justify-self-start text-xl" />
+        <nav className="hidden items-center justify-center gap-7 text-sm text-muted md:flex">
           <a href="#how" className="transition-colors hover:text-ink">
             How it works
           </a>
@@ -135,7 +135,7 @@ function Nav() {
             GitHub
           </a>
         </nav>
-        <div className="flex min-h-[2.25rem] items-center gap-1.5 sm:gap-2">
+        <div className="flex min-h-[2.25rem] items-center justify-self-end gap-1.5 sm:gap-2">
           <ThemeToggle />
           {authed ? (
             <Link
