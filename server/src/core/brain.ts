@@ -45,6 +45,17 @@ export interface UpdateNoteInput {
   links?: string[];
 }
 
+export interface UpsertNoteInput {
+  type: string;
+  title?: string;
+  body?: string;
+  /** Append `body` to the existing note instead of replacing it. */
+  append?: boolean;
+  visibility?: Visibility;
+  tags?: string[];
+  links?: string[];
+}
+
 /** Ties a content Vault + a derived BrainIndex together and enforces
  *  per-note visibility for a given set of allowed levels. */
 export class Brain {
@@ -69,10 +80,21 @@ export class Brain {
     };
   }
 
-  async createNote(userId: string, input: CreateNoteInput, config: UserConfig): Promise<Note> {
+  async createNote(
+    userId: string,
+    input: CreateNoteInput,
+    config: UserConfig,
+    allowed?: Visibility[],
+  ): Promise<Note> {
     if (!input.title?.trim()) throw new BadRequestError("title is required");
     const type = input.type?.trim() || "note";
     const visibility = input.visibility ?? defaultVisibilityForType(config, type);
+    // Enforce scope even when visibility is implied by the note type (e.g. a
+    // `private`-scoped connection creating a `finance` note that defaults to
+    // `secret`). Without this, the type's default could exceed the caller's scope.
+    if (allowed && !allowed.includes(visibility)) {
+      throw new ForbiddenError(`your scope can't write ${visibility} notes`);
+    }
     const path =
       input.path?.trim().replace(/^\/+/, "") ??
       `${folderForType(config, type)}/${slugify(input.title)}.md`;
@@ -94,6 +116,60 @@ export class Brain {
     await this.vault.write(userId, path, serializeNote(meta, body));
     await this.index.upsert(userId, await this.indexRecord(path, meta, body));
     return { path, meta, body };
+  }
+
+  /**
+   * Create the note at `path`, or update it if it already exists. The backbone
+   * of the high-level "maintain my second self" tools (update identity, upsert
+   * project, save memory, …). Tags/links are merged (union) on update; `body`
+   * can replace or append. Visibility is enforced against `allowed`.
+   */
+  async upsertNote(
+    userId: string,
+    path: string,
+    input: UpsertNoteInput,
+    config: UserConfig,
+    allowed: Visibility[],
+  ): Promise<{ note: Note; created: boolean }> {
+    const clean = path.trim().replace(/^\/+/, "");
+    const existingRaw = await this.vault.read(userId, clean);
+
+    if (existingRaw != null) {
+      const { meta, body: curBody } = parseNote(existingRaw, clean);
+      if (!allowed.includes(meta.visibility)) throw new NotFoundError(`no note at ${clean}`);
+      const patch: UpdateNoteInput = {};
+      if (input.title !== undefined) patch.title = input.title;
+      if (input.visibility !== undefined) patch.visibility = input.visibility;
+      if (input.tags?.length) patch.tags = Array.from(new Set([...meta.tags, ...input.tags]));
+      if (input.links?.length) patch.links = Array.from(new Set([...meta.links, ...input.links]));
+      if (input.body !== undefined) {
+        patch.body = input.append
+          ? `${curBody.replace(/\s+$/, "")}\n\n${input.body.trim()}\n`
+          : input.body;
+      }
+      const note = await this.updateNote(userId, clean, patch, allowed);
+      return { note, created: false };
+    }
+
+    const visibility = input.visibility ?? defaultVisibilityForType(config, input.type);
+    if (!allowed.includes(visibility)) {
+      throw new ForbiddenError(`your scope can't write ${visibility} notes`);
+    }
+    const note = await this.createNote(
+      userId,
+      {
+        type: input.type,
+        title: input.title ?? clean.split("/").pop()!.replace(/\.md$/, ""),
+        body: input.body ?? "",
+        visibility,
+        tags: input.tags,
+        links: input.links,
+        path: clean,
+      },
+      config,
+      allowed,
+    );
+    return { note, created: true };
   }
 
   /** Write a note from raw markdown at an exact path, preserving its
@@ -153,6 +229,29 @@ export class Brain {
     await this.readNote(userId, path, allowed); // enforce visibility / existence
     await this.vault.remove(userId, path);
     await this.index.remove(userId, path);
+  }
+
+  /** Move/rename a note to a new path, preserving its frontmatter. Used by the
+   *  UI to rename notes and folders (one move per file under the folder). */
+  async moveNote(
+    userId: string,
+    from: string,
+    to: string,
+    allowed: Visibility[],
+  ): Promise<Note> {
+    const dest = to.trim().replace(/^\/+/, "");
+    if (!dest) throw new BadRequestError("destination path is required");
+    if (!dest.endsWith(".md")) throw new BadRequestError("destination must end in .md");
+    const current = await this.readNote(userId, from, allowed); // existence + visibility
+    if (dest === from) return current;
+    const collision = await this.vault.read(userId, dest);
+    if (collision != null) throw new BadRequestError(`a note already exists at ${dest}`);
+
+    await this.vault.write(userId, dest, serializeNote(current.meta, current.body));
+    await this.index.upsert(userId, await this.indexRecord(dest, current.meta, current.body));
+    await this.vault.remove(userId, from);
+    await this.index.remove(userId, from);
+    return { path: dest, meta: current.meta, body: current.body };
   }
 
   async listNotes(userId: string, opts: ListOptions): Promise<IndexedNote[]> {

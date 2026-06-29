@@ -109,6 +109,7 @@ export const googleCalendarConnector: Connector<CalendarPullOptions> = {
             path,
           },
           ctx.config,
+          ctx.allowed,
         );
         result.created.push(path);
       }

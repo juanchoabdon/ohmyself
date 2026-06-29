@@ -1,6 +1,10 @@
 # DESIGN — ohmyself!
 
-Built following the `impeccable` skill. Light mode only (no dark mode).
+Built following the `impeccable` skill. Light + dark themes, selected by the
+`data-theme` attribute on `<html>` (set pre-paint to avoid flash; toggled via
+`ThemeToggle`, persisted to `localStorage('oms-theme')`, defaults to system).
+Every color is a CSS variable so both themes adapt with no per-component dark:
+overrides.
 
 ## Theme & color (OKLCH)
 Calm, paper-adjacent but NOT the cream/sand AI default. A true near-white canvas
@@ -31,6 +35,12 @@ shown as a small pill, never a side-stripe border.
 Subtle, ease-out. Panel slides and list fades only; respect
 `prefers-reduced-motion`. No bounce, no decorative animation.
 
+## Dark theme (OKLCH)
+Warm-neutral dark, NOT pure black: bg `oklch(0.185 …)` canvas, `surface`
+elevated above it for sidebar/header/cards/inputs, `elevated` for modals. Same
+coral identity, slightly lightened (`--brand` ~L0.72) so it glows on dark.
+Privacy colors lightened for legibility. Verified body/muted contrast ≥ 4.5:1.
+
 ## Bans (from impeccable)
-No dark mode, no gradient text, no glassmorphism, no per-section eyebrows, no
+No gradient text in product UI, no glassmorphism, no per-section eyebrows, no
 identical card grids, no cream/sand body background.

@@ -37,6 +37,7 @@ export const DEFAULT_CONFIG: UserConfig = {
     { id: "finance", label: "Finance", folder: "finance", defaultVisibility: "secret" },
     { id: "note", label: "Note", folder: "notes", defaultVisibility: "private" },
     { id: "todo", label: "Todo", folder: "todos", defaultVisibility: "private" },
+    { id: "skill", label: "Skill", folder: "skills", defaultVisibility: "private" },
   ],
 };
 

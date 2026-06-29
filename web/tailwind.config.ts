@@ -2,11 +2,13 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
+  darkMode: ["selector", '[data-theme="dark"]'],
   theme: {
     extend: {
       colors: {
         bg: "var(--bg)",
         surface: "var(--surface)",
+        elevated: "var(--elevated)",
         border: "var(--border)",
         ink: "var(--ink)",
         muted: "var(--muted)",

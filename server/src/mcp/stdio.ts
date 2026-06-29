@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     scope,
     readonly: scope === "public",
   };
-  const server = buildMcpServer(auth);
+  const server = await buildMcpServer(auth);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // stdio transport keeps the process alive.

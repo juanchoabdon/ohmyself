@@ -1,0 +1,29 @@
+{
+  "name": "juandisanchez",
+  "version": "0.1.0",
+  "private": true,
+  "description": "juandisanchez.com — a Claude-style chat with Juan Diego Sánchez's public 'second self' (powered by ohmyself!)",
+  "scripts": {
+    "dev": "next dev --turbopack -p 3001",
+    "build": "next build --turbopack",
+    "start": "next start -p 3001",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.41",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4"
+  }
+}

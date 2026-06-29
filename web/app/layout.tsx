@@ -22,14 +22,25 @@ const fredoka = Fredoka({
 });
 
 export const metadata: Metadata = {
-  title: "ohmyself! — your second brain",
+  title: "ohmyself! — your second self",
   description:
-    "A markdown second brain you can view, search, and ask. Capture your life, keep it private, and let your agents reason over it.",
+    "A markdown second self you can view, search, and ask. Capture your life, keep it private, and let any agent — or other people — reason over it.",
 };
+
+// Runs before paint: resolve the saved theme (or system) and set it on <html>
+// so there's no light-mode flash on load.
+const themeScript = `(function(){try{var t=localStorage.getItem('oms-theme');if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${jakarta.variable} ${spaceGrotesk.variable} ${fredoka.variable}`}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${jakarta.variable} ${spaceGrotesk.variable} ${fredoka.variable}`}
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="min-h-screen font-sans antialiased">{children}</body>
     </html>
   );

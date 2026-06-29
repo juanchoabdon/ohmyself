@@ -72,6 +72,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.0
         version: 4.0.1
+      simple-icons:
+        specifier: ^16.24.1
+        version: 16.24.1
     devDependencies:
       '@types/node':
         specifier: ^20.14.0
@@ -1460,6 +1463,10 @@ packages:
   side-channel@1.1.1:
     resolution: {integrity: sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==}
     engines: {node: '>= 0.4'}
+
+  simple-icons@16.24.1:
+    resolution: {integrity: sha512-AnDQPrZAVzYSym7cBVIrnbhLk9auWGgkl+9hKvkbTqGEfH6TU7WKgumEXYYaJuM1Ib87+cnzr881UZniCM7t+A==}
+    engines: {node: '>=0.12.18'}
 
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
@@ -3154,6 +3161,8 @@ snapshots:
       side-channel-list: 1.0.1
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
+
+  simple-icons@16.24.1: {}
 
   source-map-js@1.2.1: {}
 

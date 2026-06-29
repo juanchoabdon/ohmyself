@@ -58,4 +58,6 @@ export interface AuthContext {
   userId: string;
   scope: Scope;
   readonly: boolean;
+  /** How the caller authenticated. Token management requires a `jwt` session. */
+  via?: "jwt" | "token" | "oauth" | "public";
 }

@@ -13,7 +13,19 @@ export * from "./config.js";
 export * from "./errors.js";
 export { Brain, slugify } from "./brain.js";
 export { parseNote, serializeNote, todayISO, excerptOf } from "./frontmatter.js";
-export { getUserConfig, setUserConfig } from "./config-store.js";
+export { getUserConfig, setUserConfig, getDisplayName } from "./config-store.js";
+export { createToken, listTokens, revokeToken, lookupToken } from "./tokens.js";
+export type { ApiTokenRow } from "./tokens.js";
+export {
+  registerClient,
+  getClient,
+  createAuthCode,
+  consumeAuthCode,
+  issueTokens,
+  lookupAccessToken,
+  refreshTokens,
+} from "./oauth.js";
+export type { OAuthClient, RegisterClientInput, IssuedTokens } from "./oauth.js";
 
 export interface OhmyselfCore {
   brain: Brain;

@@ -2,5 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "next build",
-  "installCommand": "npm install --no-audit --no-fund"
+  "installCommand": "npm install --no-audit --no-fund",
+  "rewrites": [
+    { "source": "/mcp", "destination": "https://ohmyself-api.vercel.app/mcp" },
+    { "source": "/oauth/:path*", "destination": "https://ohmyself-api.vercel.app/oauth/:path*" },
+    {
+      "source": "/.well-known/:path*",
+      "destination": "https://ohmyself-api.vercel.app/.well-known/:path*"
+    }
+  ]
 }

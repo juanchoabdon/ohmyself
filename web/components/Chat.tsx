@@ -25,8 +25,8 @@ export function Chat({
     {
       role: "brain",
       text:
-        "Ask me anything about you. I answer from your notes, respecting privacy. " +
-        "I'll cite the notes I used so you can open them.",
+        "Ask me anything about you. I answer from what you've saved, respecting privacy. " +
+        "I'll cite what I used so you can open it.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -45,9 +45,9 @@ export function Chat({
       const sources = ctx.notes.map((n) => ({ path: n.path, title: n.title }));
       const text =
         sources.length === 0
-          ? "I couldn't find anything relevant in your brain yet. Try adding a note."
-          : `Here's what your brain has on "${q}" — drawn from ${sources.length} note${
-              sources.length > 1 ? "s" : ""
+          ? "I couldn't find anything relevant yet — try saving something about yourself first."
+          : `Here's what I found on "${q}" — from ${sources.length} entr${
+              sources.length > 1 ? "ies" : "y"
             }:`;
       setMessages((m) => [...m, { role: "brain", text, sources }]);
     } catch (err) {

@@ -2,20 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Light mode only — see DESIGN.md. OKLCH throughout. Warm, friendly palette
-   (coral → amber), deliberately not Obsidian purple. */
-:root {
-  --bg: oklch(0.99 0.006 85);
-  --surface: oklch(1 0 0);
+/* OKLCH throughout. Warm, friendly palette (coral → amber), deliberately not
+   Obsidian purple. Two themes — a calm near-white light, and a warm-neutral
+   dark (NOT pure black) with the same coral identity. Theme is selected by the
+   `data-theme` attribute on <html> (set pre-paint in layout to avoid flash).
+   Every color is a token so both themes adapt with no per-component overrides. */
+:root,
+:root[data-theme="light"] {
+  --bg: oklch(0.99 0.006 85); /* content canvas */
+  --surface: oklch(1 0 0); /* panels, sidebar, inputs — slightly elevated */
+  --elevated: oklch(1 0 0); /* modals / popovers */
   --border: oklch(0.92 0.008 70);
   --ink: oklch(0.23 0.02 55);
   --muted: oklch(0.53 0.025 55);
 
   --brand: oklch(0.66 0.19 38); /* warm coral-orange */
-  --brand-weak: oklch(0.96 0.045 55);
+  --brand-weak: oklch(0.96 0.045 55); /* tints / selection */
   --brand-ink: oklch(0.47 0.17 36); /* readable brand text */
 
-  /* animation / gradient accents */
   --accent-amber: oklch(0.83 0.15 80);
   --accent-pink: oklch(0.7 0.2 12);
   --accent-sky: oklch(0.72 0.13 230);
@@ -25,11 +29,51 @@
   --vis-private: oklch(0.5 0.02 60);
   --vis-secret: oklch(0.58 0.19 16);
 
+  --code-bg: oklch(0.97 0.004 70);
+  --skeleton-bg: oklch(0.93 0.007 70);
+  --skeleton-hi: oklch(1 0 0 / 0.65);
+  --shadow-color: oklch(0.45 0.05 55 / 0.1);
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: oklch(0.185 0.012 65); /* deep warm-neutral, not black */
+  --surface: oklch(0.235 0.012 65); /* sidebar / header / cards sit above bg */
+  --elevated: oklch(0.27 0.013 65); /* modals / popovers */
+  --border: oklch(0.32 0.012 65);
+  --ink: oklch(0.95 0.012 75);
+  --muted: oklch(0.72 0.022 70);
+
+  --brand: oklch(0.72 0.17 42); /* a touch lighter so it glows on dark */
+  --brand-weak: oklch(0.32 0.06 45);
+  --brand-ink: oklch(0.82 0.14 50);
+
+  --accent-amber: oklch(0.82 0.14 80);
+  --accent-pink: oklch(0.72 0.18 14);
+  --accent-sky: oklch(0.72 0.13 230);
+  --accent-mint: oklch(0.78 0.12 165);
+
+  --vis-public: oklch(0.74 0.15 152);
+  --vis-private: oklch(0.74 0.02 70);
+  --vis-secret: oklch(0.72 0.17 22);
+
+  --code-bg: oklch(0.27 0.012 65);
+  --skeleton-bg: oklch(0.27 0.01 65);
+  --skeleton-hi: oklch(1 0 0 / 0.06);
+  --shadow-color: oklch(0 0 0 / 0.45);
+
+  color-scheme: dark;
+}
+
+:root {
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-heading: "Space Grotesk", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fredoka", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
 
-  color-scheme: light;
+html {
+  scroll-behavior: smooth;
 }
 
 html,
@@ -44,12 +88,45 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Theme swap: ease the large surfaces, not every property (avoid jank). */
+html,
+body,
+aside,
+header,
+main {
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease;
+}
+
 * {
   border-color: var(--border);
 }
 
 ::selection {
   background: var(--brand-weak);
+  color: var(--brand-ink);
+}
+
+/* Themed scrollbars so panels don't show a bright track in dark mode. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: padding-box;
 }
 
 :focus-visible {
@@ -125,7 +202,7 @@ body {
   border-radius: 0.3em;
 }
 .prose pre {
-  background: oklch(0.97 0.004 270);
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 0.6rem;
   padding: 0.9rem 1rem;
@@ -210,10 +287,10 @@ body {
 @keyframes pulse-soft {
   0%,
   100% {
-    box-shadow: 0 0 0 0 oklch(0.66 0.19 38 / 0.35);
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--brand) 35%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 14px oklch(0.66 0.19 38 / 0);
+    box-shadow: 0 0 0 14px transparent;
   }
 }
 
@@ -269,6 +346,35 @@ body {
   }
 }
 
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes spin-rev {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@keyframes ring-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.03);
+  }
+}
+
+.orbit-spin {
+  animation: spin-slow 34s linear infinite;
+}
+.orbit-rev {
+  animation: spin-rev 34s linear infinite;
+}
+
 .animate-float {
   animation: float-y 6s ease-in-out infinite;
 }
@@ -290,7 +396,7 @@ body {
   height: 9px;
   border-radius: 9999px;
   background: var(--brand);
-  box-shadow: 0 0 10px oklch(0.66 0.19 38 / 0.7);
+  box-shadow: 0 0 10px color-mix(in oklch, var(--brand) 70%, transparent);
   animation: flow-x 2.6s linear infinite;
 }
 
@@ -302,6 +408,26 @@ body {
   animation:
     typing 2.4s steps(34, end) infinite alternate,
     caret-blink 0.9s step-end infinite;
+}
+
+/* skeleton loading shimmer */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-bg);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent 0%, var(--skeleton-hi) 50%, transparent 100%);
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 /* scroll reveal */
@@ -318,6 +444,9 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
   * {
     animation: none !important;
     transition: none !important;

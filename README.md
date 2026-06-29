@@ -136,6 +136,24 @@ Point an MCP client at `POST https://<your-host>/mcp` with an `Authorization: Be
 given connection. The public website agent uses `Authorization: Bearer
 <PUBLIC_AGENT_TOKEN>` and only ever sees public notes.
 
+### Official connector (OAuth 2.1)
+ohmyself! ships a self-hosted OAuth 2.1 authorization server so it can be added as a
+one-click connector in Claude and ChatGPT — no manual token. It implements the MCP auth
+spec: a `401` with `WWW-Authenticate` on `/mcp`, Protected Resource Metadata
+(`/.well-known/oauth-protected-resource`, RFC 9728), Authorization Server Metadata
+(`/.well-known/oauth-authorization-server`, RFC 8414), Dynamic Client Registration
+(`/oauth/register`, RFC 7591), Authorization Code + PKCE (S256) via the web consent page
+at `/authorize`, and a token endpoint (`/oauth/token`) with refresh-token rotation.
+
+- Access tokens are opaque (`oma_…`, stored only as SHA-256 hashes) and resolve to the
+  consented scope; refresh tokens are `omr_…`. Tables: `oauth_clients`,
+  `oauth_auth_codes`, `oauth_tokens` (service-role only).
+- Single-domain prod: the web project rewrites `/mcp`, `/oauth/*`, and `/.well-known/*`
+  to the API project so everything lives under one origin (e.g. `https://www.ohmyself.ai`).
+  Set `OMS_ISSUER`, `PUBLIC_API_URL`, and `PUBLIC_WEB_URL` accordingly on both projects.
+- Connect: in Claude, Settings → Connectors → add the `/mcp` URL; in ChatGPT, Settings →
+  Connectors → Create. You sign in, pick a scope (public/private/secret), and approve.
+
 ## Privacy model
 
 Each note's frontmatter has `visibility: public | private | secret`. A request carries
@@ -182,8 +200,11 @@ is reachable from web, iOS, and your agents.
   filesystem access. Set these env vars on the project: `SUPABASE_URL`,
   `SUPABASE_SERVICE_ROLE`, `SUPABASE_ANON_KEY`, `BRAIN_BUCKET`, `VAULT_BACKEND=supabase`
   (and optionally `PUBLIC_AGENT_TOKEN` / `PUBLIC_AGENT_USER_ID` for the public agent).
+  For the OAuth connector also set `OMS_ISSUER`, `PUBLIC_API_URL`, and `PUBLIC_WEB_URL`
+  (in single-domain setups all = your web origin, e.g. `https://www.ohmyself.ai`).
 - **`web/`** → a Next.js Vercel project. Set `NEXT_PUBLIC_SUPABASE_URL`,
-  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_API_URL` (the API project's URL).
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_API_URL` (in single-domain prod this is
+  your own web origin, since `/mcp` + `/oauth/*` are rewritten to the API project).
 
 Deploy from each package directory:
 

@@ -1,0 +1,281 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* juandisanchez.com — a dark-first, calm-but-alive palette in OKLCH.
+   Deep warm-neutral canvas (not pure black), one coral→amber identity used
+   sparingly for the persona's glow, accents, and the send action. */
+:root {
+  --bg: oklch(0.17 0.014 60); /* deep warm-neutral canvas, not black */
+  --surface: oklch(0.215 0.014 60); /* bubbles, header, cards */
+  --elevated: oklch(0.255 0.015 60); /* hovered surfaces */
+  --border: oklch(0.31 0.013 60);
+  --ink: oklch(0.95 0.012 80); /* primary text */
+  --muted: oklch(0.74 0.022 70); /* secondary text (≥ 4.5:1 on bg) */
+  --faint: oklch(0.6 0.02 70); /* tertiary / timestamps */
+
+  --brand: oklch(0.72 0.15 158); /* fresh emerald green, glows on dark */
+  --brand-weak: oklch(0.33 0.06 158); /* tints / selection */
+  --brand-ink: oklch(0.83 0.13 160); /* readable brand text */
+
+  --accent-teal: oklch(0.74 0.1 195); /* cool teal companion to the green */
+  --accent-lime: oklch(0.84 0.15 135); /* bright lime highlight */
+  --live: oklch(0.8 0.18 145); /* online / live status — bright green */
+
+  --code-bg: oklch(0.25 0.012 60);
+  --shadow-color: oklch(0 0 0 / 0.5);
+
+  color-scheme: dark;
+
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-heading: "Space Grotesk", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05", "ss01";
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: var(--brand-weak);
+  color: var(--brand-ink);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+  background-clip: padding-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  .font-heading {
+    font-family: var(--font-heading);
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Ambient glow behind the conversation — slow, calm, never distracting. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ambient::before,
+.ambient::after {
+  content: "";
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.16;
+}
+.ambient::before {
+  width: 38rem;
+  height: 38rem;
+  top: -12rem;
+  left: -8rem;
+  background: var(--brand);
+  animation: drift 22s ease-in-out infinite;
+}
+.ambient::after {
+  width: 30rem;
+  height: 30rem;
+  bottom: -12rem;
+  right: -6rem;
+  background: var(--accent-teal);
+  opacity: 0.12;
+  animation: drift 26s ease-in-out infinite reverse;
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(26px, -22px) scale(1.06);
+  }
+  66% {
+    transform: translate(-20px, 16px) scale(0.96);
+  }
+}
+
+/* Message entrance */
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.msg-in {
+  animation: msg-in 0.34s cubic-bezier(0.25, 1, 0.5, 1) both;
+}
+
+/* Typing dots */
+@keyframes dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--muted);
+  animation: dot-bounce 1.2s ease-in-out infinite;
+}
+
+/* The "live" pulse next to the persona name */
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--live) 60%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.live-dot {
+  animation: pulse-ring 2.4s ease-out infinite;
+}
+
+/* Rendered markdown inside assistant bubbles */
+.prose {
+  line-height: 1.6;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+.prose > :last-child {
+  margin-bottom: 0;
+}
+.prose p {
+  margin: 0.6em 0;
+  text-wrap: pretty;
+}
+.prose h1,
+.prose h2,
+.prose h3 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.01em;
+  margin: 1em 0 0.4em;
+  font-weight: 640;
+}
+.prose h1 {
+  font-size: 1.25rem;
+}
+.prose h2 {
+  font-size: 1.1rem;
+}
+.prose h3 {
+  font-size: 1rem;
+}
+.prose ul,
+.prose ol {
+  margin: 0.5em 0;
+  padding-left: 1.25em;
+}
+.prose ul {
+  list-style: disc;
+}
+.prose ol {
+  list-style: decimal;
+}
+.prose li {
+  margin: 0.2em 0;
+}
+.prose a {
+  color: var(--brand-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86em;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 0.3em;
+}
+.prose pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.8rem 0.95rem;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+.prose pre code {
+  background: none;
+  padding: 0;
+}
+.prose blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.85rem;
+  color: var(--muted);
+  margin: 0.7em 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

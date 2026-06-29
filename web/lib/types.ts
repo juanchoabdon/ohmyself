@@ -31,6 +31,20 @@ export interface FullNote {
   raw: string;
 }
 
+export interface Category {
+  folder: string;
+  label: string;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  scope: Visibility;
+  preview: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
 export interface ContextResult {
   topic: string;
   notes: { path: string; title: string; body: string }[];
