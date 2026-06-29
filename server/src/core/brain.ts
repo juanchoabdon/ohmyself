@@ -280,13 +280,23 @@ export class Brain {
     topic: string,
     allowed: Visibility[],
     limit = 6,
-  ): Promise<{ topic: string; notes: { path: string; title: string; body: string }[]; text: string }> {
+  ): Promise<{
+    topic: string;
+    notes: { path: string; title: string; body: string; created?: string; updated?: string }[];
+    text: string;
+  }> {
     const hits = await this.search(userId, topic, { allowed, limit });
-    const notes: { path: string; title: string; body: string }[] = [];
+    const notes: { path: string; title: string; body: string; created?: string; updated?: string }[] = [];
     for (const h of hits) {
       try {
         const n = await this.readNote(userId, h.path, allowed);
-        notes.push({ path: n.path, title: n.meta.title, body: n.body });
+        notes.push({
+          path: n.path,
+          title: n.meta.title,
+          body: n.body,
+          created: n.meta.created,
+          updated: n.meta.updated,
+        });
       } catch {
         /* skip */
       }

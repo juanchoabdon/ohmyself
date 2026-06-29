@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, apiBase } from "@/lib/api";
+import { api, siteBase } from "@/lib/api";
 import type { ApiToken, Visibility } from "@/lib/types";
 
 interface Props {
@@ -25,8 +25,8 @@ export function Settings({ token, open, onClose }: Props) {
   const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const mcpUrl = `${apiBase()}/mcp`;
-  const restUrl = `${apiBase()}/v1`;
+  const mcpUrl = `${siteBase()}/mcp`;
+  const restUrl = `${siteBase()}/v1`;
 
   useEffect(() => {
     if (!open) return;

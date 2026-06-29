@@ -9,6 +9,15 @@ export function apiBase(): string {
   return base();
 }
 
+/**
+ * Public site origin (official domain). The site proxies /mcp, /oauth and
+ * /.well-known to the API, so connection snippets should use this, not the
+ * raw Vercel API URL.
+ */
+export function siteBase(): string {
+  return process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.ohmyself.ai";
+}
+
 /** Encode a note path for the URL, preserving the `/` separators. */
 function encPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -87,6 +96,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ topic, limit: 6 }),
     }),
+
+  /** Semantic "idea links" for the Brain Map (embeddings-derived edges). */
+  semanticLinks: (token: string) =>
+    call<{ enabled: boolean; edges: { a: string; b: string; score: number }[]; count?: number }>(
+      "/v1/graph/semantic",
+      token,
+    ),
 
   listTokens: (token: string) => call<{ tokens: ApiToken[] }>("/v1/tokens", token),
 

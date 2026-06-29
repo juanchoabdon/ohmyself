@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import type { Category, FullNote, IndexedNote, Visibility } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteView } from "@/components/NoteView";
+import { BrainMap } from "@/components/BrainMap";
 import { Chat } from "@/components/Chat";
 import { Settings } from "@/components/Settings";
 import { ConfirmDialog, CreateEntryDialog, PromptDialog, type CreateEntryValues } from "@/components/dialogs";
@@ -42,6 +43,25 @@ export default function Dashboard() {
   const [noteLoading, setNoteLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<"notes" | "map">("notes");
+
+  // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
+  // hydration mismatch; persisted on every change.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("oms-view");
+      if (saved === "map" || saved === "notes") setView(saved);
+    } catch {
+      /* storage unavailable — fine */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("oms-view", view);
+    } catch {
+      /* storage unavailable — fine */
+    }
+  }, [view]);
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -125,6 +145,7 @@ export default function Dashboard() {
 
   async function openNote(path: string) {
     if (!token) return;
+    setView("notes");
     setSelected(path);
     setNoteLoading(true);
     setFullNote(null);
@@ -283,6 +304,21 @@ export default function Dashboard() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <div className="mr-1 flex items-center rounded-lg border border-border bg-bg p-0.5 text-sm">
+            {(["notes", "map"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-colors ${
+                  view === v ? "bg-surface text-brand-ink shadow-sm" : "text-muted hover:text-ink"
+                }`}
+              >
+                {v === "notes" ? <NotesIcon /> : <MapIcon />}
+                <span className="hidden sm:inline">{v === "notes" ? "Notes" : "Map"}</span>
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setChatOpen((v) => !v)}
             className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-95"
@@ -327,16 +363,28 @@ export default function Dashboard() {
             })
           }
         />
-        <main className="min-w-0 flex-1 overflow-y-auto bg-bg">
-          <NoteView
-            note={fullNote}
-            loading={noteLoading}
-            onOpenLink={openNote}
-            onSave={handleSaveNote}
-            onDelete={async () => {
-              if (selected) setConfirm({ kind: "note", path: selected });
-            }}
-          />
+        <main
+          className={`min-w-0 flex-1 ${
+            view === "map" ? "relative overflow-hidden" : "overflow-y-auto bg-bg"
+          }`}
+        >
+          {view === "map" ? (
+            <BrainMap
+              notes={baseNotes}
+              onOpenNote={openNote}
+              loadSemantic={token ? () => api.semanticLinks(token) : undefined}
+            />
+          ) : (
+            <NoteView
+              note={fullNote}
+              loading={noteLoading}
+              onOpenLink={openNote}
+              onSave={handleSaveNote}
+              onDelete={async () => {
+                if (selected) setConfirm({ kind: "note", path: selected });
+              }}
+            />
+          )}
         </main>
         <Chat token={token} open={chatOpen} onClose={() => setChatOpen(false)} onOpenNote={openNote} />
       </div>
@@ -398,6 +446,28 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+  );
+}
+
+function NotesIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 4h11l5 5v11a0 0 0 0 1 0 0H4z" />
+      <path d="M14 4v5h5" />
+      <path d="M8 13h7M8 17h7" />
+    </svg>
+  );
+}
+
+function MapIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="6" cy="7" r="2.2" />
+      <circle cx="18" cy="6" r="2.2" />
+      <circle cx="17" cy="18" r="2.2" />
+      <circle cx="7" cy="17" r="2.2" />
+      <path d="M8 8.4 16 7M7.4 9 7 14.8M8.6 16.4 15 17.6M16.6 8 17 15.8" />
+    </svg>
   );
 }
 

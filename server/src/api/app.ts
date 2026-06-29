@@ -17,6 +17,7 @@ import {
   type Visibility,
 } from "../core/index.js";
 import { BadRequestError, BrainError, ForbiddenError } from "../core/errors.js";
+import { embedTexts, embeddingsEnabled, semanticEdges } from "../core/embeddings.js";
 import { connectors, getConnector } from "../connectors/index.js";
 import { seedTemplateBrain } from "../templates.js";
 import { registerOAuth } from "./oauth.js";
@@ -231,6 +232,28 @@ export function createApp(): Hono<Env> {
     const { a, b } = await c.req.json<{ a: string; b: string }>();
     await brain.linkNotes(auth.userId, a, b, allowed);
     return c.json({ linked: [a, b] });
+  });
+
+  // Semantic "idea links" for the Brain Map: fuzzy edges between notes that are
+  // topically close even when not explicitly linked. Embeds only title+excerpt
+  // (never full bodies), respects scope, and caches vectors by content hash.
+  app.get("/v1/graph/semantic", async (c) => {
+    const auth = c.get("auth");
+    if (!embeddingsEnabled()) return c.json({ enabled: false, edges: [] });
+    const allowed = allowedVisibilities(auth.scope);
+    const notes = await brain.listNotes(auth.userId, { allowed, limit: 400 });
+    const items = notes
+      .map((n) => ({ path: n.path, text: `${n.title}. ${n.excerpt ?? ""}`.trim() }))
+      .filter((x) => x.text.length > 2);
+    if (items.length < 2) return c.json({ enabled: true, edges: [], count: items.length });
+
+    const vecs = await embedTexts(items.map((x) => x.text));
+    const withVec = items
+      .map((x, i) => ({ path: x.path, vec: vecs[i] }))
+      .filter((x): x is { path: string; vec: number[] } => Array.isArray(x.vec) && x.vec.length > 0);
+
+    const edges = semanticEdges(withVec, { topK: 3, min: 0.42 });
+    return c.json({ enabled: true, edges, count: withVec.length });
   });
 
   app.post("/v1/context", async (c) => {

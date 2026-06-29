@@ -5,6 +5,7 @@
   "installCommand": "npm install --no-audit --no-fund",
   "rewrites": [
     { "source": "/mcp", "destination": "https://ohmyself-api.vercel.app/mcp" },
+    { "source": "/v1/:path*", "destination": "https://ohmyself-api.vercel.app/v1/:path*" },
     { "source": "/oauth/:path*", "destination": "https://ohmyself-api.vercel.app/oauth/:path*" },
     {
       "source": "/.well-known/:path*",

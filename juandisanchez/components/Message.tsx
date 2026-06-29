@@ -1,8 +1,8 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Avatar } from "./Avatar";
+import { RichMarkdown } from "./Rich";
+import type { Lang } from "@/lib/i18n";
 
 export type Role = "user" | "assistant";
 
@@ -16,9 +16,11 @@ export interface ChatMessage {
 export function MessageBubble({
   message,
   streaming,
+  lang = "en",
 }: {
   message: ChatMessage;
   streaming?: boolean;
+  lang?: Lang;
 }) {
   const isUser = message.role === "user";
 
@@ -38,14 +40,9 @@ export function MessageBubble({
       <div className="min-w-0 flex-1 pt-0.5">
         {message.content ? (
           <div className="prose">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                a: (props) => <a {...props} target="_blank" rel="noreferrer noopener" />,
-              }}
-            >
+            <RichMarkdown lang={lang} collapse={!streaming}>
               {message.content}
-            </ReactMarkdown>
+            </RichMarkdown>
             {streaming && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-brand align-middle" />}
           </div>
         ) : (

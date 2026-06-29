@@ -29,8 +29,8 @@ const STRINGS: Record<Lang, Strings> = {
     suggestions: [
       { icon: "🚀", text: "¿Qué proyectos ha construido?" },
       { icon: "🍔", text: "¿Qué ha hecho dentro de Rappi?" },
+      { icon: "🎧", text: "¿Qué música, deportes o pelis le gustan?" },
       { icon: "🔮", text: "¿Qué piensa sobre el futuro?" },
-      { icon: "🎲", text: "Cuéntame una historia random" },
     ],
     disclaimer: "Respondo solo con lo que Juan Diego ha compartido públicamente.",
     errorGeneric: "Uy, algo falló. Intenta de nuevo en un momento.",
@@ -47,8 +47,8 @@ const STRINGS: Record<Lang, Strings> = {
     suggestions: [
       { icon: "🚀", text: "What has he built?" },
       { icon: "🍔", text: "What does he do at Rappi?" },
+      { icon: "🎧", text: "What music, sports or movies is he into?" },
       { icon: "🔮", text: "What does he think about the future?" },
-      { icon: "🎲", text: "Tell me a random story" },
     ],
     disclaimer: "I only answer with what Juan Diego has chosen to share publicly.",
     errorGeneric: "Oops, something went wrong. Please try again in a moment.",

@@ -443,6 +443,215 @@ main {
   transform: none;
 }
 
+/* ---------- Brain Map (force-directed neural constellation) ---------- */
+
+.brainmap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: oklch(0.13 0.012 60);
+  user-select: none;
+}
+.brainmap__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.brainmap__title {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+}
+.brainmap__title-main {
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: oklch(0.97 0.012 80);
+}
+.brainmap__title-sub {
+  font-size: 0.72rem;
+  color: oklch(0.82 0.02 80 / 0.7);
+}
+
+.brainmap__legend {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px 12px;
+  max-width: min(46%, 420px);
+  pointer-events: none;
+}
+.brainmap__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: oklch(0.87 0.015 80 / 0.85);
+  text-transform: capitalize;
+}
+.brainmap__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  box-shadow: 0 0 6px currentColor;
+  flex: none;
+}
+.brainmap__dash {
+  width: 12px;
+  height: 0;
+  flex: none;
+  border-top: 2px dashed currentColor;
+  box-shadow: 0 0 6px currentColor;
+  opacity: 0.9;
+}
+
+/* Semantic "idea links" toggle (bottom-left, above the hint). */
+.brainmap__ideas {
+  position: absolute;
+  bottom: 40px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 9999px;
+  border: 1px solid oklch(1 0 0 / 0.12);
+  background: oklch(0.2 0.012 65 / 0.92);
+  color: oklch(0.9 0.012 80);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.brainmap__ideas:hover {
+  border-color: oklch(0.82 0.13 300 / 0.6);
+}
+.brainmap__ideas:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+.brainmap__ideas.is-on {
+  border-color: oklch(0.82 0.13 300 / 0.7);
+  background: oklch(0.82 0.13 300 / 0.16);
+  color: oklch(0.92 0.05 300);
+}
+.brainmap__ideas-spark {
+  color: oklch(0.82 0.13 300);
+  text-shadow: 0 0 8px oklch(0.82 0.13 300 / 0.8);
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.brainmap__controls {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.brainmap__controls button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  border: 1px solid oklch(1 0 0 / 0.12);
+  background: oklch(0.2 0.012 65 / 0.92);
+  color: oklch(0.92 0.012 80);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.1s ease;
+}
+.brainmap__controls button:hover {
+  border-color: oklch(0.72 0.17 42 / 0.7);
+  background: oklch(0.24 0.014 65 / 0.96);
+}
+.brainmap__controls button:active {
+  transform: translateY(1px);
+}
+
+.brainmap__tooltip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid oklch(1 0 0 / 0.12);
+  background: oklch(0.17 0.012 62 / 0.97);
+  box-shadow: 0 10px 30px oklch(0 0 0 / 0.5);
+  white-space: nowrap;
+}
+.brainmap__tooltip-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: oklch(0.97 0.012 80);
+}
+.brainmap__tooltip-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: oklch(0.83 0.02 80 / 0.85);
+  text-transform: capitalize;
+}
+
+.brainmap__hint {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  margin: 0;
+  font-size: 0.72rem;
+  color: oklch(0.82 0.02 80 / 0.6);
+  pointer-events: none;
+}
+
+.brainmap__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  padding: 24px;
+}
+.brainmap__empty-title {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: oklch(0.95 0.012 80);
+  margin: 0;
+}
+.brainmap__empty-sub {
+  font-size: 0.85rem;
+  color: oklch(0.82 0.02 80 / 0.7);
+  max-width: 42ch;
+  margin: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
