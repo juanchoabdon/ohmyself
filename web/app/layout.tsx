@@ -21,10 +21,37 @@ const fredoka = Fredoka({
   display: "swap",
 });
 
+const SITE_URL = "https://www.ohmyself.ai";
+const TITLE = "ohmyself! — your second self";
+const DESCRIPTION =
+  "A markdown second self you can view, search, and ask. Capture your life, keep it private, and let any agent — or other people — reason over it.";
+
 export const metadata: Metadata = {
-  title: "ohmyself! — your second self",
-  description:
-    "A markdown second self you can view, search, and ask. Capture your life, keep it private, and let any agent — or other people — reason over it.",
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
+  applicationName: "ohmyself!",
+  openGraph: {
+    type: "website",
+    url: SITE_URL,
+    siteName: "ohmyself!",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "ohmyself! — your second self",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ["/og.png"],
+  },
 };
 
 // Runs before paint: resolve the saved theme (or system) and set it on <html>
