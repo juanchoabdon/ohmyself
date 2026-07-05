@@ -4,7 +4,16 @@
  * Everything here runs server-side only and uses a public, read-only token, so
  * it can only ever surface notes the owner explicitly marked `public`. The token
  * never reaches the browser.
+ *
+ * Caching: the identity/project/context lookups below are wrapped in
+ * `unstable_cache`, which is backed by Next's Data Cache. Unlike a module-level
+ * variable (which only survives within ONE warm serverless instance), the Data
+ * Cache is shared across every instance/region on Vercel — so the very common
+ * "who is this / what has he built" lookups stay fast and consistent regardless
+ * of which lambda a visitor happens to hit, instead of depending on cold-start
+ * luck.
  */
+import { unstable_cache } from "next/cache";
 
 const API_URL = (process.env.OHMYSELF_API_URL ?? "https://ohmyself-api.vercel.app").replace(/\/+$/, "");
 const TOKEN = process.env.OHMYSELF_PUBLIC_TOKEN ?? "";
@@ -95,49 +104,43 @@ async function apiGet<T>(path: string): Promise<T | null> {
   }
 }
 
-// The public identity rarely changes, so cache it briefly. This removes the
-// brain round-trips (and any Vercel cold-start) from most requests.
-const IDENTITY_TTL_MS = 60_000;
-let identityCache: { at: number; data: Section[] } | null = null;
-
+// The public identity rarely changes, so cache it in Next's shared Data Cache.
 /** The owner's public identity pages (about-me, bio, etc.) — always relevant. */
-async function identitySections(): Promise<Section[]> {
-  if (identityCache && Date.now() - identityCache.at < IDENTITY_TTL_MS) {
-    return identityCache.data;
-  }
-  const list = await apiGet<{ notes?: { path: string; title: string }[] }>(
-    "/v1/notes?type=identity&limit=20",
-  );
-  const notes = (list?.notes ?? []).slice(0, MAX_IDENTITY_NOTES);
-  // Fetch the bodies in parallel rather than one-by-one.
-  const fulls = await Promise.all(
-    notes.map((n) =>
-      apiGet<{ body?: string; meta?: { title?: string; created?: string; updated?: string } }>(
-        `/v1/notes/${encPath(n.path)}`,
+const identitySections = unstable_cache(
+  async (): Promise<Section[]> => {
+    const list = await apiGet<{ notes?: { path: string; title: string }[] }>(
+      "/v1/notes?type=identity&limit=20",
+    );
+    const notes = (list?.notes ?? []).slice(0, MAX_IDENTITY_NOTES);
+    // Fetch the bodies in parallel rather than one-by-one.
+    const fulls = await Promise.all(
+      notes.map((n) =>
+        apiGet<{ body?: string; meta?: { title?: string; created?: string; updated?: string } }>(
+          `/v1/notes/${encPath(n.path)}`,
+        ),
       ),
-    ),
-  );
-  const sections: Section[] = [];
-  notes.forEach((n, i) => {
-    const body = (fulls[i]?.body ?? "").trim();
-    const meta = fulls[i]?.meta;
-    if (body)
-      sections.push({
-        path: n.path,
-        title: n.title || meta?.title || n.path,
-        body,
-        date: meta?.updated || meta?.created,
-      });
-  });
-  if (sections.length) identityCache = { at: Date.now(), data: sections };
-  return sections;
-}
+    );
+    const sections: Section[] = [];
+    notes.forEach((n, i) => {
+      const body = (fulls[i]?.body ?? "").trim();
+      const meta = fulls[i]?.meta;
+      if (body)
+        sections.push({
+          path: n.path,
+          title: n.title || meta?.title || n.path,
+          body,
+          date: meta?.updated || meta?.created,
+        });
+    });
+    return sections;
+  },
+  ["ohmyself-identity-sections"],
+  { revalidate: 300 },
+);
 
 // Public project overviews change rarely too — cache alongside identity.
-const PROJECT_TTL_MS = 60_000;
 const MAX_PROJECTS = 12;
 const PROJECT_BODY_CHARS = 1100;
-let projectCache: { at: number; data: { sections: Section[]; links: LinkRef[] } } | null = null;
 
 /** The top-level project slug a path belongs to, e.g.
  *  "projects/flowya/subprojects/flowya-ios/_index.md" -> "flowya". */
@@ -154,100 +157,106 @@ function topProjectSlug(path: string): string | null {
  * is never lost. Always included so "what has he built?" works regardless of
  * query wording/language.
  */
-async function projectBundle(): Promise<{ sections: Section[]; links: LinkRef[] }> {
-  if (projectCache && Date.now() - projectCache.at < PROJECT_TTL_MS) {
-    return projectCache.data;
-  }
-  const list = await apiGet<{ notes?: { path: string; title: string }[] }>(
-    "/v1/notes?type=project&limit=100",
-  );
-  const all = list?.notes ?? [];
-  // Top-level overviews (these become context + project cards).
-  const overviews = all
-    .filter((n) => /^projects\/[^/]+\/_index\.md$/.test(n.path))
-    .slice(0, MAX_PROJECTS);
-  const shownSlugs = new Set(overviews.map((n) => topProjectSlug(n.path)));
-  const titleBySlug = new Map(overviews.map((n) => [topProjectSlug(n.path), n.title] as const));
-  // Public subprojects of the shown projects — used only to harvest their links.
-  const subprojects = all.filter(
-    (n) =>
-      /^projects\/[^/]+\/subprojects\/.+\/_index\.md$/.test(n.path) &&
-      shownSlugs.has(topProjectSlug(n.path)),
-  );
+const projectBundle = unstable_cache(
+  async (): Promise<{ sections: Section[]; links: LinkRef[] }> => {
+    const list = await apiGet<{ notes?: { path: string; title: string }[] }>(
+      "/v1/notes?type=project&limit=100",
+    );
+    const all = list?.notes ?? [];
+    // Top-level overviews (these become context + project cards).
+    const overviews = all
+      .filter((n) => /^projects\/[^/]+\/_index\.md$/.test(n.path))
+      .slice(0, MAX_PROJECTS);
+    const shownSlugs = new Set(overviews.map((n) => topProjectSlug(n.path)));
+    const titleBySlug = new Map(overviews.map((n) => [topProjectSlug(n.path), n.title] as const));
+    // Public subprojects of the shown projects — used only to harvest their links.
+    const subprojects = all.filter(
+      (n) =>
+        /^projects\/[^/]+\/subprojects\/.+\/_index\.md$/.test(n.path) &&
+        shownSlugs.has(topProjectSlug(n.path)),
+    );
 
-  const [overviewFulls, subFulls] = await Promise.all([
-    Promise.all(
-      overviews.map((n) =>
-        apiGet<{ body?: string; meta?: { title?: string; created?: string; updated?: string } }>(
-          `/v1/notes/${encPath(n.path)}`,
+    const [overviewFulls, subFulls] = await Promise.all([
+      Promise.all(
+        overviews.map((n) =>
+          apiGet<{ body?: string; meta?: { title?: string; created?: string; updated?: string } }>(
+            `/v1/notes/${encPath(n.path)}`,
+          ),
         ),
       ),
-    ),
-    Promise.all(
-      subprojects.map((n) => apiGet<{ body?: string }>(`/v1/notes/${encPath(n.path)}`)),
-    ),
-  ]);
+      Promise.all(
+        subprojects.map((n) => apiGet<{ body?: string }>(`/v1/notes/${encPath(n.path)}`)),
+      ),
+    ]);
 
-  const sections: Section[] = [];
-  const links: LinkRef[] = [];
-  const seenUrls = new Set<string>();
-  const addLinks = (body: string, label: string) => {
-    for (const url of extractUrls(body)) {
-      if (seenUrls.has(url)) continue;
-      seenUrls.add(url);
-      links.push({ url, label });
-    }
-  };
-
-  overviews.forEach((n, i) => {
-    const full = (overviewFulls[i]?.body ?? "").trim();
-    if (!full) return;
-    const meta = overviewFulls[i]?.meta;
-    const title = n.title || meta?.title || n.path;
-    addLinks(full, title); // links from the FULL body (pre-truncation)
-    const body = full.length > PROJECT_BODY_CHARS ? full.slice(0, PROJECT_BODY_CHARS) + "…" : full;
-    sections.push({ path: n.path, title, body, date: meta?.updated || meta?.created });
-  });
-
-  // Attribute each subproject's links to its parent project so the card matches.
-  subprojects.forEach((n, i) => {
-    const body = (subFulls[i]?.body ?? "").trim();
-    if (!body) return;
-    const parentTitle = titleBySlug.get(topProjectSlug(n.path)) ?? n.title;
-    addLinks(body, parentTitle);
-  });
-
-  const data = { sections, links };
-  if (sections.length) projectCache = { at: Date.now(), data };
-  return data;
-}
-
-/** Topic-relevant public notes via the brain's context endpoint. */
-async function contextSections(topic: string, limit: number): Promise<Section[]> {
-  try {
-    const res = await fetch(`${API_URL}/v1/context`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ topic: topic.slice(0, 400), limit }),
-      signal: AbortSignal.timeout(8000),
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as {
-      notes?: { path: string; title: string; body?: string; created?: string; updated?: string }[];
+    const sections: Section[] = [];
+    const links: LinkRef[] = [];
+    const seenUrls = new Set<string>();
+    const addLinks = (body: string, label: string) => {
+      for (const url of extractUrls(body)) {
+        if (seenUrls.has(url)) continue;
+        seenUrls.add(url);
+        links.push({ url, label });
+      }
     };
-    return (data.notes ?? [])
-      .filter((n) => (n.body ?? "").trim())
-      .map((n) => ({
-        path: n.path,
-        title: n.title,
-        body: (n.body ?? "").trim(),
-        date: n.updated || n.created,
-      }));
-  } catch {
-    return [];
-  }
-}
+
+    overviews.forEach((n, i) => {
+      const full = (overviewFulls[i]?.body ?? "").trim();
+      if (!full) return;
+      const meta = overviewFulls[i]?.meta;
+      const title = n.title || meta?.title || n.path;
+      addLinks(full, title); // links from the FULL body (pre-truncation)
+      const body = full.length > PROJECT_BODY_CHARS ? full.slice(0, PROJECT_BODY_CHARS) + "…" : full;
+      sections.push({ path: n.path, title, body, date: meta?.updated || meta?.created });
+    });
+
+    // Attribute each subproject's links to its parent project so the card matches.
+    subprojects.forEach((n, i) => {
+      const body = (subFulls[i]?.body ?? "").trim();
+      if (!body) return;
+      const parentTitle = titleBySlug.get(topProjectSlug(n.path)) ?? n.title;
+      addLinks(body, parentTitle);
+    });
+
+    return { sections, links };
+  },
+  ["ohmyself-project-bundle"],
+  { revalidate: 300 },
+);
+
+/** Topic-relevant public notes via the brain's context endpoint. Cached per
+ *  (topic, limit) — repeat questions (even from different visitors, or a
+ *  cold serverless instance) are served instantly instead of round-tripping
+ *  to ohmyself-api and hitting whatever cold-start it's having. */
+const contextSections = unstable_cache(
+  async (topic: string, limit: number): Promise<Section[]> => {
+    try {
+      const res = await fetch(`${API_URL}/v1/context`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ topic: topic.slice(0, 400), limit }),
+        signal: AbortSignal.timeout(8000),
+        cache: "no-store",
+      });
+      if (!res.ok) return [];
+      const data = (await res.json()) as {
+        notes?: { path: string; title: string; body?: string; created?: string; updated?: string }[];
+      };
+      return (data.notes ?? [])
+        .filter((n) => (n.body ?? "").trim())
+        .map((n) => ({
+          path: n.path,
+          title: n.title,
+          body: (n.body ?? "").trim(),
+          date: n.updated || n.created,
+        }));
+    } catch {
+      return [];
+    }
+  },
+  ["ohmyself-context-sections"],
+  { revalidate: 120 },
+);
 
 function build(sections: Section[]): Recall {
   // Dedupe by path, preserving order (identity first, then topic matches).
@@ -312,4 +321,137 @@ export async function introContext(shortName: string): Promise<Recall> {
 
 export function brainConfigured(): boolean {
   return Boolean(TOKEN);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Second Brain (public directory + graph)
+ *
+ * Same public/read-only token as everything else in this file. The ohmyself
+ * API itself enforces scope (`allowed = ["public"]`) server-side on every one
+ * of these endpoints, so even if something here had a bug, a private/secret
+ * note can never come back through it — this is just a thin, cached proxy.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export interface PublicNoteSummary {
+  path: string;
+  title: string;
+  type: string;
+  tags: string[];
+  links: string[];
+  created?: string;
+  updated?: string;
+  excerpt?: string;
+}
+
+export interface PublicNoteFull {
+  path: string;
+  title: string;
+  type: string;
+  tags: string[];
+  body: string;
+  created?: string;
+  updated?: string;
+}
+
+export interface SemanticEdge {
+  a: string;
+  b: string;
+  score: number;
+}
+
+const NOTES_TTL_S = 300;
+const NOTE_BODY_TTL_S = 180;
+const SEMANTIC_TTL_S = 600;
+
+const getPublicNotesCached = unstable_cache(
+  async (): Promise<PublicNoteSummary[]> => {
+    const data = await apiGet<{
+      notes?: {
+        path: string;
+        title: string;
+        type: string;
+        visibility?: string;
+        tags?: string[];
+        links?: string[];
+        created?: string;
+        updated?: string;
+        excerpt?: string;
+      }[];
+    }>("/v1/notes?limit=300");
+    return (data?.notes ?? [])
+      .filter((n) => (n.visibility ?? "public") === "public")
+      .map((n) => ({
+        path: n.path,
+        title: n.title || n.path,
+        type: n.type || "note",
+        tags: n.tags ?? [],
+        links: n.links ?? [],
+        created: n.created,
+        updated: n.updated,
+        excerpt: n.excerpt,
+      }));
+  },
+  ["ohmyself-public-notes"],
+  { revalidate: NOTES_TTL_S },
+);
+
+/** The full list of public notes — the raw material for the folder browser
+ *  and the brain graph. Never includes private/secret notes: the public
+ *  token can't see them in the first place. */
+export async function listPublicNotes(): Promise<PublicNoteSummary[]> {
+  if (!TOKEN) return [];
+  return getPublicNotesCached();
+}
+
+const getPublicNoteCached = unstable_cache(
+  async (path: string): Promise<PublicNoteFull | null> => {
+    const data = await apiGet<{
+      path: string;
+      meta?: {
+        title?: string;
+        type?: string;
+        visibility?: string;
+        tags?: string[];
+        created?: string;
+        updated?: string;
+      };
+      body?: string;
+    }>(`/v1/notes/${encPath(path)}`);
+    if (!data || typeof data.body !== "string") return null;
+    // Defense in depth on top of the API's own scope check.
+    if (data.meta?.visibility && data.meta.visibility !== "public") return null;
+    return {
+      path: data.path,
+      title: data.meta?.title || path,
+      type: data.meta?.type || "note",
+      tags: data.meta?.tags ?? [],
+      body: data.body,
+      created: data.meta?.created,
+      updated: data.meta?.updated,
+    };
+  },
+  ["ohmyself-public-note"],
+  { revalidate: NOTE_BODY_TTL_S },
+);
+
+/** A single public note's full body, for the second-brain reader view. */
+export async function readPublicNote(path: string): Promise<PublicNoteFull | null> {
+  if (!TOKEN) return null;
+  return getPublicNoteCached(path);
+}
+
+const getPublicSemanticCached = unstable_cache(
+  async (): Promise<{ enabled: boolean; edges: SemanticEdge[] }> => {
+    const data = await apiGet<{ enabled?: boolean; edges?: SemanticEdge[] }>("/v1/graph/semantic");
+    return { enabled: Boolean(data?.enabled), edges: data?.edges ?? [] };
+  },
+  ["ohmyself-public-semantic"],
+  { revalidate: SEMANTIC_TTL_S },
+);
+
+/** Embeddings-derived "idea link" edges between public notes, for the brain
+ *  graph's optional layer. Best-effort — off if embeddings aren't configured. */
+export async function publicSemanticEdges(): Promise<{ enabled: boolean; edges: SemanticEdge[] }> {
+  if (!TOKEN) return { enabled: false, edges: [] };
+  return getPublicSemanticCached();
 }

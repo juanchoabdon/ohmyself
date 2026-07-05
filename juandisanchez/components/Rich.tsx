@@ -12,7 +12,50 @@ import type { Lang } from "@/lib/i18n";
  *   ```link  → a prominent link button (single-line JSON)
  * Everything degrades gracefully: while a block is still streaming in (JSON not
  * yet complete) we show a subtle skeleton instead of raw text.
+ *
+ * Link safety: the reply now streams live from the model (see app/api/chat),
+ * so the server can't post-process the full text before it's shown. Instead,
+ * every href/src rendered here is checked against `allowedLinks` — the exact
+ * allowlist the model was given (sent by the server via the `X-Links`
+ * header). A URL the model invented anyway simply never becomes clickable:
+ * markdown/bare links fall back to their label text, images are dropped, and
+ * a card's button is omitted (the card itself still renders).
  */
+
+export interface AllowedLink {
+  url: string;
+  label: string;
+}
+
+/** Normalize a URL for allowlist comparison (trailing punctuation/slash). */
+function normUrl(raw: string): string {
+  return raw.replace(/[.,;:!?)]+$/, "").replace(/\/$/, "");
+}
+
+function normName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Build a lookup from an allowlist array: normalized URL → source label. */
+function buildAllowMap(links?: AllowedLink[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const l of links ?? []) map.set(normUrl(l.url), l.label);
+  return map;
+}
+
+function isAllowedUrl(url: string | undefined, allow: Map<string, string>): boolean {
+  return typeof url === "string" && allow.has(normUrl(url));
+}
+
+/** A real URL can still be the WRONG project's link on a card — the href must
+ *  belong to the card whose title it's attached to (matched via the link's
+ *  source label), mirroring the server's own check for the intro path. */
+function ownerMatches(url: string, title: string | undefined, allow: Map<string, string>): boolean {
+  const label = allow.get(normUrl(url)) ?? "";
+  const lab = normName(label);
+  const t = normName(title ?? "");
+  return Boolean(lab && t && (lab.includes(t) || t.includes(lab)));
+}
 
 interface CardData {
   title?: string;
@@ -110,16 +153,21 @@ function groupCards(md: string): string {
   });
 }
 
-/** The visual card, given already-parsed data. */
-function CardView({ d }: { d: CardData }) {
+/** The visual card, given already-parsed data. `href`/`image` are only kept
+ *  if they're in the allowlist (and, for `href`, actually belong to THIS
+ *  card's project) — otherwise the card still renders, just without a button
+ *  or image, exactly like the server-side check used to do for the intro. */
+function CardView({ d, allow }: { d: CardData; allow: Map<string, string> }) {
   const tags = Array.isArray(d.tags) ? d.tags.filter((t) => typeof t === "string").slice(0, 4) : [];
   const highlights = Array.isArray(d.highlights)
     ? d.highlights.filter((h) => typeof h === "string" && h.trim()).slice(0, 4)
     : [];
-  const href = isHttp(d.href) ? d.href : undefined;
+  const hrefOk = isHttp(d.href) && isAllowedUrl(d.href, allow) && ownerMatches(d.href, d.title, allow);
+  const href = hrefOk ? (d.href as string) : undefined;
+  const imageOk = isHttp(d.image) && isAllowedUrl(d.image, allow);
   return (
     <div className="rich-card group">
-      {isHttp(d.image) && (
+      {imageOk && (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img src={d.image} alt="" className="rich-card__img" loading="lazy" />
       )}
@@ -155,18 +203,18 @@ function CardView({ d }: { d: CardData }) {
   );
 }
 
-function ProjectCard({ raw }: { raw: string }) {
+function ProjectCard({ raw, allow }: { raw: string; allow: Map<string, string> }) {
   const d = parseLoose<CardData>(raw);
   if (!d || !d.title) {
     return <div className="rich-card rich-card--skeleton" aria-hidden />;
   }
-  return <CardView d={d} />;
+  return <CardView d={d} allow={allow} />;
 }
 
 /** A run of project cards, collapsed after the first few behind a "show more"
  *  button so long project lists stay scannable. The JSON payload is an array of
  *  the individual card JSON strings (built in `groupCards`). */
-function ProjectCardGroup({ raw, lang }: { raw: string; lang: Lang }) {
+function ProjectCardGroup({ raw, lang, allow }: { raw: string; lang: Lang; allow: Map<string, string> }) {
   const [open, setOpen] = useState(false);
   const cards = useMemo(() => {
     const arr = parseLoose<string[]>(raw);
@@ -189,7 +237,7 @@ function ProjectCardGroup({ raw, lang }: { raw: string; lang: Lang }) {
   return (
     <div className="rich-cardgroup">
       {shown.map((d, i) => (
-        <CardView key={d.title ?? i} d={d} />
+        <CardView key={d.title ?? i} d={d} allow={allow} />
       ))}
       {hidden > 0 && (
         <button type="button" className="rich-more" onClick={() => setOpen(true)}>
@@ -201,11 +249,14 @@ function ProjectCardGroup({ raw, lang }: { raw: string; lang: Lang }) {
   );
 }
 
-function LinkButtonBlock({ raw }: { raw: string }) {
+/** Standalone link button. If the href fails the allowlist check it's simply
+ *  dropped (no button rendered) rather than shown as a stuck skeleton — the
+ *  block is done, it's just not something we'll ever link to. */
+function LinkButtonBlock({ raw, allow }: { raw: string; allow: Map<string, string> }) {
   const d = parseLoose<LinkData>(raw);
-  if (!d || !isHttp(d.href)) {
-    return <div className="rich-linkbtn rich-linkbtn--skeleton" aria-hidden />;
-  }
+  if (!d) return <div className="rich-linkbtn rich-linkbtn--skeleton" aria-hidden />;
+  if (!isHttp(d.href)) return <div className="rich-linkbtn rich-linkbtn--skeleton" aria-hidden />;
+  if (!isAllowedUrl(d.href, allow)) return null;
   return (
     <a className="rich-linkbtn" href={d.href} target="_blank" rel="noreferrer noopener">
       <span>{d.label || hostLabel(d.href)}</span>
@@ -214,16 +265,16 @@ function LinkButtonBlock({ raw }: { raw: string }) {
   );
 }
 
-function buildComponents(lang: Lang): Components {
+function buildComponents(lang: Lang, allow: Map<string, string>): Components {
   return {
     pre({ children }) {
       const child = Array.isArray(children) ? children[0] : children;
       const props = (child as { props?: { className?: string; children?: ReactNode } })?.props ?? {};
       const cls = props.className ?? "";
       const raw = nodeText(props.children);
-      if (cls.includes("language-cardgroup")) return <ProjectCardGroup raw={raw} lang={lang} />;
-      if (cls.includes("language-card")) return <ProjectCard raw={raw} />;
-      if (cls.includes("language-link")) return <LinkButtonBlock raw={raw} />;
+      if (cls.includes("language-cardgroup")) return <ProjectCardGroup raw={raw} lang={lang} allow={allow} />;
+      if (cls.includes("language-card")) return <ProjectCard raw={raw} allow={allow} />;
+      if (cls.includes("language-link")) return <LinkButtonBlock raw={raw} allow={allow} />;
       return <pre className="rich-pre">{children}</pre>;
     },
     code({ className, children }) {
@@ -231,6 +282,9 @@ function buildComponents(lang: Lang): Components {
       return <code className={`rich-code ${className ?? ""}`}>{children}</code>;
     },
     a({ href, children }) {
+      // Covers both markdown links and GFM-autolinked bare URLs. A URL the
+      // model invented (not in the allowlist) falls back to plain text.
+      if (!isAllowedUrl(href, allow)) return <>{children}</>;
       return (
         <a href={href} target="_blank" rel="noreferrer noopener" className="rich-link">
           {children}
@@ -238,11 +292,12 @@ function buildComponents(lang: Lang): Components {
       );
     },
     img({ src, alt }) {
-      if (!isHttp(typeof src === "string" ? src : undefined)) return null;
+      const url = typeof src === "string" ? src : undefined;
+      if (!isHttp(url) || !isAllowedUrl(url, allow)) return null;
       return (
         <span className="rich-figure">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src as string} alt={alt ?? ""} loading="lazy" />
+          <img src={url} alt={alt ?? ""} loading="lazy" />
           {alt && <span className="rich-figcaption">{alt}</span>}
         </span>
       );
@@ -254,14 +309,20 @@ export function RichMarkdown({
   children,
   lang = "en",
   collapse = false,
+  allowedLinks,
 }: {
   children: string;
   lang?: Lang;
   /** Collapse long card runs behind a "show more" button (only once streaming
    *  has finished, to avoid cards reflowing as they type in). */
   collapse?: boolean;
+  /** The exact URL allowlist the model was given for this reply (from the
+   *  server's `X-Links` header). Any href/src not in this list never renders
+   *  as clickable — see the component overrides above. */
+  allowedLinks?: AllowedLink[];
 }) {
-  const components = useMemo(() => buildComponents(lang), [lang]);
+  const allow = useMemo(() => buildAllowMap(allowedLinks), [allowedLinks]);
+  const components = useMemo(() => buildComponents(lang, allow), [lang, allow]);
   const content = useMemo(() => (collapse ? groupCards(children) : children), [children, collapse]);
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>

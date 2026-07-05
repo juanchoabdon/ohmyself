@@ -5,6 +5,23 @@ export interface Suggestion {
   text: string;
 }
 
+export interface BrainStrings {
+  title: string;
+  subtitle: string;
+  backToChat: string;
+  listView: string;
+  graphView: string;
+  ideaLinks: string;
+  searchPlaceholder: string;
+  notesCount: (n: number) => string;
+  emptyTitle: string;
+  emptySub: string;
+  loading: string;
+  loadError: string;
+  openInGraph: string;
+  close: string;
+}
+
 export interface Strings {
   tagline: string;
   placeholder: string;
@@ -17,6 +34,9 @@ export interface Strings {
   errorRate: string;
   newChat: string;
   poweredBy: string;
+  navChat: string;
+  navBrain: string;
+  brain: BrainStrings;
 }
 
 const STRINGS: Record<Lang, Strings> = {
@@ -37,6 +57,24 @@ const STRINGS: Record<Lang, Strings> = {
     errorRate: "Vas muy rápido 😅 Espera unos segundos y vuelve a intentar.",
     newChat: "Nueva conversación",
     poweredBy: "Hecho con ohmyself!",
+    navChat: "Chat",
+    navBrain: "Second Brain",
+    brain: {
+      title: "Second Brain",
+      subtitle: "Las notas públicas de Juan Diego, en crudo — como carpetas de Obsidian.",
+      backToChat: "Volver al chat",
+      listView: "Carpetas",
+      graphView: "Grafo",
+      ideaLinks: "Conexiones de ideas",
+      searchPlaceholder: "Buscar notas…",
+      notesCount: (n: number) => `${n} nota${n === 1 ? "" : "s"} pública${n === 1 ? "" : "s"}`,
+      emptyTitle: "Todavía no hay notas públicas",
+      emptySub: "Cuando Juan Diego marque notas como públicas, aparecerán aquí.",
+      loading: "Cargando…",
+      loadError: "No se pudo cargar. Intenta de nuevo.",
+      openInGraph: "Ver en el grafo",
+      close: "Cerrar",
+    },
   },
   en: {
     tagline: "second self · ask me anything",
@@ -55,6 +93,24 @@ const STRINGS: Record<Lang, Strings> = {
     errorRate: "Whoa, slow down a sec 😅 Try again shortly.",
     newChat: "New chat",
     poweredBy: "Built with ohmyself!",
+    navChat: "Chat",
+    navBrain: "Second Brain",
+    brain: {
+      title: "Second Brain",
+      subtitle: "Juan Diego's public notes, raw — browse them like Obsidian folders.",
+      backToChat: "Back to chat",
+      listView: "Folders",
+      graphView: "Graph",
+      ideaLinks: "Idea links",
+      searchPlaceholder: "Search notes…",
+      notesCount: (n: number) => `${n} public note${n === 1 ? "" : "s"}`,
+      emptyTitle: "No public notes yet",
+      emptySub: "Once Juan Diego marks notes as public, they'll show up here.",
+      loading: "Loading…",
+      loadError: "Couldn't load that. Please try again.",
+      openInGraph: "View in graph",
+      close: "Close",
+    },
   },
 };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { Avatar } from "./Avatar";
-import { RichMarkdown } from "./Rich";
+import { RichMarkdown, type AllowedLink } from "./Rich";
 import type { Lang } from "@/lib/i18n";
 
 export type Role = "user" | "assistant";
@@ -11,6 +11,9 @@ export interface ChatMessage {
   role: Role;
   content: string;
   followups?: string[];
+  /** The URL allowlist for THIS reply (from the server's `X-Links` header),
+   *  used to sanitize links/cards/images at render time. */
+  links?: AllowedLink[];
 }
 
 export function MessageBubble({
@@ -40,7 +43,7 @@ export function MessageBubble({
       <div className="min-w-0 flex-1 pt-0.5">
         {message.content ? (
           <div className="prose">
-            <RichMarkdown lang={lang} collapse={!streaming}>
+            <RichMarkdown lang={lang} collapse={!streaming} allowedLinks={message.links}>
               {message.content}
             </RichMarkdown>
             {streaming && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-brand align-middle" />}
