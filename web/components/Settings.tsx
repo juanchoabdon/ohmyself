@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, siteBase } from "@/lib/api";
-import type { ApiToken, Visibility } from "@/lib/types";
+import type { ApiToken, FriendVisibility, Me, SharedByMe, SharedWithMe, UserSummary, Visibility } from "@/lib/types";
 
 interface Props {
   token: string;
@@ -16,6 +16,11 @@ const SCOPES: { value: Visibility; label: string; help: string }[] = [
   { value: "public", label: "Public", help: "Read-only, public notes only — safe for a shared agent." },
 ];
 
+const FRIEND_SCOPES: { value: FriendVisibility; label: string; help: string }[] = [
+  { value: "public", label: "Public", help: "Only your public notes." },
+  { value: "private", label: "Private", help: "Public + private notes. Never your secret notes." },
+];
+
 export function Settings({ token, open, onClose }: Props) {
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(false);
@@ -25,8 +30,38 @@ export function Settings({ token, open, onClose }: Props) {
   const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [me, setMe] = useState<Me | null>(null);
+  const [handleInput, setHandleInput] = useState("");
+  const [handleSaving, setHandleSaving] = useState(false);
+  const [handleError, setHandleError] = useState<string | null>(null);
+  const [handleSaved, setHandleSaved] = useState(false);
+
+  const [sharedByMe, setSharedByMe] = useState<SharedByMe[]>([]);
+  const [sharedWithMe, setSharedWithMe] = useState<SharedWithMe[]>([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+  const [friendQuery, setFriendQuery] = useState("");
+  const [friendResults, setFriendResults] = useState<UserSummary[]>([]);
+  const [friendPicked, setFriendPicked] = useState<UserSummary | null>(null);
+  const [friendScope, setFriendScope] = useState<FriendVisibility>("public");
+  const [sharing, setSharing] = useState(false);
+  const [friendError, setFriendError] = useState<string | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const mcpUrl = `${siteBase()}/mcp`;
   const restUrl = `${siteBase()}/v1`;
+
+  useEffect(() => {
+    if (!open) return;
+    api
+      .me(token)
+      .then((m) => {
+        setMe(m);
+        setHandleInput(m.username ?? "");
+      })
+      .catch(() => {
+        /* non-fatal */
+      });
+  }, [open, token]);
 
   useEffect(() => {
     if (!open) return;
@@ -38,6 +73,91 @@ export function Settings({ token, open, onClose }: Props) {
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load tokens"))
       .finally(() => setLoading(false));
   }, [open, token]);
+
+  useEffect(() => {
+    if (!open) return;
+    setFriendError(null);
+    setFriendsLoading(true);
+    Promise.all([api.listSharedByMe(token), api.listSharedWithMe(token)])
+      .then(([byMe, withMe]) => {
+        setSharedByMe(byMe.shares);
+        setSharedWithMe(withMe.shares);
+      })
+      .catch((e) => setFriendError(e instanceof Error ? e.message : "Could not load friends"))
+      .finally(() => setFriendsLoading(false));
+  }, [open, token]);
+
+  // Debounced search-as-you-type by @handle or display name.
+  useEffect(() => {
+    if (!open) return;
+    if (friendPicked && friendQuery !== `@${friendPicked.username}`) setFriendPicked(null);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const q = friendQuery.trim();
+    if (q.length < 2) {
+      setFriendResults([]);
+      return;
+    }
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const { users } = await api.searchUsers(token, q);
+        setFriendResults(users);
+      } catch {
+        setFriendResults([]);
+      }
+    }, 250);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [friendQuery, open, token]);
+
+  function pickFriend(u: UserSummary) {
+    setFriendPicked(u);
+    setFriendQuery(`@${u.username}`);
+    setFriendResults([]);
+  }
+
+  async function shareBrain() {
+    const identifier = friendPicked ? friendPicked.username : friendQuery.trim();
+    if (!identifier) return;
+    setSharing(true);
+    setFriendError(null);
+    try {
+      await api.shareWithFriend(token, identifier, friendScope);
+      setFriendQuery("");
+      setFriendPicked(null);
+      setFriendResults([]);
+      const { shares } = await api.listSharedByMe(token);
+      setSharedByMe(shares);
+    } catch (e) {
+      setFriendError(e instanceof Error ? e.message : "Could not share");
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function unshare(id: string) {
+    try {
+      await api.revokeShare(token, id);
+      setSharedByMe((s) => s.filter((x) => x.id !== id));
+    } catch (e) {
+      setFriendError(e instanceof Error ? e.message : "Could not revoke");
+    }
+  }
+
+  async function saveHandle() {
+    setHandleSaving(true);
+    setHandleError(null);
+    setHandleSaved(false);
+    try {
+      const { username } = await api.setUsername(token, handleInput);
+      setHandleInput(username);
+      setMe((m) => (m ? { ...m, username } : m));
+      setHandleSaved(true);
+      setTimeout(() => setHandleSaved(false), 1600);
+    } catch (e) {
+      setHandleError(e instanceof Error ? e.message : "Could not save handle");
+    } finally {
+      setHandleSaving(false);
+    }
+  }
 
   async function create() {
     setCreating(true);
@@ -197,6 +317,133 @@ export function Settings({ token, open, onClose }: Props) {
                   >
                     Revoke
                   </button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Friends */}
+          <section>
+            <h3 className="text-sm font-semibold text-ink">Friends</h3>
+            <p className="mt-1 text-sm text-muted">
+              Share your brain, read-only, with someone else on ohmyself! — they&apos;ll get
+              recall_friend, search_friend_brain, list_friend_notes and read_friend_note in their
+              own agent, capped at the level you pick. Never includes secret notes.
+            </p>
+
+            {/* Your @handle */}
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <div className="flex flex-1 items-center gap-1 rounded-lg border border-border bg-bg px-3 py-2">
+                <span className="text-sm text-muted">@</span>
+                <input
+                  value={handleInput}
+                  onChange={(e) => setHandleInput(e.target.value.toLowerCase())}
+                  placeholder="your-handle"
+                  className="min-w-0 flex-1 bg-transparent text-sm text-ink focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={saveHandle}
+                disabled={handleSaving || !handleInput.trim() || handleInput === me?.username}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-ink hover:border-brand hover:text-brand-ink disabled:opacity-60"
+              >
+                {handleSaving ? "…" : handleSaved ? "Saved" : "Save handle"}
+              </button>
+            </div>
+            {handleError && <p className="mt-1.5 text-xs text-vis-secret">{handleError}</p>}
+            <p className="mt-1.5 text-xs text-muted">
+              This is how friends find you to share with — 3-20 characters, lowercase letters,
+              numbers, underscores.
+            </p>
+
+            {/* Share with someone */}
+            <div className="relative mt-4 flex flex-col gap-2 sm:flex-row">
+              <input
+                value={friendQuery}
+                onChange={(e) => setFriendQuery(e.target.value)}
+                placeholder="Search by name or @handle"
+                className="flex-1 rounded-lg border border-border bg-bg px-3 py-2 text-sm focus:border-brand"
+              />
+              <select
+                value={friendScope}
+                onChange={(e) => setFriendScope(e.target.value as FriendVisibility)}
+                className="rounded-lg border border-border bg-bg px-3 py-2 text-sm focus:border-brand"
+              >
+                {FRIEND_SCOPES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={shareBrain}
+                disabled={sharing || !friendQuery.trim()}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-95 disabled:opacity-60"
+              >
+                {sharing ? "…" : "Share"}
+              </button>
+
+              {friendResults.length > 0 && (
+                <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg sm:right-auto sm:w-72">
+                  {friendResults.map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => pickFriend(u)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-brand-weak"
+                    >
+                      <span className="truncate font-medium text-ink">{u.displayName}</span>
+                      <span className="truncate text-xs text-muted">@{u.username}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-muted">{FRIEND_SCOPES.find((s) => s.value === friendScope)?.help}</p>
+
+            {friendError && <p className="mt-3 text-sm text-vis-secret">{friendError}</p>}
+
+            <p className="mt-4 text-xs font-medium uppercase tracking-wide text-muted">People you&apos;ve shared with</p>
+            <div className="mt-1.5 divide-y divide-border rounded-lg border border-border">
+              {friendsLoading && <p className="px-3 py-3 text-sm text-muted">Loading…</p>}
+              {!friendsLoading && sharedByMe.length === 0 && (
+                <p className="px-3 py-3 text-sm text-muted">Nobody yet.</p>
+              )}
+              {sharedByMe.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-ink">{s.viewerName}</span>
+                      <ScopeBadge scope={s.maxVisibility} />
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted">@{s.viewerUsername}</div>
+                  </div>
+                  <button
+                    onClick={() => unshare(s.id)}
+                    className="shrink-0 rounded-md px-2 py-1 text-xs text-vis-secret hover:bg-vis-secret/10"
+                  >
+                    Revoke
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <p className="mt-4 text-xs font-medium uppercase tracking-wide text-muted">Shared with you</p>
+            <div className="mt-1.5 divide-y divide-border rounded-lg border border-border">
+              {friendsLoading && <p className="px-3 py-3 text-sm text-muted">Loading…</p>}
+              {!friendsLoading && sharedWithMe.length === 0 && (
+                <p className="px-3 py-3 text-sm text-muted">
+                  Nobody has shared with you yet — ask a friend to add your @handle above.
+                </p>
+              )}
+              {sharedWithMe.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-ink">{s.ownerName}</span>
+                      <ScopeBadge scope={s.maxVisibility} />
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted">@{s.ownerUsername}</div>
+                  </div>
                 </div>
               ))}
             </div>

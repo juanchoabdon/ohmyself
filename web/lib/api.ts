@@ -1,4 +1,16 @@
-import type { ApiToken, Category, ContextResult, FullNote, IndexedNote, Visibility } from "./types.js";
+import type {
+  ApiToken,
+  Category,
+  ContextResult,
+  FriendVisibility,
+  FullNote,
+  IndexedNote,
+  Me,
+  SharedByMe,
+  SharedWithMe,
+  UserSummary,
+  Visibility,
+} from "./types.js";
 
 function base(): string {
   return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
@@ -114,4 +126,28 @@ export const api = {
 
   revokeToken: (token: string, id: string) =>
     call<{ revoked: string }>(`/v1/tokens/${id}`, token, { method: "DELETE" }),
+
+  me: (token: string) => call<Me>("/v1/me", token),
+
+  setUsername: (token: string, username: string) =>
+    call<{ username: string }>("/v1/me/username", token, {
+      method: "PUT",
+      body: JSON.stringify({ username }),
+    }),
+
+  searchUsers: (token: string, q: string) =>
+    call<{ users: UserSummary[] }>(`/v1/users/search?q=${encodeURIComponent(q)}`, token),
+
+  listSharedByMe: (token: string) => call<{ shares: SharedByMe[] }>("/v1/friends/shared-by-me", token),
+
+  shareWithFriend: (token: string, identifier: string, maxVisibility: FriendVisibility) =>
+    call<{ share: SharedByMe }>("/v1/friends/shared-by-me", token, {
+      method: "POST",
+      body: JSON.stringify({ identifier, maxVisibility }),
+    }),
+
+  revokeShare: (token: string, id: string) =>
+    call<{ revoked: string }>(`/v1/friends/shared-by-me/${id}`, token, { method: "DELETE" }),
+
+  listSharedWithMe: (token: string) => call<{ shares: SharedWithMe[] }>("/v1/friends/shared-with-me", token),
 };

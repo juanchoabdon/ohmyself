@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   allowedVisibilities,
   buildCore,
+  buildFriendDirectory,
   canWrite,
   getDisplayName,
   getUserConfig,
@@ -11,10 +12,12 @@ import {
   slugify,
   todayISO,
   type AuthContext,
+  type FriendEntry,
   type NoteType,
   type UserConfig,
+  type Visibility,
 } from "../core/index.js";
-import { ForbiddenError } from "../core/errors.js";
+import { ForbiddenError, NotFoundError } from "../core/errors.js";
 
 const VisibilityEnum = z.enum(["public", "private", "secret"]);
 
@@ -228,6 +231,163 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           memory: "memory/log.md — quick durable facts learned in conversation (use remember)",
         },
       });
+    },
+  );
+
+  // ── Friends (read-only access to brains shared with you) ──────────────────
+  // A friend's brain is addressable by a stable `friend` slug — see
+  // list_friends. Access is capped at whatever visibility THEY granted,
+  // regardless of your own scope, and is always read-only.
+
+  let _friends: FriendEntry[] | null = null;
+  async function friends(): Promise<FriendEntry[]> {
+    return (_friends ??= await buildFriendDirectory(auth.userId));
+  }
+  function findFriend(list: FriendEntry[], slug: string): FriendEntry {
+    const found = list.find((f) => f.slug === slug);
+    if (!found) {
+      throw new NotFoundError(`no friend '${slug}' — call list_friends to see who has shared with you`);
+    }
+    return found;
+  }
+  async function friendIdentityText(ownerId: string, name: string, allowed: Visibility[]): Promise<string> {
+    const idNotes = await brain.listNotes(ownerId, { allowed, types: ["identity"], limit: 50 });
+    if (idNotes.length === 0) return `No identity info has been shared for ${name}.`;
+    const ordered = [...idNotes].sort((a, b) => {
+      const am = (p: string) => (p.endsWith("identity/about-me.md") ? 0 : 1);
+      return am(a.path) - am(b.path) || a.path.localeCompare(b.path);
+    });
+    const sections: string[] = [];
+    for (const n of ordered) {
+      try {
+        const note = await brain.readNote(ownerId, n.path, allowed);
+        const body = note.body.trim();
+        if (!body) continue;
+        sections.push(`## ${note.meta.title || n.title || n.path}\n\n${body}`);
+      } catch {
+        /* skip unreadable pages */
+      }
+    }
+    if (sections.length === 0) return `Identity info exists for ${name} but is empty.`;
+    return `# ${name}'s profile (shared with you)\n\n${sections.join("\n\n---\n\n")}`;
+  }
+
+  server.registerTool(
+    "list_friends",
+    {
+      title: "List friends",
+      description:
+        "List the people who've shared their brain (read-only) with you. Returns each friend's slug (use it as the `friend` argument for recall_friend, search_friend_brain, list_friend_notes, read_friend_note, who_is_friend) and the visibility level they granted you.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {},
+    },
+    async () => text((await friends()).map((f) => ({ friend: f.slug, name: f.name, maxVisibility: f.maxVisibility }))),
+  );
+
+  server.registerTool(
+    "recall_friend",
+    {
+      title: "Recall about a friend's topic",
+      description:
+        "Recall everything a friend has shared that's relevant to a topic — same as recall, but scoped to a friend's brain. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        topic: z.string().describe("the topic or question to recall context for"),
+        limit: z.number().int().positive().max(20).optional(),
+      },
+    },
+    async ({ friend, topic, limit }) => {
+      const f = findFriend(await friends(), friend);
+      const ctx = await brain.getContext(f.ownerId, topic, allowedVisibilities(f.maxVisibility), limit ?? 6);
+      return text(ctx);
+    },
+  );
+
+  server.registerTool(
+    "search_friend_brain",
+    {
+      title: "Search a friend's brain",
+      description:
+        "Full-text search across a friend's notes — same as search_brain, but scoped to a friend's brain. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        query: z.string().describe("search terms"),
+        types: z.array(z.string()).optional().describe("filter by note types"),
+        tags: z.array(z.string()).optional().describe("filter by tags (any match)"),
+        limit: z.number().int().positive().max(50).optional(),
+      },
+    },
+    async ({ friend, query, types, tags, limit }) => {
+      const f = findFriend(await friends(), friend);
+      const res = await brain.search(f.ownerId, query, {
+        allowed: allowedVisibilities(f.maxVisibility),
+        types,
+        tags,
+        limit,
+      });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "list_friend_notes",
+    {
+      title: "List a friend's notes",
+      description:
+        "List a friend's notes, optionally filtered by type and tags — same as list_notes, but scoped to a friend's brain. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        type: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ friend, type, tags, limit }) => {
+      const f = findFriend(await friends(), friend);
+      const res = await brain.listNotes(f.ownerId, {
+        allowed: allowedVisibilities(f.maxVisibility),
+        types: type ? [type] : undefined,
+        tags,
+        limit,
+      });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "read_friend_note",
+    {
+      title: "Read a friend's note",
+      description:
+        "Read the full markdown of one of a friend's notes by path — same as read_note, but scoped to a friend's brain. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        path: z.string().describe("relative note path, e.g. projects/x/_index.md"),
+      },
+    },
+    async ({ friend, path }) => {
+      const f = findFriend(await friends(), friend);
+      const note = await brain.readNote(f.ownerId, path, allowedVisibilities(f.maxVisibility));
+      return text(serializeNote(note.meta, note.body));
+    },
+  );
+
+  server.registerTool(
+    "who_is_friend",
+    {
+      title: "Who is this friend",
+      description:
+        "Summarize who a friend is from the identity pages they've shared with you. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: { friend: z.string().describe("friend slug from list_friends") },
+    },
+    async ({ friend }) => {
+      const f = findFriend(await friends(), friend);
+      return text(await friendIdentityText(f.ownerId, f.name, allowedVisibilities(f.maxVisibility)));
     },
   );
 

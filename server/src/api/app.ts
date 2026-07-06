@@ -6,12 +6,20 @@ import {
   buildCore,
   canWrite,
   createToken,
+  getProfileSummary,
   getUserConfig,
+  isFriendVisibility,
   isScope,
+  listSharedByMe,
+  listSharedWithMe,
   listTokens,
+  revokeShare,
   revokeToken,
+  searchUsers,
   serializeNote,
   setUserConfig,
+  setUsername,
+  shareWith,
   type AuthContext,
   type Scope,
   type Visibility,
@@ -65,9 +73,36 @@ export function createApp(): Hono<Env> {
     await next();
   });
 
-  app.get("/v1/me", (c) => {
+  app.get("/v1/me", async (c) => {
     const auth = c.get("auth");
-    return c.json({ userId: auth.userId, scope: auth.scope, readonly: auth.readonly, via: auth.via });
+    const profile = await getProfileSummary(auth.userId);
+    return c.json({
+      userId: auth.userId,
+      scope: auth.scope,
+      readonly: auth.readonly,
+      via: auth.via,
+      username: profile?.username ?? null,
+      displayName: profile?.displayName ?? null,
+    });
+  });
+
+  app.put("/v1/me/username", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const { username } = await c.req.json<{ username?: string }>();
+    if (!username?.trim()) throw new BadRequestError("username is required");
+    const saved = await setUsername(auth.userId, username);
+    return c.json({ username: saved });
+  });
+
+  // Find people to share your brain with — matches @handle or display name,
+  // never raw email. Requires a signed-in session (not a leaked personal token).
+  app.get("/v1/users/search", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const q = c.req.query("q") ?? "";
+    const results = await searchUsers(q, auth.userId, 10);
+    return c.json({ users: results });
   });
 
   // ── Personal API tokens (for MCP clients / external tools) ────────────────
@@ -92,6 +127,40 @@ export function createApp(): Hono<Env> {
     requireJwt(auth);
     await revokeToken(auth.userId, c.req.param("id"));
     return c.json({ revoked: c.req.param("id") });
+  });
+
+  // ── Friends (read-only cross-brain sharing) ────────────────────────────────
+  // A one-way grant the OWNER controls: share your brain, read-only, up to a
+  // visibility ceiling (never `secret`), with another ohmyself! account by
+  // email. Management is JWT-only, same as tokens — a leaked personal token
+  // shouldn't be able to grant strangers access to your brain.
+  app.get("/v1/friends/shared-by-me", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    return c.json({ shares: await listSharedByMe(auth.userId) });
+  });
+
+  app.post("/v1/friends/shared-by-me", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const body = await c.req.json<{ identifier?: string; maxVisibility?: string }>();
+    const maxVisibility = isFriendVisibility(body.maxVisibility) ? body.maxVisibility : "public";
+    if (!body.identifier?.trim()) throw new BadRequestError("who to share with is required");
+    const share = await shareWith(auth.userId, body.identifier, maxVisibility);
+    return c.json({ share }, 201);
+  });
+
+  app.delete("/v1/friends/shared-by-me/:id", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    await revokeShare(auth.userId, c.req.param("id"));
+    return c.json({ revoked: c.req.param("id") });
+  });
+
+  app.get("/v1/friends/shared-with-me", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    return c.json({ shares: await listSharedWithMe(auth.userId) });
   });
 
   // Onboard a new user. By default this sets up STRUCTURE ONLY — it returns the

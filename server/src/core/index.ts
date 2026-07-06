@@ -26,6 +26,17 @@ export {
   refreshTokens,
 } from "./oauth.js";
 export type { OAuthClient, RegisterClientInput, IssuedTokens } from "./oauth.js";
+export {
+  shareWith,
+  listSharedByMe,
+  listSharedWithMe,
+  revokeShare,
+  buildFriendDirectory,
+  isFriendVisibility,
+} from "./friends.js";
+export type { FriendVisibility, SharedByMe, SharedWithMe, FriendEntry } from "./friends.js";
+export { searchUsers, getProfileSummary, setUsername, normalizeUsername } from "./users.js";
+export type { UserSummary } from "./users.js";
 
 export interface OhmyselfCore {
   brain: Brain;
