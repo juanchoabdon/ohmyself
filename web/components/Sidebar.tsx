@@ -128,7 +128,7 @@ export function Sidebar({
   // Pillar keys come from categories (covers empty ones too, not just forest).
   const initialized = useRef(false);
   useEffect(() => {
-    if (!initialized.current && notes.length > 0) {
+    if (!initialized.current && notes.length > 0 && categories.length > 0) {
       initialized.current = true;
       const pillarKeys = categories.map((c) => `__pillar__/${c.folder}`);
       setCollapsed(new Set([...pillarKeys, ...folderPaths]));
