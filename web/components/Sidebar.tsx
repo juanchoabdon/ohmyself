@@ -109,7 +109,7 @@ export function Sidebar({
   const filtering = Boolean(query.trim() || typeFilter || visFilter);
   const forest = useMemo(() => buildForest(notes), [notes]);
 
-  // Every nested folder path — used to collapse below the first level by default.
+  // Every nested folder path — used to collapse all folders by default.
   const folderPaths = useMemo(() => {
     const paths: string[] = [];
     const walk = (nodes: TreeNode[]) => {
@@ -124,14 +124,15 @@ export function Sidebar({
     return paths;
   }, [forest]);
 
-  // Collapse nested folders once notes first load (pillars stay open).
+  // Collapse all folders (pillars + nested) once notes first load.
   const initialized = useRef(false);
   useEffect(() => {
-    if (!initialized.current && folderPaths.length > 0) {
+    if (!initialized.current && forest.size > 0) {
       initialized.current = true;
-      setCollapsed(new Set(folderPaths));
+      const pillarKeys = Array.from(forest.keys()).map((r) => `__pillar__/${r}`);
+      setCollapsed(new Set([...pillarKeys, ...folderPaths]));
     }
-  }, [folderPaths]);
+  }, [forest, folderPaths]);
 
   // Category roots in config order, then any extra folders found in notes.
   const roots = useMemo(() => {
