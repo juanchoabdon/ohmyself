@@ -11,6 +11,7 @@ export interface BrainStrings {
   backToChat: string;
   listView: string;
   graphView: string;
+  projectsLabel: string;
   ideaLinks: string;
   searchPlaceholder: string;
   notesCount: (n: number) => string;
@@ -82,6 +83,7 @@ const STRINGS: Record<Lang, Strings> = {
       backToChat: "Volver al chat",
       listView: "Carpetas",
       graphView: "Grafo",
+      projectsLabel: "Proyectos",
       ideaLinks: "Conexiones de ideas",
       searchPlaceholder: "Buscar notas…",
       notesCount: (n: number) => `${n} nota${n === 1 ? "" : "s"} pública${n === 1 ? "" : "s"}`,
@@ -132,6 +134,7 @@ const STRINGS: Record<Lang, Strings> = {
       backToChat: "Back to chat",
       listView: "Folders",
       graphView: "Graph",
+      projectsLabel: "Projects",
       ideaLinks: "Idea links",
       searchPlaceholder: "Search notes…",
       notesCount: (n: number) => `${n} public note${n === 1 ? "" : "s"}`,

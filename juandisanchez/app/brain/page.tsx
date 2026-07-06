@@ -27,6 +27,12 @@ interface NoteSummary {
   excerpt?: string;
 }
 
+interface FolderEntry {
+  key: string;
+  label: string;
+  items: NoteSummary[];
+}
+
 interface NoteFull {
   path: string;
   title: string;
@@ -174,8 +180,10 @@ export default function BrainPage() {
   // `projects/<slug>/...` (an overview, a note, a spec, a subproject) is
   // part of THAT project's folder, never its own top-level bucket. Without
   // this, e.g. ohmyself's spec docs would show as a random "spec" folder
-  // sitting next to "identity" instead of nested under "ohmyself".
-  const groups = useMemo(() => {
+  // sitting next to "identity" instead of nested under "ohmyself". Projects
+  // themselves nest one level deeper, under a single "Projects" group,
+  // instead of sitting as flat top-level folders next to identity/books/etc.
+  const { topEntries, projectEntries } = useMemo(() => {
     const top = new Map<string, NoteSummary[]>();
     const projects = new Map<string, NoteSummary[]>();
     for (const n of filtered) {
@@ -191,24 +199,26 @@ export default function BrainPage() {
         top.set(key, arr);
       }
     }
-    const entries: { key: string; label: string; items: NoteSummary[] }[] = [];
+    const top_: FolderEntry[] = [];
     for (const [key, items] of top) {
       items.sort((a, b) => a.title.localeCompare(b.title));
-      entries.push({ key, label: key, items });
-    }
-    for (const [slug, items] of projects) {
-      items.sort((a, b) => a.title.localeCompare(b.title));
-      const overview = items.find((n) => n.path === `projects/${slug}/_index.md`);
-      entries.push({ key: slug, label: overview?.title || humanizeSlug(slug), items });
+      top_.push({ key, label: key, items });
     }
     // "identity" leads — it's the natural front door of this view
     // (who this even is), everything else follows alphabetically.
-    entries.sort((a, b) => {
+    top_.sort((a, b) => {
       if (a.key === "identity") return -1;
       if (b.key === "identity") return 1;
       return a.label.localeCompare(b.label);
     });
-    return entries;
+    const projects_: FolderEntry[] = [];
+    for (const [slug, items] of projects) {
+      items.sort((a, b) => a.title.localeCompare(b.title));
+      const overview = items.find((n) => n.path === `projects/${slug}/_index.md`);
+      projects_.push({ key: slug, label: overview?.title || humanizeSlug(slug), items });
+    }
+    projects_.sort((a, b) => a.label.localeCompare(b.label));
+    return { topEntries: top_, projectEntries: projects_ };
   }, [filtered]);
 
   const graphNotes: IndexedNote[] = useMemo(
@@ -268,9 +278,19 @@ export default function BrainPage() {
           </div>
         )}
         <div className="space-y-2 pb-2">
-          {groups.map((g) => (
-            <FolderGroup key={g.key} label={g.label} items={g.items} activePath={selectedPath} onOpen={selectNote} />
+          {topEntries.map((g) => (
+            <FolderGroup
+              key={g.key}
+              label={g.label}
+              items={g.items}
+              activePath={selectedPath}
+              onOpen={selectNote}
+              defaultOpen={g.key === "identity"}
+            />
           ))}
+          {projectEntries.length > 0 && (
+            <ProjectsGroup label={t.brain.projectsLabel} projects={projectEntries} activePath={selectedPath} onOpen={selectNote} />
+          )}
         </div>
       </div>
     </>
@@ -393,13 +413,17 @@ function FolderGroup({
   items,
   activePath,
   onOpen,
+  nested = false,
+  defaultOpen = false,
 }: {
   label: string;
   items: NoteSummary[];
   activePath: string | null;
   onOpen: (path: string) => void;
+  nested?: boolean;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="overflow-hidden rounded-xl">
       <button
@@ -408,7 +432,11 @@ function FolderGroup({
         className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left transition-colors hover:bg-elevated rounded-lg"
         aria-expanded={open}
       >
-        <span className="flex items-center gap-2 font-heading text-xs font-semibold uppercase tracking-wide text-muted">
+        <span
+          className={`flex items-center gap-2 font-heading uppercase tracking-wide text-muted ${
+            nested ? "text-[11px] font-medium" : "text-xs font-semibold"
+          }`}
+        >
           <FolderIcon open={open} />
           {label}
         </span>
@@ -431,6 +459,47 @@ function FolderGroup({
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/** A single top-level "Projects" folder whose children are each project's
+ *  own sub-folder — mirrors the real `projects/<slug>/...` structure instead
+ *  of flattening every project into a top-level bucket next to identity. */
+function ProjectsGroup({
+  label,
+  projects,
+  activePath,
+  onOpen,
+}: {
+  label: string;
+  projects: FolderEntry[];
+  activePath: string | null;
+  onOpen: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const total = projects.reduce((sum, p) => sum + p.items.length, 0);
+  return (
+    <div className="overflow-hidden rounded-xl">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left transition-colors hover:bg-elevated rounded-lg"
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-2 font-heading text-xs font-semibold uppercase tracking-wide text-muted">
+          <FolderIcon open={open} />
+          {label}
+        </span>
+        <span className="text-xs text-faint">{total}</span>
+      </button>
+      {open && (
+        <div className="ml-2.5 mt-0.5 space-y-0.5 border-l border-border pl-2">
+          {projects.map((p) => (
+            <FolderGroup key={p.key} label={p.label} items={p.items} activePath={activePath} onOpen={onOpen} nested />
+          ))}
+        </div>
       )}
     </div>
   );
