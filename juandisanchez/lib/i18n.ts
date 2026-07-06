@@ -22,6 +22,20 @@ export interface BrainStrings {
   close: string;
 }
 
+export interface SkillsStrings {
+  title: string;
+  subtitle: string;
+  searchPlaceholder: string;
+  skillsCount: (n: number) => string;
+  emptyTitle: string;
+  emptySub: string;
+  loading: string;
+  loadError: string;
+  whenToUse: string;
+  viewFull: string;
+  close: string;
+}
+
 export interface Strings {
   tagline: string;
   placeholder: string;
@@ -36,7 +50,9 @@ export interface Strings {
   poweredBy: string;
   navChat: string;
   navBrain: string;
+  navSkills: string;
   brain: BrainStrings;
+  skills: SkillsStrings;
 }
 
 const STRINGS: Record<Lang, Strings> = {
@@ -58,10 +74,11 @@ const STRINGS: Record<Lang, Strings> = {
     newChat: "Nueva conversación",
     poweredBy: "Hecho con ohmyself!",
     navChat: "Chat",
-    navBrain: "Second Brain",
+    navBrain: "Second Self",
+    navSkills: "Skills",
     brain: {
-      title: "Second Brain",
-      subtitle: "Las notas públicas de Juan Diego, en crudo — como carpetas de Obsidian.",
+      title: "Second Self",
+      subtitle: "Las notas públicas de Juan Diego, en crudo — organizadas en carpetas.",
       backToChat: "Volver al chat",
       listView: "Carpetas",
       graphView: "Grafo",
@@ -73,6 +90,19 @@ const STRINGS: Record<Lang, Strings> = {
       loading: "Cargando…",
       loadError: "No se pudo cargar. Intenta de nuevo.",
       openInGraph: "Ver en el grafo",
+      close: "Cerrar",
+    },
+    skills: {
+      title: "Skills",
+      subtitle: "Los playbooks que Juan Diego usa día a día — cómo trabaja, no solo qué construye.",
+      searchPlaceholder: "Buscar skills…",
+      skillsCount: (n: number) => `${n} skill${n === 1 ? "" : "s"} público${n === 1 ? "" : "s"}`,
+      emptyTitle: "Todavía no hay skills públicos",
+      emptySub: "Cuando Juan Diego marque un skill como público, aparecerá aquí.",
+      loading: "Cargando…",
+      loadError: "No se pudo cargar. Intenta de nuevo.",
+      whenToUse: "Cuándo usarlo",
+      viewFull: "Ver skill completo",
       close: "Cerrar",
     },
   },
@@ -94,10 +124,11 @@ const STRINGS: Record<Lang, Strings> = {
     newChat: "New chat",
     poweredBy: "Built with ohmyself!",
     navChat: "Chat",
-    navBrain: "Second Brain",
+    navBrain: "Second Self",
+    navSkills: "Skills",
     brain: {
-      title: "Second Brain",
-      subtitle: "Juan Diego's public notes, raw — browse them like Obsidian folders.",
+      title: "Second Self",
+      subtitle: "Juan Diego's public notes, raw — browse them like folders.",
       backToChat: "Back to chat",
       listView: "Folders",
       graphView: "Graph",
@@ -109,6 +140,19 @@ const STRINGS: Record<Lang, Strings> = {
       loading: "Loading…",
       loadError: "Couldn't load that. Please try again.",
       openInGraph: "View in graph",
+      close: "Close",
+    },
+    skills: {
+      title: "Skills",
+      subtitle: "The playbooks Juan Diego actually runs on — how he works, not just what he ships.",
+      searchPlaceholder: "Search skills…",
+      skillsCount: (n: number) => `${n} public skill${n === 1 ? "" : "s"}`,
+      emptyTitle: "No public skills yet",
+      emptySub: "Once Juan Diego marks a skill as public, it'll show up here.",
+      loading: "Loading…",
+      loadError: "Couldn't load that. Please try again.",
+      whenToUse: "When to use it",
+      viewFull: "View full skill",
       close: "Close",
     },
   },

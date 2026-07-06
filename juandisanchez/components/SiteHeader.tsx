@@ -34,34 +34,46 @@ function SocialBar() {
   );
 }
 
-function NavTabs({ active, chatLabel, brainLabel }: { active: "chat" | "brain"; chatLabel: string; brainLabel: string }) {
+type Active = "chat" | "brain" | "skills";
+
+function NavTabs({
+  active,
+  chatLabel,
+  brainLabel,
+  skillsLabel,
+}: {
+  active: Active;
+  chatLabel: string;
+  brainLabel: string;
+  skillsLabel: string;
+}) {
+  const tabs: { key: Active; href: string; label: string }[] = [
+    { key: "chat", href: "/", label: chatLabel },
+    { key: "brain", href: "/brain", label: brainLabel },
+    { key: "skills", href: "/skills", label: skillsLabel },
+  ];
   return (
     <div className="flex items-center rounded-full border border-border bg-surface p-0.5 text-xs">
-      <Link
-        href="/"
-        aria-current={active === "chat" ? "page" : undefined}
-        className={`rounded-full px-2.5 py-1 font-medium transition-colors ${
-          active === "chat" ? "bg-brand text-white" : "text-muted hover:text-ink"
-        }`}
-      >
-        {chatLabel}
-      </Link>
-      <Link
-        href="/brain"
-        aria-current={active === "brain" ? "page" : undefined}
-        className={`rounded-full px-2.5 py-1 font-medium transition-colors ${
-          active === "brain" ? "bg-brand text-white" : "text-muted hover:text-ink"
-        }`}
-      >
-        {brainLabel}
-      </Link>
+      {tabs.map((tab) => (
+        <Link
+          key={tab.key}
+          href={tab.href}
+          aria-current={active === tab.key ? "page" : undefined}
+          className={`rounded-full px-2.5 py-1 font-medium transition-colors ${
+            active === tab.key ? "bg-brand text-white" : "text-muted hover:text-ink"
+          }`}
+        >
+          {tab.label}
+        </Link>
+      ))}
     </div>
   );
 }
 
-/** Shared top bar for both the chat (`/`) and Second Brain (`/brain`) views —
- *  same identity, same nav, same language switch, so moving between the two
- *  feels like one app with two tabs rather than a different site. */
+/** Shared top bar for the chat (`/`), Second Self (`/brain`), and Skills
+ *  (`/skills`) views — same identity, same nav, same language switch, so
+ *  moving between them feels like one app with tabs rather than separate
+ *  sites. */
 export function SiteHeader({
   lang,
   onLang,
@@ -69,7 +81,7 @@ export function SiteHeader({
 }: {
   lang: Lang;
   onLang: (next: Lang) => void;
-  active: "chat" | "brain";
+  active: Active;
 }) {
   const t = strings(lang);
   return (
@@ -88,7 +100,7 @@ export function SiteHeader({
         </div>
       </div>
       <div className="flex items-center gap-1.5 sm:gap-2">
-        <NavTabs active={active} chatLabel={t.navChat} brainLabel={t.navBrain} />
+        <NavTabs active={active} chatLabel={t.navChat} brainLabel={t.navBrain} skillsLabel={t.navSkills} />
         <span className="h-5 w-px bg-border" aria-hidden />
         <SocialBar />
         <span className="h-5 w-px bg-border" aria-hidden />

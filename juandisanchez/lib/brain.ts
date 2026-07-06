@@ -18,6 +18,11 @@ import { unstable_cache } from "next/cache";
 const API_URL = (process.env.OHMYSELF_API_URL ?? "https://ohmyself-api.vercel.app").replace(/\/+$/, "");
 const TOKEN = process.env.OHMYSELF_PUBLIC_TOKEN ?? "";
 
+// Budget for the EXTRA topic-relevant notes only (see `build()`'s
+// `guaranteedCount` — identity + project overviews are always included in
+// full, bypassing this cap, since both are already bounded by their own
+// note-count/body-length limits and are what makes "who is this" / "what
+// has he built" reliable regardless of how much identity content exists).
 const MAX_CONTEXT_CHARS = 12000;
 const MAX_IDENTITY_NOTES = 8;
 
@@ -149,13 +154,29 @@ function topProjectSlug(path: string): string | null {
   return m ? m[1] : null;
 }
 
+/** "java-household" -> "Java Household", "ohmyself" -> "Ohmyself" — a
+ *  readable fallback title for a project that only exists as subprojects
+ *  (no public top-level overview to borrow a title from). */
+function humanizeSlug(slug: string): string {
+  return slug
+    .split(/[-_]/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
 /**
- * The owner's TOP-LEVEL public projects (projects/<slug>/_index.md) for context,
- * plus a links allowlist gathered from each project AND its public subprojects
- * (so e.g. Flowya's iOS/macOS repo links can appear on the Flowya card). Links
- * are extracted from the FULL bodies (before truncation) so a URL deep in a note
- * is never lost. Always included so "what has he built?" works regardless of
- * query wording/language.
+ * The owner's public projects for context, plus a links allowlist gathered
+ * from every project body (so e.g. Flowya's iOS/macOS repo links can appear
+ * on its card). Links are extracted from the FULL bodies (before truncation)
+ * so a URL deep in a note is never lost. Always included so "what has he
+ * built?" works regardless of query wording/language.
+ *
+ * Two shapes of "project" become a card:
+ *   1. A top-level overview: projects/<slug>/_index.md.
+ *   2. An "orphan" group: projects/<slug>/subprojects/*\/_index.md when the
+ *      slug has NO public top-level overview (e.g. Flowya's own _index.md is
+ *      private, but its iOS/macOS subprojects are public) — these are merged
+ *      into ONE synthesized card per slug rather than silently dropped.
  */
 const projectBundle = unstable_cache(
   async (): Promise<{ sections: Section[]; links: LinkRef[] }> => {
@@ -163,20 +184,28 @@ const projectBundle = unstable_cache(
       "/v1/notes?type=project&limit=100",
     );
     const all = list?.notes ?? [];
-    // Top-level overviews (these become context + project cards).
-    const overviews = all
-      .filter((n) => /^projects\/[^/]+\/_index\.md$/.test(n.path))
-      .slice(0, MAX_PROJECTS);
+
+    const topLevel = all.filter((n) => /^projects\/[^/]+\/_index\.md$/.test(n.path));
+    const overviews = topLevel.slice(0, MAX_PROJECTS);
     const shownSlugs = new Set(overviews.map((n) => topProjectSlug(n.path)));
     const titleBySlug = new Map(overviews.map((n) => [topProjectSlug(n.path), n.title] as const));
-    // Public subprojects of the shown projects — used only to harvest their links.
-    const subprojects = all.filter(
-      (n) =>
-        /^projects\/[^/]+\/subprojects\/.+\/_index\.md$/.test(n.path) &&
-        shownSlugs.has(topProjectSlug(n.path)),
-    );
 
-    const [overviewFulls, subFulls] = await Promise.all([
+    const allSubprojects = all.filter((n) => /^projects\/[^/]+\/subprojects\/.+\/_index\.md$/.test(n.path));
+    // Subprojects of an already-shown project — harvested only for links.
+    const linkOnlySubs = allSubprojects.filter((n) => shownSlugs.has(topProjectSlug(n.path)));
+    // Subprojects whose parent has no public overview — grouped into their
+    // own card per slug instead of being dropped.
+    const orphansBySlug = new Map<string, { path: string; title: string }[]>();
+    for (const n of allSubprojects) {
+      const slug = topProjectSlug(n.path);
+      if (!slug || shownSlugs.has(slug)) continue;
+      const arr = orphansBySlug.get(slug) ?? [];
+      arr.push(n);
+      orphansBySlug.set(slug, arr);
+    }
+    const orphanList = [...orphansBySlug.values()].flat();
+
+    const [overviewFulls, linkSubFulls, orphanFulls] = await Promise.all([
       Promise.all(
         overviews.map((n) =>
           apiGet<{ body?: string; meta?: { title?: string; created?: string; updated?: string } }>(
@@ -184,10 +213,14 @@ const projectBundle = unstable_cache(
           ),
         ),
       ),
+      Promise.all(linkOnlySubs.map((n) => apiGet<{ body?: string }>(`/v1/notes/${encPath(n.path)}`))),
       Promise.all(
-        subprojects.map((n) => apiGet<{ body?: string }>(`/v1/notes/${encPath(n.path)}`)),
+        orphanList.map((n) =>
+          apiGet<{ body?: string; meta?: { created?: string; updated?: string } }>(`/v1/notes/${encPath(n.path)}`),
+        ),
       ),
     ]);
+    const orphanFullByPath = new Map(orphanList.map((n, i) => [n.path, orphanFulls[i]] as const));
 
     const sections: Section[] = [];
     const links: LinkRef[] = [];
@@ -211,12 +244,45 @@ const projectBundle = unstable_cache(
     });
 
     // Attribute each subproject's links to its parent project so the card matches.
-    subprojects.forEach((n, i) => {
-      const body = (subFulls[i]?.body ?? "").trim();
+    linkOnlySubs.forEach((n, i) => {
+      const body = (linkSubFulls[i]?.body ?? "").trim();
       if (!body) return;
       const parentTitle = titleBySlug.get(topProjectSlug(n.path)) ?? n.title;
       addLinks(body, parentTitle);
     });
+
+    // Orphan subprojects: merge everything under the same slug into one card.
+    for (const [slug, subs] of orphansBySlug) {
+      const parts = subs
+        .map((n) => {
+          const full = (orphanFullByPath.get(n.path)?.body ?? "").trim();
+          return full ? { title: n.title, full } : null;
+        })
+        .filter((p): p is { title: string; full: string } => p !== null);
+      if (parts.length === 0) continue;
+      const title = humanizeSlug(slug);
+      // Strip the redundant "<Title> " prefix from each subproject's own
+      // title (e.g. "Flowya iOS" -> "iOS") so the combined body reads as ONE
+      // project with parts, not several differently-titled ones — otherwise
+      // the model sometimes titles the card after a subproject instead of
+      // the umbrella project.
+      const combined = parts
+        .map((p) => {
+          const stripped = p.title.toLowerCase().startsWith(title.toLowerCase() + " ")
+            ? p.title.slice(title.length + 1)
+            : p.title;
+          return `**${stripped}:** ${p.full}`;
+        })
+        .join("\n\n");
+      addLinks(combined, title);
+      const body = combined.length > PROJECT_BODY_CHARS ? combined.slice(0, PROJECT_BODY_CHARS) + "…" : combined;
+      const dates = subs
+        .map((n) => orphanFullByPath.get(n.path)?.meta)
+        .map((meta) => meta?.updated || meta?.created)
+        .filter((d): d is string => !!d)
+        .sort();
+      sections.push({ path: `projects/${slug}`, title, body, date: dates[dates.length - 1] });
+    }
 
     return { sections, links };
   },
@@ -258,23 +324,36 @@ const contextSections = unstable_cache(
   { revalidate: 120 },
 );
 
-function build(sections: Section[]): Recall {
-  // Dedupe by path, preserving order (identity first, then topic matches).
+/** Assemble the context text. Sections are (identity, then projects, then
+ *  topic matches) — but only the topic matches (index >= `guaranteedCount`)
+ *  are subject to `MAX_CONTEXT_CHARS`. Identity and project overviews are
+ *  always included in full: they're already bounded by their own limits
+ *  (`MAX_IDENTITY_NOTES`, `MAX_PROJECTS` × `PROJECT_BODY_CHARS`), and letting
+ *  a big identity note silently starve every project card (or vice versa) is
+ *  worse than a slightly larger prompt. */
+function build(sections: Section[], guaranteedCount = 0): Recall {
   const seen = new Set<string>();
   const parts: string[] = [];
   const sources: Source[] = [];
   const links: LinkRef[] = [];
   const seenUrls = new Set<string>();
   let total = 0;
-  for (const s of sections) {
+  let overBudget = false;
+  for (let i = 0; i < sections.length; i++) {
+    const s = sections[i];
     if (seen.has(s.path)) continue;
     seen.add(s.path);
+    const guaranteed = i < guaranteedCount;
+    if (!guaranteed && overBudget) continue;
     // Anchor every note in absolute time so the agent can resolve any relative
     // wording in the body and never present a stale fact as recent.
     const age = relativeAge(s.date);
     const dateLine = s.date ? ` · written/updated ${s.date}${age ? ` (${age})` : ""}` : "";
     const block = `## ${s.title}\n(${s.path})${dateLine}\n\n${s.body}`;
-    if (total + block.length > MAX_CONTEXT_CHARS) break;
+    if (!guaranteed && total + block.length > MAX_CONTEXT_CHARS) {
+      overBudget = true;
+      continue;
+    }
     total += block.length;
     parts.push(block);
     sources.push({ path: s.path, title: s.title });
@@ -300,8 +379,10 @@ export async function recall(topic: string, limit = 6): Promise<Recall> {
     projectBundle(),
     contextSections(topic, limit),
   ]);
-  // Identity first, then projects, then any extra topic matches (deduped).
-  const r = build([...identity, ...projects.sections, ...ctx]);
+  // Identity first, then projects (both guaranteed in full), then any extra
+  // topic matches (deduped, and the only part actually subject to the char
+  // budget — see `build()`).
+  const r = build([...identity, ...projects.sections, ...ctx], identity.length + projects.sections.length);
   // Prepend the richer project links (harvested from full bodies + subprojects),
   // deduped by URL, so every project card can get its real button.
   const seen = new Set<string>();
@@ -324,7 +405,7 @@ export function brainConfigured(): boolean {
 }
 
 /* ────────────────────────────────────────────────────────────────────────
- * Second Brain (public directory + graph)
+ * Second Self browse view (public directory + graph)
  *
  * Same public/read-only token as everything else in this file. The ohmyself
  * API itself enforces scope (`allowed = ["public"]`) server-side on every one

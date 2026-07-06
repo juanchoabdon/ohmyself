@@ -1,12 +1,9 @@
 import { NextRequest } from "next/server";
-import { unstable_cache } from "next/cache";
-import { recall, introContext, type Recall, type LinkRef } from "@/lib/brain";
-import {
-  PERSON_SHORT_NAME,
-  buildSystemPrompt,
-  introInstruction,
-} from "@/lib/persona";
+import { recall, type Recall, type LinkRef } from "@/lib/brain";
+import { PERSON_SHORT_NAME, buildSystemPrompt } from "@/lib/persona";
 import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { completeOnce, type ModelMessage } from "@/lib/openai";
+import { getCachedIntro } from "@/lib/intro";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,12 +21,6 @@ const MAX_OUTPUT_TOKENS = 700;
 const OPENAI_TIMEOUT_MS = 30000;
 const RETRIEVAL_TIMEOUT_MS = 9000;
 
-// The intro greeting is IDENTICAL for every visitor within the revalidate
-// window, so it's cached once (globally, via Next's Data Cache) instead of
-// calling OpenAI on every single page load. This is the single biggest win
-// for "first paint" latency: a brand-new visitor never waits on a model call.
-const INTRO_REVALIDATE_S = 600;
-
 // Marker that separates the visible reply from the JSON follow-up suggestions
 // in the response stream. Null bytes are stripped from all user input, so this
 // can never collide with model/user text.
@@ -45,7 +36,6 @@ interface ChatBody {
   intro?: boolean;
   lang?: string;
 }
-type ModelMessage = { role: "system" | "user" | "assistant"; content: string };
 
 function json(status: number, body: unknown, extraHeaders?: Record<string, string>) {
   return new Response(JSON.stringify(body), {
@@ -87,107 +77,6 @@ async function withTimeout(p: Promise<Recall>, ms: number): Promise<Recall> {
       setTimeout(() => resolve({ text: "", sources: [], links: [] }), ms),
     ),
   ]);
-}
-
-/** Safety net against URL hallucination: neutralize any http(s) URL in the reply
- *  that isn't in the allowlist. Keeps the prompt rule honest even if the model
- *  slips. Disallowed inline/markdown links collapse to their label text;
- *  disallowed images and bare/JSON URLs are stripped.
- *
- *  Only used on the INTRO path, where we have the full, final reply text in
- *  hand before it ever reaches the browser. The live Q&A path streams tokens
- *  as they're produced, so it can't be post-processed as one block of text —
- *  that path enforces the same allowlist client-side instead (see
- *  components/Rich.tsx), fed by the `X-Links` header set below. */
-function sanitizeLinks(reply: string, allowed: Set<string>): string {
-  const ok = (raw: string) => {
-    const url = raw.replace(/[.,;:!?)]+$/, "");
-    return allowed.has(url) || allowed.has(url.replace(/\/$/, ""));
-  };
-  let out = reply;
-  // Markdown images: drop entirely if the URL isn't allowed.
-  out = out.replace(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g, (m, url) => (ok(url) ? m : ""));
-  // Markdown links: keep the visible text, drop the link if URL isn't allowed.
-  out = out.replace(/\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (m, text, url) =>
-    ok(url) ? m : text,
-  );
-  // Any remaining bare URL (incl. inside JSON "href") not allowed → strip it.
-  out = out.replace(/https?:\/\/[^\s)\]}"'<>]+/g, (url) => (ok(url) ? url : ""));
-  return out;
-}
-
-function normName(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-/** A real URL can still be the WRONG project's link on a card. Enforce that a
- *  card's href belongs to that card's project (matched via the link's source
- *  label); otherwise drop the href so we never mislabel a link. (Intro path
- *  only — see note on `sanitizeLinks` above.) */
-function enforceCardOwnership(reply: string, urlToLabel: Map<string, string>): string {
-  return reply.replace(/```card[^\n]*\n([\s\S]*?)```/g, (full, inner: string) => {
-    try {
-      const obj = JSON.parse(inner.trim()) as Record<string, unknown>;
-      const href = typeof obj.href === "string" ? obj.href.replace(/\/$/, "") : "";
-      if (href) {
-        const label = urlToLabel.get(href) ?? "";
-        const title = normName(String(obj.title ?? ""));
-        const lab = normName(label);
-        const matches = lab && title && (lab.includes(title) || title.includes(lab));
-        if (!matches) {
-          delete obj.href;
-          delete obj.cta;
-        }
-      }
-      return "```card\n" + JSON.stringify(obj) + "\n```";
-    } catch {
-      return full;
-    }
-  });
-}
-
-/** One non-streaming OpenAI call with a hard timeout. Used for the (cached)
- *  intro greeting and for the small follow-up-questions call. */
-async function completeOnce(
-  messages: ModelMessage[],
-  opts?: { temperature?: number; maxTokens?: number },
-): Promise<string | null> {
-  const ac = new AbortController();
-  const to = setTimeout(() => ac.abort(), OPENAI_TIMEOUT_MS);
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        messages,
-        temperature: opts?.temperature ?? 0.7,
-        max_tokens: opts?.maxTokens ?? MAX_OUTPUT_TOKENS,
-        presence_penalty: 0.2,
-      }),
-      signal: ac.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const text = data.choices?.[0]?.message?.content;
-    return text && text.trim() ? text : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(to);
-  }
-}
-
-/** Complete with one retry (handles a transient upstream hiccup). */
-async function complete(messages: ModelMessage[]): Promise<string | null> {
-  const first = await completeOnce(messages);
-  if (first) return first;
-  return completeOnce(messages);
 }
 
 /** Generate 3 short, tappable follow-up questions based on the conversation so
@@ -415,37 +304,6 @@ function liveStream(gen: TokenGen, history: ClientMessage[], lang: "es" | "en"):
     },
   });
 }
-
-interface IntroPayload {
-  reply: string;
-  links: LinkRef[];
-}
-
-/** The opening greeting, computed ONCE per language across ALL visitors for
- *  the revalidate window (Next's Data Cache, shared across every serverless
- *  instance/region) — this is what removes the "every new visitor waits on
- *  an OpenAI call" latency entirely for the common case. */
-const getCachedIntro = unstable_cache(
-  async (lang: "es" | "en"): Promise<IntroPayload> => {
-    const ground = await introContext(PERSON_SHORT_NAME);
-    const messages: ModelMessage[] = [
-      { role: "system", content: buildSystemPrompt(ground.text, ground.links) },
-      { role: "user", content: introInstruction(lang) },
-    ];
-    const rawReply = await complete(messages);
-    const fallback =
-      lang === "es"
-        ? `¡Hola! Soy el second self de ${PERSON_SHORT_NAME}. Pregúntame lo que quieras sobre él.`
-        : `Hey! I'm ${PERSON_SHORT_NAME}'s second self. Ask me anything about him.`;
-    const reply = rawReply ?? fallback;
-    const allowed = new Set(ground.links.map((l) => l.url.replace(/\/$/, "")));
-    const urlToLabel = new Map(ground.links.map((l) => [l.url.replace(/\/$/, ""), l.label]));
-    const clean = enforceCardOwnership(sanitizeLinks(reply, allowed), urlToLabel);
-    return { reply: clean, links: ground.links };
-  },
-  ["intro-reply-v1"],
-  { revalidate: INTRO_REVALIDATE_S },
-);
 
 /** The allowlist the model may cite, sent as a header so the client can
  *  self-enforce it at render time (see components/Rich.tsx). Small and

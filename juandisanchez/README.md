@@ -27,6 +27,34 @@ Visitor ──► /app (dark chat UI, EN/ES)
 - The opening greeting is generated on load in the visitor's language.
 - Replies stream token-by-token for a live feel.
 
+### Why the first load is fast
+
+The opening greeting is identical for every visitor within a cache window, so it's
+computed **once** (per language) via `unstable_cache` — Next's shared Data Cache,
+not per-instance memory — and served instantly to everyone else (`lib/intro.ts`).
+Public identity/project/context data used to ground both the greeting and regular
+Q&A is cached the same way (`lib/brain.ts`).
+
+The one gap a pure "cache on first request" strategy leaves: whoever happens to be
+the first visitor after the cache expires (or after a fresh deploy) still pays for
+a live OpenAI call. `GET /api/warm` refreshes every one of these caches proactively;
+a scheduled GitHub Action
+(`.github/workflows/warm-juandisanchez-cache.yml`) pings it every 8 minutes — safely
+inside the 10-minute revalidate window — so in practice the cache never actually
+goes cold, no matter how sporadic real traffic is.
+
+### Second Self / Skills: content translation
+
+Notes are written verbatim in whatever language Juan Diego wrote them in (a mix of
+Spanish and English). The `/brain` and `/skills` views translate them on the fly to
+match whichever language the visitor picked (`lib/translate.ts`), so switching
+languages actually translates the note titles, excerpts, and full bodies — not just
+the surrounding UI chrome. Each (note, language) translation is cached for 24h; a
+transient model hiccup is never cached as "correct" (the cached function throws on
+failure, so only a genuine result — including a genuine "already in that language,
+unchanged" — ever sticks). `GET /api/warm` proactively warms the notes list and the
+default bio note in both languages, same rationale as the intro greeting above.
+
 ## Security (it's open source, so this is deliberate)
 
 - **Public only.** The browser never sees the API token. The server uses a

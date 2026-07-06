@@ -1,0 +1,23 @@
+name: Warm juandisanchez.com cache
+
+# Keeps the chat intro (and other first-paint data) permanently warm in
+# Next's Data Cache, so no visitor — including the very first one after a
+# quiet period or a fresh deploy — ever waits on a live OpenAI call.
+#
+# Runs well inside the 10-minute cache revalidate window (see
+# juandisanchez/lib/intro.ts) so the cache never has a chance to go cold in
+# practice, regardless of real visitor traffic.
+on:
+  schedule:
+    - cron: "*/8 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /api/warm
+        run: |
+          curl -fsS --max-time 25 "https://juandisanchez.com/api/warm" \
+            && echo "warmed ok" \
+            || echo "warm request failed (non-fatal)"

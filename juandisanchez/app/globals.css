@@ -189,6 +189,34 @@ body {
   animation: pulse-ring 2.4s ease-out infinite;
 }
 
+/* The little animated glyph on the Second Self's "Graph" toggle — a small
+   node cluster whose colors continuously cycle, hinting at the live,
+   colorful force-graph one tap away. Deliberately more colorful than the
+   rest of the (restrained) palette; it's a small moment of fun. */
+@keyframes brain-glow-spin {
+  from {
+    filter: hue-rotate(0deg);
+  }
+  to {
+    filter: hue-rotate(360deg);
+  }
+}
+.brain-glow-icon {
+  animation: brain-glow-spin 5s linear infinite;
+}
+@keyframes brain-glow-pulse {
+  0%,
+  100% {
+    r: 2.1;
+  }
+  50% {
+    r: 2.6;
+  }
+}
+.brain-glow-dot {
+  animation: brain-glow-pulse 2.4s ease-in-out infinite;
+}
+
 /* Rendered markdown inside assistant bubbles */
 .prose {
   line-height: 1.6;
@@ -747,4 +775,65 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Public Skills grid */
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.85rem;
+}
+
+.skill-card {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1rem 1.1rem;
+  background: linear-gradient(180deg, var(--surface), color-mix(in oklch, var(--surface) 86%, var(--bg)));
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  cursor: pointer;
+}
+.skill-card:hover {
+  border-color: color-mix(in oklch, var(--brand) 55%, var(--border));
+  transform: translateY(-2px);
+  box-shadow: 0 14px 36px -18px color-mix(in oklch, var(--brand) 55%, transparent);
+}
+.skill-card__head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.skill-card__icon {
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  flex-shrink: 0;
+  border-radius: 0.6rem;
+  color: var(--brand-ink);
+  background: color-mix(in oklch, var(--brand) 16%, transparent);
+  border: 1px solid color-mix(in oklch, var(--brand) 30%, transparent);
+}
+.skill-card__title {
+  font-family: var(--font-heading);
+  font-size: 0.98rem;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--ink);
+}
+.skill-card__blurb {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.skill-card__blurb-label {
+  color: var(--brand-ink);
+  font-weight: 600;
 }
