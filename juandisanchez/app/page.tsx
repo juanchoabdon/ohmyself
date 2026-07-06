@@ -201,7 +201,7 @@ export default function Page() {
   }
 
   return (
-    <main className="mx-auto flex h-[100dvh] w-full max-w-3xl flex-col px-5 sm:px-8">
+    <main className="mx-auto flex h-[100dvh] w-full max-w-4xl flex-col px-5 sm:px-8">
       <SiteHeader lang={lang} onLang={onLang} active="chat" />
 
       {/* Messages */}

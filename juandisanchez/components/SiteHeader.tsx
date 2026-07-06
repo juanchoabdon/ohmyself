@@ -59,7 +59,7 @@ function NavTabs({
           key={tab.key}
           href={tab.href}
           aria-current={active === tab.key ? "page" : undefined}
-          className={`rounded-full px-2.5 py-1 font-medium transition-colors ${
+          className={`whitespace-nowrap rounded-full px-2.5 py-1 font-medium transition-colors ${
             active === tab.key ? "bg-brand text-white" : "text-muted hover:text-ink"
           }`}
         >
@@ -99,11 +99,11 @@ export function SiteHeader({
           <p className="text-xs text-muted">{t.tagline}</p>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 sm:gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
         <NavTabs active={active} chatLabel={t.navChat} brainLabel={t.navBrain} skillsLabel={t.navSkills} />
-        <span className="h-5 w-px bg-border" aria-hidden />
+        <span className="hidden h-5 w-px bg-border sm:inline-block" aria-hidden />
         <SocialBar />
-        <span className="h-5 w-px bg-border" aria-hidden />
+        <span className="hidden h-5 w-px bg-border sm:inline-block" aria-hidden />
         <div className="flex items-center rounded-full border border-border bg-surface p-0.5 text-xs">
           {(["es", "en"] as const).map((l) => (
             <button
