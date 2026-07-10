@@ -31,6 +31,19 @@ export function NoteView({
   const focusTarget = useRef<"title" | "body" | null>(null);
   const clickCoords = useRef<{ x: number; y: number } | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  const articleRef = useRef<HTMLElement>(null);
+  const savedScroll = useRef<number | null>(null);
+
+  // The scrollable ancestor that actually holds this note's scroll position.
+  function scrollParent(): HTMLElement | null {
+    let el = articleRef.current?.parentElement ?? null;
+    while (el) {
+      const oy = getComputedStyle(el).overflowY;
+      if (oy === "auto" || oy === "scroll") return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
 
   // Sync local fields whenever a different note opens; leave edit mode.
   useEffect(() => {
@@ -53,6 +66,24 @@ export function NoteView({
       el.focus();
       const len = el.value.length;
       el.setSelectionRange(len, len);
+    }
+    // Entering edit mode swaps the rendered body for a WYSIWYG editor that
+    // mounts empty for a frame (immediatelyRender:false), briefly collapsing
+    // the article height and letting the scroll container clamp to the top.
+    // Pin the scroll position back through that reflow so the page stays put.
+    const top = savedScroll.current;
+    if (top != null) {
+      const sc = scrollParent();
+      if (sc) {
+        sc.scrollTop = top;
+        requestAnimationFrame(() => {
+          sc.scrollTop = top;
+        });
+        const t = setTimeout(() => {
+          sc.scrollTop = top;
+        }, 80);
+        return () => clearTimeout(t);
+      }
     }
   }, [editing]);
 
@@ -86,6 +117,7 @@ export function NoteView({
     if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
     focusTarget.current = target;
     clickCoords.current = e ? { x: e.clientX, y: e.clientY } : null;
+    savedScroll.current = scrollParent()?.scrollTop ?? null;
     setEditing(true);
   }
 
@@ -118,7 +150,7 @@ export function NoteView({
   }
 
   return (
-    <article className="mx-auto w-full max-w-3xl px-8 py-10">
+    <article ref={articleRef} className="mx-auto w-full max-w-3xl px-8 py-10">
       <header className="mb-6 border-b border-border pb-5">
         {/* Always-present top row. Buttons swap in place (Edit/Delete ⇄ Cancel/Save)
             so entering edit mode never inserts a bar above the content (no scroll jump). */}
