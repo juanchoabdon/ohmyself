@@ -177,15 +177,7 @@ export function SpaceSettings({
                 </button>
               )}
             </div>
-            <label className="mt-2 block">
-              <input
-                value={logoUrl}
-                onChange={(e) => setLogoUrl(e.target.value)}
-                disabled={!isOwner}
-                placeholder="…or paste an image URL"
-                className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-brand disabled:opacity-60"
-              />
-            </label>
+            <p className="mt-1.5 text-xs text-muted">PNG, JPG, WEBP, GIF or SVG · up to 2 MB.</p>
           </div>
         )}
 

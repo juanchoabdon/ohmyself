@@ -6,7 +6,8 @@ import { SPACE_PALETTE } from "./SpaceSwitcher";
 export interface CreateSpaceValues {
   name: string;
   themeColor: string;
-  logoUrl?: string;
+  /** Picked logo as a base64 data URL; uploaded after the space is created. */
+  logoDataUrl?: string;
 }
 
 /** Self-serve creation of a company wiki: name it, pick an accent, optionally
@@ -25,7 +26,8 @@ export function CreateSpaceDialog({
 }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(SPACE_PALETTE[0]!.value);
-  const [logoUrl, setLogoUrl] = useState("");
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
+  const [logoError, setLogoError] = useState<string | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !busy && onClose();
@@ -34,6 +36,30 @@ export function CreateSpaceDialog({
   }, [busy, onClose]);
 
   const canSubmit = name.trim().length > 0 && !busy;
+  const submit = () =>
+    canSubmit && onSubmit({ name, themeColor: color, logoDataUrl: logoDataUrl ?? undefined });
+
+  async function onLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError("Logo must be under 2 MB");
+      return;
+    }
+    setLogoError(null);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Could not read file"));
+        reader.readAsDataURL(file);
+      });
+      setLogoDataUrl(dataUrl);
+    } catch {
+      setLogoError("Could not read that image");
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
@@ -53,7 +79,7 @@ export function CreateSpaceDialog({
               autoFocus
               value={name}
               onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && canSubmit && onSubmit({ name, themeColor: color, logoUrl: logoUrl.trim() || undefined })}
+              onKeyDown={(e) => e.key === "Enter" && submit()}
               placeholder="e.g. Bonds"
               className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-brand"
             />
@@ -79,17 +105,38 @@ export function CreateSpaceDialog({
             </div>
           </div>
 
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
-              Logo URL <span className="font-normal normal-case text-muted/70">(optional)</span>
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+              Logo <span className="font-normal normal-case text-muted/70">(optional)</span>
             </span>
-            <input
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              placeholder="https://…/logo.png"
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-brand"
-            />
-          </label>
+            <div className="flex items-center gap-3">
+              <div
+                className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-bg text-sm font-semibold text-white"
+                style={logoDataUrl ? undefined : { background: color }}
+              >
+                {logoDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={logoDataUrl} alt="Logo preview" className="h-full w-full object-cover" />
+                ) : (
+                  name.trim().charAt(0).toUpperCase() || "?"
+                )}
+              </div>
+              <label className="cursor-pointer rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-ink hover:bg-bg">
+                {logoDataUrl ? "Replace" : "Upload image"}
+                <input type="file" accept="image/*" className="hidden" onChange={onLogoFile} />
+              </label>
+              {logoDataUrl && (
+                <button
+                  type="button"
+                  onClick={() => setLogoDataUrl(null)}
+                  className="text-sm font-medium text-muted hover:text-ink"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            {logoError && <p className="mt-1.5 text-sm text-red-500">{logoError}</p>}
+          </div>
 
           {error && <p className="rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-500">{error}</p>}
         </div>
@@ -103,7 +150,7 @@ export function CreateSpaceDialog({
             Cancel
           </button>
           <button
-            onClick={() => onSubmit({ name, themeColor: color, logoUrl: logoUrl.trim() || undefined })}
+            onClick={submit}
             disabled={!canSubmit}
             className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:opacity-95 disabled:opacity-50"
             style={{ background: color }}

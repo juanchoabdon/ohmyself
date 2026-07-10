@@ -351,11 +351,19 @@ export default function Dashboard() {
       const { space } = await api.createSpace(token, {
         name: values.name,
         themeColor: values.themeColor,
-        logoUrl: values.logoUrl ?? null,
       });
-      setSpaces((prev) => [...prev, space]);
+      let created = space;
+      if (values.logoDataUrl) {
+        try {
+          const res = await api.uploadSpaceLogo(token, space.id, values.logoDataUrl);
+          created = res.space ?? { ...space, logoUrl: res.logoUrl ?? space.logoUrl };
+        } catch {
+          // Space is created; a failed logo upload shouldn't block entry — they can retry in Settings.
+        }
+      }
+      setSpaces((prev) => [...prev, created]);
       setCreateSpaceOpen(false);
-      setActiveSpaceId(space.id); // drop the user straight into their new wiki
+      setActiveSpaceId(created.id); // drop the user straight into their new wiki
     } catch (e) {
       setCreateSpaceError(e instanceof Error ? e.message : "Could not create space");
     } finally {
