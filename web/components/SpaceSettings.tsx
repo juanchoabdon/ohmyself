@@ -67,7 +67,7 @@ export function SpaceSettings({
     setBrandSaved(false);
     try {
       const { space: updated } = await api.updateSpace(token, space.id, {
-        name: isCompany ? name.trim() : undefined,
+        name: name.trim() || undefined,
         themeColor: color,
         logoUrl: isCompany ? logoUrl.trim() || null : undefined,
       });
@@ -90,20 +90,21 @@ export function SpaceSettings({
         <p className="mt-1 text-sm text-muted">
           {isCompany
             ? "Name, accent and logo for this shared wiki. The accent re-skins the whole app when this space is active."
-            : "Pick an accent color for your personal space. It re-skins the app when this space is active."}
+            : "Set a nickname and an accent for your personal space. The name shows in the switcher and the accent re-skins the app when this space is active."}
         </p>
 
-        {isCompany && (
-          <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Name</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={!isOwner}
-              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-brand disabled:opacity-60"
-            />
-          </label>
-        )}
+        <label className="mt-3 block">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+            {isCompany ? "Name" : "Nickname"}
+          </span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={!isOwner}
+            placeholder={isCompany ? "e.g. Bonds" : "e.g. Juan"}
+            className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-brand disabled:opacity-60"
+          />
+        </label>
 
         <div className="mt-3">
           <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Accent</span>

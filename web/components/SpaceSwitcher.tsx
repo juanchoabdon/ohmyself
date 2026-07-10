@@ -31,6 +31,9 @@ export function applySpaceAccent(color: string | null): void {
   root.style.setProperty("--brand-ink", "color-mix(in oklch, var(--brand) 68%, var(--ink) 32%)");
 }
 
+/** The app's default accent (coral) — used when a space hasn't picked its own. */
+const DEFAULT_ACCENT = "oklch(0.66 0.19 38)";
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "•";
@@ -38,7 +41,16 @@ function initials(name: string): string {
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
 }
 
-/** A square brand avatar: the company logo if set, else a monogram on the accent. */
+/** What to show for a space: the self space uses its nickname (falling back to
+ *  the product name), companies use their given name. */
+export function spaceLabel(space: Space): string {
+  const name = space.name?.trim();
+  if (name) return name;
+  return space.kind === "self" ? "ohmyself!" : "Untitled";
+}
+
+/** A square brand avatar: the logo if set, else a monogram on the space's OWN
+ *  accent — never the active brand, so every row reads its true color. */
 function SpaceAvatar({ space, size = 26 }: { space: Space; size?: number }) {
   if (space.logoUrl) {
     // eslint-disable-next-line @next/next/no-img-element
@@ -53,17 +65,14 @@ function SpaceAvatar({ space, size = 26 }: { space: Space; size?: number }) {
       />
     );
   }
-  const bg =
-    space.kind === "self"
-      ? "var(--brand)"
-      : space.themeColor ?? "oklch(0.58 0.04 260)";
+  const bg = space.themeColor ?? DEFAULT_ACCENT;
   return (
     <span
       className="flex shrink-0 items-center justify-center rounded-md font-semibold text-white"
       style={{ width: size, height: size, background: bg, fontSize: size * 0.42 }}
       aria-hidden
     >
-      {space.kind === "self" ? "◉" : initials(space.name)}
+      {initials(spaceLabel(space))}
     </span>
   );
 }
@@ -112,11 +121,11 @@ export function SpaceSwitcher({
         <SpaceAvatar space={active} />
         <span className="flex flex-col items-start leading-tight">
           <span className="font-display text-sm font-semibold tracking-tight text-brand-ink">
-            {active.kind === "self" ? "ohmyself!" : active.name}
+            {spaceLabel(active)}
           </span>
-          {active.kind === "company" && (
-            <span className="text-[10px] font-medium uppercase tracking-wide text-muted">Company</span>
-          )}
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted">
+            {active.kind === "company" ? "Company" : "Personal"}
+          </span>
         </span>
         <svg
           width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -175,9 +184,7 @@ function SpaceRow({ space, active, onClick }: { space: Space; active: boolean; o
       }`}
     >
       <SpaceAvatar space={space} />
-      <span className="min-w-0 flex-1 truncate font-medium">
-        {space.kind === "self" ? "ohmyself!" : space.name}
-      </span>
+      <span className="min-w-0 flex-1 truncate font-medium">{spaceLabel(space)}</span>
       {active && (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M20 6 9 17l-5-5" />
