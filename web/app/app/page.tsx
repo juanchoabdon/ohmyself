@@ -14,6 +14,13 @@ import { ConfirmDialog, CreateEntryDialog, PromptDialog, type CreateEntryValues 
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SpaceSwitcher, applySpaceAccent } from "@/components/SpaceSwitcher";
 import { CreateSpaceDialog, type CreateSpaceValues } from "@/components/CreateSpaceDialog";
+import { ProfileMenu, type SettingsTab } from "@/components/ProfileMenu";
+
+/** localStorage key holding the last note opened in a given space, so a page
+ *  refresh (or coming back to a space) reopens where you left off. */
+function openNoteKey(spaceId: string): string {
+  return `oms-note:${spaceId}`;
+}
 
 function slugify(s: string): string {
   return (
@@ -63,7 +70,7 @@ export default function Dashboard() {
   const [noteLoading, setNoteLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"mcp" | "connectors" | "friends" | undefined>(undefined);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [view, setView] = useState<"notes" | "map">("notes");
 
   // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
@@ -209,10 +216,26 @@ export default function Dashboard() {
       } finally {
         if (active) setReady(true);
       }
+      // Reopen the note that was open in this space before the refresh, and
+      // expand its pillar so the sidebar highlights it.
+      if (active && activeSpaceId) {
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem(openNoteKey(activeSpaceId));
+        } catch {
+          /* storage unavailable — fine */
+        }
+        if (saved) {
+          await ensureFolder(saved.split("/")[0]!);
+          if (active) await openNote(saved);
+        }
+      }
     })();
     return () => {
       active = false;
     };
+    // openNote/ensureFolder are stable within this render and intentionally omitted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, activeSpaceId]);
 
   // Debounced server search
@@ -321,10 +344,27 @@ export default function Dashboard() {
     setSelected(path);
     setNoteLoading(true);
     setFullNote(null);
+    // Remember it so a refresh reopens this note (see the space-load effect).
+    if (activeSpaceId) {
+      try {
+        localStorage.setItem(openNoteKey(activeSpaceId), path);
+      } catch {
+        /* storage unavailable — fine */
+      }
+    }
     try {
       setFullNote(await api.readNote(token, path));
     } catch {
       setFullNote(null);
+      // A note that no longer reads (deleted elsewhere) shouldn't keep
+      // reopening on every refresh.
+      if (activeSpaceId) {
+        try {
+          localStorage.removeItem(openNoteKey(activeSpaceId));
+        } catch {
+          /* storage unavailable — fine */
+        }
+      }
     } finally {
       setNoteLoading(false);
     }
@@ -408,6 +448,13 @@ export default function Dashboard() {
       else {
         setSelected(null);
         setFullNote(null);
+        if (activeSpaceId) {
+          try {
+            localStorage.removeItem(openNoteKey(activeSpaceId));
+          } catch {
+            /* storage unavailable — fine */
+          }
+        }
       }
     }
   }
@@ -540,14 +587,8 @@ export default function Dashboard() {
             ))}
           </div>
           <button
-            onClick={() => setChatOpen((v) => !v)}
-            className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-95"
-          >
-            Ask yourself
-          </button>
-          <button
             onClick={() => {
-              setSettingsTab(undefined);
+              setSettingsTab("connectors");
               setSettingsOpen(true);
             }}
             className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-ink hover:border-brand hover:text-brand-ink"
@@ -555,9 +596,14 @@ export default function Dashboard() {
             Connect
           </button>
           <ThemeToggle />
-          <button onClick={signOut} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
-            Sign out
-          </button>
+          <ProfileMenu
+            appearanceLabel={activeSpace?.kind === "company" ? "Company" : "Appearance"}
+            onOpenSettings={(tab) => {
+              setSettingsTab(tab);
+              setSettingsOpen(true);
+            }}
+            onSignOut={signOut}
+          />
         </div>
       </header>
 
