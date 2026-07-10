@@ -13,6 +13,7 @@ import type { Brain } from "./brain.js";
 import { slugify } from "./brain.js";
 import type { UserConfig } from "./config.js";
 import { addCommitment, listCommitments, setCommitmentStatus } from "./actions.js";
+import { listConnections } from "./connections.js";
 import {
   distill,
   distillEnabled,
@@ -67,12 +68,13 @@ async function buildGrounding(
   userId: string,
   allowed: Visibility[],
 ): Promise<GroundingContext & { commitmentPathById: Map<string, string> }> {
-  const [identity, people, projects, concepts, openCommitments] = await Promise.all([
+  const [identity, people, projects, concepts, openCommitments, connections] = await Promise.all([
     brain.listNotes(userId, { types: ["identity"], allowed, limit: 30 }),
     brain.listNotes(userId, { types: ["person"], allowed, limit: 500 }),
     brain.listNotes(userId, { types: ["project"], allowed, limit: 500 }),
     brain.listNotes(userId, { types: ["concept"], allowed, limit: 500 }),
     listCommitments(brain, userId, { status: "open", allowed, limit: 300 }),
+    listConnections(userId).catch(() => []),
   ]);
 
   // Owner identity: a compact "who I am" block so the model can place people in
@@ -84,6 +86,18 @@ async function buildGrounding(
     owner += `  - ${n.title}: ${line}\n`;
     if (owner.length > 1600) break;
   }
+
+  // The owner's own name(s)/email(s) — from the connected account(s) — so the
+  // model (and the deterministic guard below) never mistake the owner for one
+  // of the people they met with.
+  const ownerNames = Array.from(
+    new Set(
+      connections
+        .flatMap((c) => [c.accountLabel, c.accountEmail])
+        .map((s) => (s ?? "").trim())
+        .filter(Boolean),
+    ),
+  );
 
   const commitmentPathById = new Map<string, string>();
   const openList = openCommitments.map((c) => {
@@ -103,6 +117,7 @@ async function buildGrounding(
 
   return {
     owner: owner.trim() || undefined,
+    ownerNames,
     people: people.map((p) => p.title),
     projects: projects.map((p) => p.title),
     concepts: concepts.map((c) => c.title),
@@ -110,6 +125,47 @@ async function buildGrounding(
     projectContext,
     openCommitments: openList,
     commitmentPathById,
+  };
+}
+
+/** Normalize a name/email for owner matching: strip accents/punctuation, lowercase. */
+function normName(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9@.\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Build a predicate that decides whether a name/slug refers to the OWNER, so we
+ *  never spawn a person page for them and always attribute their tasks to "me".
+ *  Conservative: matches an exact name/email, an email local-part, or a ≥2-token
+ *  subset overlap (so "Juan Diego" ≈ "Juan Diego Sanchez" but bare "Juan" won't). */
+function buildOwnerMatcher(ownerNames: string[]): (candidate: string) => boolean {
+  const names = ownerNames.map(normName).filter(Boolean);
+  const emails = names.filter((n) => n.includes("@"));
+  const tokenSets = names.filter((n) => !n.includes("@")).map((n) => n.split(" ").filter(Boolean));
+  return (candidate: string) => {
+    const c = normName(candidate);
+    if (!c) return false;
+    if (c === "me") return true;
+    if (names.includes(c)) return true;
+    for (const e of emails) {
+      if (c === e || c === e.split("@")[0]) return true;
+    }
+    const cTokens = c.split(" ").filter(Boolean);
+    if (cTokens.length === 0) return false;
+    const cSet = new Set(cTokens);
+    for (const owner of tokenSets) {
+      if (owner.length === 0) continue;
+      const oSet = new Set(owner);
+      const candSubset = cTokens.every((t) => oSet.has(t));
+      const ownerSubset = owner.every((t) => cSet.has(t));
+      if ((candSubset || ownerSubset) && Math.min(cTokens.length, owner.length) >= 2) return true;
+    }
+    return false;
   };
 }
 
@@ -146,6 +202,11 @@ export async function ingest(
     grounding,
   });
 
+  // Never treat the owner as one of the people they met with: drop any person
+  // entity the model emitted for the owner, and re-attribute the owner's tasks
+  // to "me" (belt-and-suspenders on top of the prompt instruction).
+  const isOwner = buildOwnerMatcher(grounding.ownerNames ?? []);
+
   const touched: string[] = [];
   const commitments: string[] = [];
   const resolved: string[] = [];
@@ -164,6 +225,9 @@ export async function ingest(
   // 1. Entity updates: person facts, project notes, concept notes.
   for (const u of distilled.entity_updates) {
     if (u.entityType === "person") {
+      // The owner is "me", not a person page — skip any entity the model
+      // mislabeled as the owner (prevents a self person-note + self action items).
+      if (isOwner(u.slugOrName)) continue;
       // Keep the person's identity headline (role · relationship) current, then
       // accrue the durable fact below it.
       if (u.role || u.relationship) {
@@ -223,7 +287,7 @@ export async function ingest(
 
   // 3. Action items -> commitments (full mode only).
   for (const a of distilled.action_items) {
-    const owner = a.owner.trim().toLowerCase() === "me" ? "me" : a.owner;
+    const owner = isOwner(a.owner) ? "me" : a.owner;
     const r = await addCommitment(brain, userId, config, allowed, {
       text: a.text,
       owner,
@@ -257,7 +321,7 @@ export async function ingest(
       .map((p) => (p.project ? `- **${p.project}:** ${p.update}` : `- ${p.update}`))
       .filter(Boolean);
     const actions = distilled.action_items.map((a) => {
-      const owner = a.owner.trim().toLowerCase() === "me" ? "Me" : a.owner.trim();
+      const owner = isOwner(a.owner) ? "Me" : a.owner.trim();
       const due = a.due ? ` _(due: ${a.due})_` : "";
       return `- **${owner}** — ${a.text}${due}`;
     });
@@ -290,6 +354,7 @@ export async function ingest(
     // Link the meeting to the people/projects it touched.
     for (const u of distilled.entity_updates) {
       if (u.entityType === "person") {
+        if (isOwner(u.slugOrName)) continue;
         await safeLink(brain, userId, meetingPath, personPath(u.slugOrName), allowed);
       } else if (u.entityType === "project") {
         await safeLink(brain, userId, meetingPath, projectIndexPath(u.slugOrName), allowed);

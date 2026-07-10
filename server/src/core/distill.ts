@@ -28,6 +28,9 @@ export type IngestMode = "light" | "full";
 export interface GroundingContext {
   /** Who the wiki owner is (role, company, focus) — anchors role inference. */
   owner?: string;
+  /** Names/emails the OWNER themselves appear as in transcripts (so the model
+   *  treats them as "me", never as another person). */
+  ownerNames?: string[];
   people: string[];
   projects: string[];
   /** "Name — one-line role/summary" for known people, to refine not repeat. */
@@ -150,6 +153,18 @@ function buildPrompt(input: DistillInput): { system: string; user: string } {
     "",
     "OWNER CONTEXT (who the wiki belongs to — use it to place people in the org):",
     g.owner?.trim() ? g.owner.trim() : "  (unknown)",
+    ...(g.ownerNames?.length
+      ? [
+          "",
+          "THE OWNER IS \"ME\". The owner attends these meetings and appears in the",
+          "source (as an attendee/speaker) under these names/emails: " +
+            g.ownerNames.join(", ") +
+            ". When an attendee or speaker matches the owner, that is the OWNER = " +
+            'self. NEVER emit a person entity_update for the owner, and NEVER create ' +
+            "a person page for them. For any action item the owner is responsible " +
+            'for, set owner="me" (never the owner\'s own name).',
+        ]
+      : []),
     "",
     "Known people (match to these exact names): " +
       (g.people.length ? g.people.join(", ") : "(none yet)"),
