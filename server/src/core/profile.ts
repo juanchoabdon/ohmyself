@@ -56,7 +56,7 @@ function splitBody(body: string): { headline: string; log: string } {
   return { headline: head.join("\n"), log: lines.slice(i).join("\n").trim() };
 }
 
-async function callOpenAIText(system: string, user: string): Promise<string | null> {
+async function callOpenAIJSON(system: string, user: string): Promise<{ headline?: string; read?: string } | null> {
   const key = apiKey();
   if (!key) return null;
   const ac = new AbortController();
@@ -68,6 +68,7 @@ async function callOpenAIText(system: string, user: string): Promise<string | nu
       body: JSON.stringify({
         model: MODEL(),
         temperature: 0.3,
+        response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -77,7 +78,17 @@ async function callOpenAIText(system: string, user: string): Promise<string | nu
     });
     if (!res.ok) throw new Error(`OpenAI error ${res.status}: ${await res.text()}`);
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return data.choices?.[0]?.message?.content?.trim() ?? null;
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) return null;
+    try {
+      const parsed = JSON.parse(content) as { headline?: unknown; read?: unknown };
+      return {
+        headline: typeof parsed.headline === "string" ? parsed.headline.trim() : undefined,
+        read: typeof parsed.read === "string" ? parsed.read.trim() : undefined,
+      };
+    } catch {
+      return null;
+    }
   } finally {
     clearTimeout(to);
   }
@@ -97,7 +108,15 @@ function buildPrompt(headline: string, log: string, ownerContext?: string): { sy
     "- Sé candido y útil, no un halago genérico. Señala fricciones de forma constructiva.",
     "- NO repitas la lista de hechos; destílalos.",
     "",
-    "Devuelve SOLO markdown con esta forma (omite una sección si no hay evidencia):",
+    "Devuelve SOLO un objeto JSON con dos claves: \"headline\" y \"read\".",
+    "",
+    '"headline": UNA sola línea de identidad, re-inferida desde TODAS las',
+    "  observaciones (no solo la primera): rol/función + equipo/área y, si es claro,",
+    "  la empresa, más la relación con el dueño. Debe reflejar lo más actual/completo",
+    '  que se sepa. Ej: "PM de Checkout @ Rappi · contraparte del dueño en pagos".',
+    '  Sin markdown, sin comillas, sin ">". Cadena vacía "" solo si es imposible inferir.',
+    "",
+    '"read": el perfil en markdown con esta forma (omite una sección si no hay evidencia):',
     "",
     "**En una línea:** <esencia en una frase>",
     "",
@@ -111,7 +130,7 @@ function buildPrompt(headline: string, log: string, ownerContext?: string): { sy
     "",
     "**Cómo trabajar con esta persona:** <2–3 tips concretos para el dueño>",
     "",
-    "No incluyas encabezados de nivel #, ni preámbulo, ni cierre. Empieza directo.",
+    "En \"read\" no incluyas encabezados de nivel #, ni preámbulo, ni cierre.",
   ].join("\n");
 
   const user = [
@@ -160,7 +179,8 @@ export async function profilePerson(
 
   const { headline, log } = splitBody(note.body);
   const { system, user } = buildPrompt(headline, log, opts.ownerContext);
-  const read = await callOpenAIText(system, user);
+  const result = await callOpenAIJSON(system, user);
+  const read = result?.read;
   if (!read) return { ok: false, path, skipped: "no-llm", facts };
 
   // Re-read right before writing: the ingest pipeline may have appended new facts
@@ -170,6 +190,12 @@ export async function profilePerson(
   const fresh = await brain.readNote(userId, path, allowed).catch(() => note);
   const { headline: h2, log: log2 } = splitBody(fresh.body);
   const freshFacts = countFacts(fresh.body) || facts;
+
+  // Re-infer the identity headline from ALL facts (not just whatever the first
+  // meeting happened to state). Fall back to the existing one if the model
+  // couldn't infer a fresh line, so we never blank out a good headline.
+  const inferred = result?.headline?.replace(/^>\s*/, "").trim();
+  const headlineBlock = inferred ? `> ${inferred}` : h2;
 
   const block = [
     READ_START,
@@ -181,7 +207,7 @@ export async function profilePerson(
   ].join("\n");
 
   const body =
-    [h2, block, log2].filter((s) => s && s.trim()).join("\n\n").replace(/\s+$/, "") + "\n";
+    [headlineBlock, block, log2].filter((s) => s && s.trim()).join("\n\n").replace(/\s+$/, "") + "\n";
 
   await brain.updateNote(userId, path, { body, extra: { profile_facts: freshFacts, profiled_at: todayISO() } }, allowed);
   return { ok: true, path, facts: freshFacts };
