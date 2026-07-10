@@ -920,18 +920,33 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "List meeting notes",
       description:
-        "List distilled meeting notes (most recent first). These are the summaries produced by ingest_source / the Drive connector, not raw transcripts.",
+        "List distilled meeting notes, most recent meeting first (ordered by the meeting's own date, not when it was ingested). These are the summaries produced by ingest_source / the Drive connector, not raw transcripts. To answer 'what meetings were there yesterday/on a date?', pass `date` (YYYY-MM-DD) to get ALL meetings for that day; or pass `since`/`until` for a range. Without a date filter it returns the N most recent meetings.",
       annotations: { readOnlyHint: true },
       inputSchema: {
-        limit: z.number().int().positive().max(100).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+        date: z.string().optional().describe("YYYY-MM-DD — return every meeting on exactly this day"),
+        since: z.string().optional().describe("YYYY-MM-DD — only meetings on/after this day"),
+        until: z.string().optional().describe("YYYY-MM-DD — only meetings on/before this day"),
       },
     },
-    async ({ limit }) => {
-      const rows = await brain.listNotes(auth.spaceId, {
+    async ({ limit, date, since, until }) => {
+      // Meeting date is encoded in the path (meetings/YYYY-MM-DD-slug.md), while
+      // the `updated` timestamp reflects (re)ingestion. Filtering by an exact day
+      // via a path prefix returns *all* of that day's meetings regardless of how
+      // recently each was touched; otherwise we sort by path (≈ meeting date) so
+      // "most recent" means most recent meeting, not most recently reprocessed.
+      const prefix = date ? `meetings/${date}` : "meetings/";
+      let rows = await brain.listNotes(auth.spaceId, {
         types: ["meeting"],
+        prefix,
         allowed,
-        limit: limit ?? 25,
+        limit: 1000,
       });
+      const dayOf = (p: string) => p.slice("meetings/".length, "meetings/".length + 10);
+      if (since) rows = rows.filter((r) => dayOf(r.path) >= since);
+      if (until) rows = rows.filter((r) => dayOf(r.path) <= until);
+      rows.sort((a, b) => (a.path < b.path ? 1 : a.path > b.path ? -1 : 0));
+      if (!date && !since && !until) rows = rows.slice(0, limit ?? 25);
       return text(rows);
     },
   );
