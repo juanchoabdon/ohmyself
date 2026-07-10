@@ -5,9 +5,9 @@ import { api } from "@/lib/api";
 import type { Space, SpaceMember } from "@/lib/types";
 import { SPACE_PALETTE } from "./SpaceSwitcher";
 
-/** Branding + membership management for the active space. Branding (accent) is
- *  available on any space the caller owns; name/logo/members are for company
- *  spaces. Everything is gated to the owner. */
+/** Branding + membership management for the active space. Branding (name, accent
+ *  and photo/logo) is available on any space the caller owns; members are for
+ *  company spaces only. Everything is gated to the owner. */
 export function SpaceSettings({
   token,
   space,
@@ -69,7 +69,7 @@ export function SpaceSettings({
       const { space: updated } = await api.updateSpace(token, space.id, {
         name: name.trim() || undefined,
         themeColor: color,
-        logoUrl: isCompany ? logoUrl.trim() || null : undefined,
+        logoUrl: logoUrl.trim() || null,
       });
       onUpdated(updated);
       setBrandSaved(true);
@@ -90,7 +90,7 @@ export function SpaceSettings({
         <p className="mt-1 text-sm text-muted">
           {isCompany
             ? "Name, accent and logo for this shared wiki. The accent re-skins the whole app when this space is active."
-            : "Set a nickname and an accent for your personal space. The name shows in the switcher and the accent re-skins the app when this space is active."}
+            : "Set a nickname, a photo and an accent for your personal space. They show next to your name in the switcher; the accent re-skins the app when this space is active."}
         </p>
 
         <label className="mt-3 block">
@@ -137,50 +137,51 @@ export function SpaceSettings({
           </div>
         </div>
 
-        {isCompany && (
-          <div className="mt-3">
-            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
-              Logo <span className="font-normal normal-case text-muted/70">(optional)</span>
-            </span>
-            <div className="flex items-center gap-3">
-              <span
-                className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl border border-border bg-bg"
-                aria-hidden
-              >
-                {logoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={logoUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <span className="text-sm font-bold text-muted">{name.slice(0, 1).toUpperCase() || "?"}</span>
-                )}
-              </span>
-              <label
-                className={`cursor-pointer rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink transition-colors hover:border-brand ${
-                  !isOwner || uploading ? "pointer-events-none opacity-60" : ""
-                }`}
-              >
-                {uploading ? "Uploading…" : logoUrl ? "Replace" : "Upload"}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                  className="hidden"
-                  disabled={!isOwner || uploading}
-                  onChange={onLogoFile}
-                />
-              </label>
-              {logoUrl && isOwner && (
-                <button
-                  type="button"
-                  onClick={() => setLogoUrl("")}
-                  className="rounded-lg px-2 py-1 text-xs text-muted hover:text-ink"
-                >
-                  Remove
-                </button>
+        <div className="mt-3">
+          <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+            {isCompany ? "Logo" : "Photo"}{" "}
+            <span className="font-normal normal-case text-muted/70">(optional)</span>
+          </span>
+          <div className="flex items-center gap-3">
+            <span
+              className={`grid h-11 w-11 shrink-0 place-items-center overflow-hidden border border-border bg-bg ${
+                isCompany ? "rounded-xl" : "rounded-full"
+              }`}
+              aria-hidden
+            >
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={logoUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-sm font-bold text-muted">{name.slice(0, 1).toUpperCase() || "?"}</span>
               )}
-            </div>
-            <p className="mt-1.5 text-xs text-muted">PNG, JPG, WEBP, GIF or SVG · up to 2 MB.</p>
+            </span>
+            <label
+              className={`cursor-pointer rounded-lg border border-border px-3 py-2 text-sm font-medium text-ink transition-colors hover:border-brand ${
+                !isOwner || uploading ? "pointer-events-none opacity-60" : ""
+              }`}
+            >
+              {uploading ? "Uploading…" : logoUrl ? "Replace" : "Upload"}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                className="hidden"
+                disabled={!isOwner || uploading}
+                onChange={onLogoFile}
+              />
+            </label>
+            {logoUrl && isOwner && (
+              <button
+                type="button"
+                onClick={() => setLogoUrl("")}
+                className="rounded-lg px-2 py-1 text-xs text-muted hover:text-ink"
+              >
+                Remove
+              </button>
+            )}
           </div>
-        )}
+          <p className="mt-1.5 text-xs text-muted">PNG, JPG, WEBP, GIF or SVG · up to 2 MB.</p>
+        </div>
 
         {brandError && <p className="mt-2 text-sm text-vis-secret">{brandError}</p>}
         {isOwner && (
