@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, setActiveSpace } from "@/lib/api";
 import { supabase } from "@/lib/supabaseClient";
-import type { Category, FullNote, IndexedNote, Visibility } from "@/lib/types";
+import type { Category, FolderCount, FullNote, IndexedNote, Space, Visibility } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteView } from "@/components/NoteView";
 import { BrainMap } from "@/components/BrainMap";
@@ -13,6 +12,8 @@ import { Chat } from "@/components/Chat";
 import { Settings } from "@/components/Settings";
 import { ConfirmDialog, CreateEntryDialog, PromptDialog, type CreateEntryValues } from "@/components/dialogs";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { SpaceSwitcher, applySpaceAccent } from "@/components/SpaceSwitcher";
+import { CreateSpaceDialog, type CreateSpaceValues } from "@/components/CreateSpaceDialog";
 
 function slugify(s: string): string {
   return (
@@ -31,9 +32,28 @@ export default function Dashboard() {
   const [token, setToken] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
+  // Spaces: the personal "self" brain + any company wikis the user belongs to.
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
+  const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
+  const [createSpaceBusy, setCreateSpaceBusy] = useState(false);
+  const [createSpaceError, setCreateSpaceError] = useState<string | null>(null);
+  const activeSpace = useMemo(
+    () => spaces.find((s) => s.id === activeSpaceId) ?? spaces.find((s) => s.kind === "self") ?? null,
+    [spaces, activeSpaceId],
+  );
+
   const [baseNotes, setBaseNotes] = useState<IndexedNote[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [folderCounts, setFolderCounts] = useState<FolderCount[]>([]);
+  const [loadedFolders, setLoadedFolders] = useState<Set<string>>(new Set());
+  const [loadingFolders, setLoadingFolders] = useState<Set<string>>(new Set());
   const [searchResults, setSearchResults] = useState<IndexedNote[] | null>(null);
+
+  // Refs mirror lazy-load state so async callbacks don't read stale closures.
+  const loadedRef = useRef<Set<string>>(new Set());
+  const loadingRef = useRef<Set<string>>(new Set());
+  const allLoadedRef = useRef(false);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [visFilter, setVisFilter] = useState<Visibility | null>(null);
@@ -43,6 +63,7 @@ export default function Dashboard() {
   const [noteLoading, setNoteLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"mcp" | "connectors" | "friends" | undefined>(undefined);
   const [view, setView] = useState<"notes" | "map">("notes");
 
   // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
@@ -64,6 +85,28 @@ export default function Dashboard() {
   }, [view]);
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // After the Google OAuth redirect (?connector=…&status=…), open Settings and
+  // surface the result, then strip the params from the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connector") !== "google-drive-meetings") return;
+    const status = params.get("status");
+    const messages: Record<string, string> = {
+      connected: "Google account connected — you can now sync meeting notes.",
+      denied: "Google connection was cancelled.",
+      expired: "That connect link expired — try again.",
+      no_refresh_token: "Google didn't grant offline access — remove ohmyself! from your Google account permissions and reconnect.",
+      error: "Couldn't connect that Google account.",
+    };
+    setBanner(messages[status ?? ""] ?? null);
+    setSettingsTab("connectors");
+    setSettingsOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("connector");
+    url.searchParams.delete("status");
+    window.history.replaceState({}, "", url.toString());
+  }, []);
 
   // Auth bootstrap
   useEffect(() => {
@@ -87,10 +130,67 @@ export default function Dashboard() {
     };
   }, [router]);
 
-  // Onboard + load notes once we have a token
+  // Load the spaces the user belongs to (self + companies). Default to the
+  // self space; a saved preference (last active space) is honored if still valid.
   useEffect(() => {
     if (!token) return;
     let active = true;
+    (async () => {
+      try {
+        const { spaces: list } = await api.listSpaces(token);
+        if (!active) return;
+        setSpaces(list);
+        const saved = (() => {
+          try {
+            return localStorage.getItem("oms-space");
+          } catch {
+            return null;
+          }
+        })();
+        const pick =
+          list.find((s) => s.id === saved) ?? list.find((s) => s.kind === "self") ?? list[0] ?? null;
+        setActiveSpaceId(pick?.id ?? null);
+      } catch {
+        /* non-fatal — fall back to the implicit self space */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  // Re-skin the whole UI from the active space's accent (revert to default coral
+  // for a space with no chosen color).
+  useEffect(() => {
+    applySpaceAccent(activeSpace?.themeColor ?? null);
+    return () => applySpaceAccent(null);
+  }, [activeSpace]);
+
+  // Onboard + load the lightweight tree scaffold (pillar counts) once we have a
+  // token and an active space. Notes load lazily per folder — see ensureFolder.
+  useEffect(() => {
+    if (!token || !activeSpaceId) return;
+    let active = true;
+    // Point every API call at the active brain, and reset the tree so we don't
+    // show one space's notes while another loads.
+    setActiveSpace(activeSpaceId);
+    try {
+      localStorage.setItem("oms-space", activeSpaceId);
+    } catch {
+      /* storage unavailable — fine */
+    }
+    setReady(false);
+    setBaseNotes([]);
+    setSearchResults(null);
+    setSelected(null);
+    setFullNote(null);
+    setFolderCounts([]);
+    setCategories([]);
+    loadedRef.current = new Set();
+    loadingRef.current = new Set();
+    allLoadedRef.current = false;
+    setLoadedFolders(new Set());
+    setLoadingFolders(new Set());
     (async () => {
       try {
         await api.onboard(token);
@@ -104,8 +204,8 @@ export default function Dashboard() {
         /* non-fatal */
       }
       try {
-        const { notes } = await api.listNotes(token);
-        if (active) setBaseNotes(notes);
+        const { folders } = await api.folders(token);
+        if (active) setFolderCounts(folders);
       } finally {
         if (active) setReady(true);
       }
@@ -113,7 +213,7 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, activeSpaceId]);
 
   // Debounced server search
   useEffect(() => {
@@ -134,6 +234,15 @@ export default function Dashboard() {
     }, 250);
   }, [query, token]);
 
+  // The Map graph and client-side type/visibility filters need the full brain,
+  // not just the expanded folders, so pull everything the first time they're used.
+  useEffect(() => {
+    if (!token || !ready) return;
+    if (view === "map" || typeFilter || visFilter) void ensureAllLoaded();
+    // ensureAllLoaded is idempotent and ref-guarded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, ready, view, typeFilter, visFilter]);
+
   const displayed = useMemo(() => {
     const list = searchResults ?? baseNotes;
     return list.filter((n) => {
@@ -142,6 +251,69 @@ export default function Dashboard() {
       return true;
     });
   }, [searchResults, baseNotes, typeFilter, visFilter]);
+
+  const folderCountMap = useMemo(
+    () => Object.fromEntries(folderCounts.map((f) => [f.folder, f.count])),
+    [folderCounts],
+  );
+  // Commitments are hidden from the sidebar (used by planning skills only), so
+  // don't count them in the visible "N entries" total.
+  const totalEntries = useMemo(
+    () => folderCounts.reduce((s, f) => (f.folder === "commitments" ? s : s + f.count), 0),
+    [folderCounts],
+  );
+
+  // ── Lazy note loading ──────────────────────────────────────────────────────
+  const markLoaded = (folders: string[]) => {
+    for (const f of folders) loadedRef.current.add(f);
+    setLoadedFolders(new Set(loadedRef.current));
+  };
+
+  /** Merge notes in, optionally dropping a folder's stale rows first so
+   *  deletions/renames are reflected on re-fetch. */
+  const mergeNotes = (incoming: IndexedNote[], replacePrefix?: string) => {
+    setBaseNotes((prev) => {
+      const map = new Map(prev.map((n) => [n.path, n]));
+      if (replacePrefix) for (const p of [...map.keys()]) if (p.startsWith(replacePrefix)) map.delete(p);
+      for (const n of incoming) map.set(n.path, n);
+      return [...map.values()];
+    });
+  };
+
+  /** Load a top-level pillar's notes on demand (idempotent). */
+  const ensureFolder = async (folder: string) => {
+    if (!token) return;
+    if (allLoadedRef.current || loadedRef.current.has(folder) || loadingRef.current.has(folder)) return;
+    loadingRef.current.add(folder);
+    setLoadingFolders(new Set(loadingRef.current));
+    try {
+      const { notes } = await api.listNotes(token, { prefix: `${folder}/` });
+      mergeNotes(notes, `${folder}/`);
+      markLoaded([folder]);
+    } catch {
+      /* non-fatal — pillar stays collapsible, user can retry */
+    } finally {
+      loadingRef.current.delete(folder);
+      setLoadingFolders(new Set(loadingRef.current));
+    }
+  };
+
+  /** Load the entire brain (for the Map view and global type/visibility filters). */
+  const ensureAllLoaded = async () => {
+    if (!token || allLoadedRef.current) return;
+    const { notes } = await api.listNotes(token);
+    allLoadedRef.current = true;
+    setBaseNotes(notes);
+    markLoaded([...new Set(notes.map((n) => n.path.split("/")[0]!)), ...folderCounts.map((f) => f.folder)]);
+  };
+
+  /** Fresh server read of a folder's notes — used by folder delete/rename so
+   *  they're correct regardless of what's currently loaded. */
+  const notesUnder = async (folder: string): Promise<IndexedNote[]> => {
+    if (!token) return [];
+    const { notes } = await api.listNotes(token, { prefix: `${folder}/` });
+    return notes;
+  };
 
   async function openNote(path: string) {
     if (!token) return;
@@ -163,6 +335,34 @@ export default function Dashboard() {
     router.replace("/");
   }
 
+  function switchSpace(space: Space) {
+    if (space.id === activeSpaceId) return;
+    setQuery("");
+    setTypeFilter(null);
+    setVisFilter(null);
+    setActiveSpaceId(space.id);
+  }
+
+  async function handleCreateSpace(values: CreateSpaceValues) {
+    if (!token) return;
+    setCreateSpaceBusy(true);
+    setCreateSpaceError(null);
+    try {
+      const { space } = await api.createSpace(token, {
+        name: values.name,
+        themeColor: values.themeColor,
+        logoUrl: values.logoUrl ?? null,
+      });
+      setSpaces((prev) => [...prev, space]);
+      setCreateSpaceOpen(false);
+      setActiveSpaceId(space.id); // drop the user straight into their new wiki
+    } catch (e) {
+      setCreateSpaceError(e instanceof Error ? e.message : "Could not create space");
+    } finally {
+      setCreateSpaceBusy(false);
+    }
+  }
+
   // ── Editing: create / update / delete / rename ─────────────────────────────
   const [createFolder, setCreateFolder] = useState<{ folder: string | null } | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
@@ -175,12 +375,23 @@ export default function Dashboard() {
   async function refresh(open?: string | null) {
     if (!token) return;
     try {
-      const [{ notes }, { categories: cats }] = await Promise.all([
-        api.listNotes(token),
+      const [{ folders }, { categories: cats }] = await Promise.all([
+        api.folders(token),
         api.structure(token),
       ]);
-      setBaseNotes(notes);
+      setFolderCounts(folders);
       setCategories(cats);
+      // Re-pull whatever's currently loaded so the tree reflects the change.
+      if (allLoadedRef.current) {
+        const { notes } = await api.listNotes(token);
+        setBaseNotes(notes);
+      } else {
+        const loaded = [...loadedRef.current];
+        const results = await Promise.all(loaded.map((f) => api.listNotes(token, { prefix: `${f}/` })));
+        const map = new Map<string, IndexedNote>();
+        for (const r of results) for (const n of r.notes) map.set(n.path, n);
+        setBaseNotes([...map.values()]);
+      }
     } catch {
       /* non-fatal */
     }
@@ -238,7 +449,7 @@ export default function Dashboard() {
         await refresh(wasSelected ? null : selected);
       } else {
         const prefix = confirm.path + "/";
-        const affected = baseNotes.filter((n) => n.path.startsWith(prefix));
+        const affected = await notesUnder(confirm.path);
         for (const n of affected) await api.deleteNote(token, n.path);
         const selectedGone = selected ? selected.startsWith(prefix) : false;
         setConfirm(null);
@@ -261,8 +472,7 @@ export default function Dashboard() {
       const parent = lastSlash >= 0 ? folder.slice(0, lastSlash) : "";
       const newFolder = parent ? `${parent}/${slugify(newName)}` : slugify(newName);
       if (newFolder !== folder) {
-        const prefix = folder + "/";
-        const affected = baseNotes.filter((n) => n.path.startsWith(prefix));
+        const affected = await notesUnder(folder);
         let newSelected = selected;
         for (const n of affected) {
           const to = newFolder + n.path.slice(folder.length);
@@ -289,18 +499,20 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen flex-col">
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-surface px-4 py-2.5">
-        <div className="flex items-baseline gap-2">
-          <Link
-            href="/"
-            className="font-display text-lg font-semibold tracking-tight text-brand-ink transition-opacity hover:opacity-80"
-            aria-label="Go to ohmyself! home"
-          >
-            ohmyself!
-          </Link>
+        <div className="flex items-center gap-2">
+          <SpaceSwitcher
+            spaces={spaces}
+            activeSpaceId={activeSpaceId}
+            onSwitch={switchSpace}
+            onCreate={() => {
+              setCreateSpaceError(null);
+              setCreateSpaceOpen(true);
+            }}
+          />
           <span className="text-xs text-muted">
-            {baseNotes.length === 0
+            {totalEntries === 0
               ? "Empty"
-              : `${baseNotes.length} ${baseNotes.length === 1 ? "entry" : "entries"}`}
+              : `${totalEntries} ${totalEntries === 1 ? "entry" : "entries"}`}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -326,7 +538,10 @@ export default function Dashboard() {
             Ask yourself
           </button>
           <button
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => {
+              setSettingsTab(undefined);
+              setSettingsOpen(true);
+            }}
             className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-ink hover:border-brand hover:text-brand-ink"
           >
             Connect
@@ -342,6 +557,10 @@ export default function Dashboard() {
         <Sidebar
           notes={displayed}
           categories={categories}
+          folderCounts={folderCountMap}
+          loadedFolders={loadedFolders}
+          loadingFolders={loadingFolders}
+          onExpandFolder={ensureFolder}
           selected={selected}
           onSelect={openNote}
           query={query}
@@ -355,13 +574,10 @@ export default function Dashboard() {
             setCreateFolder({ folder });
           }}
           onRenameFolder={(folder) => setRenameFolder(folder)}
-          onDeleteFolder={(folder) =>
-            setConfirm({
-              kind: "folder",
-              path: folder,
-              count: baseNotes.filter((n) => n.path.startsWith(folder + "/")).length,
-            })
-          }
+          onDeleteFolder={async (folder) => {
+            const affected = await notesUnder(folder);
+            setConfirm({ kind: "folder", path: folder, count: affected.length });
+          }}
         />
         <main
           className={`min-w-0 flex-1 ${
@@ -373,6 +589,15 @@ export default function Dashboard() {
               notes={baseNotes}
               onOpenNote={openNote}
               loadSemantic={token ? () => api.semanticLinks(token) : undefined}
+            />
+          ) : totalEntries === 0 && !selected && !noteLoading ? (
+            <SpaceWelcome
+              space={activeSpace}
+              categories={categories}
+              onCreateInside={(folder) => {
+                setCreateError(null);
+                setCreateFolder({ folder });
+              }}
             />
           ) : (
             <NoteView
@@ -389,7 +614,27 @@ export default function Dashboard() {
         <Chat token={token} open={chatOpen} onClose={() => setChatOpen(false)} onOpenNote={openNote} />
       </div>
 
-      <Settings token={token} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <Settings
+        token={token}
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          void refresh();
+        }}
+        initialTab={settingsTab}
+        activeSpace={activeSpace}
+        onSpaceUpdated={(s) => setSpaces((prev) => prev.map((x) => (x.id === s.id ? { ...x, ...s } : x)))}
+        onChanged={() => void refresh()}
+      />
+
+      {createSpaceOpen && (
+        <CreateSpaceDialog
+          busy={createSpaceBusy}
+          error={createSpaceError}
+          onSubmit={handleCreateSpace}
+          onClose={() => setCreateSpaceOpen(false)}
+        />
+      )}
 
       {createFolder && (
         <CreateEntryDialog
@@ -468,6 +713,63 @@ function MapIcon() {
       <circle cx="7" cy="17" r="2.2" />
       <path d="M8 8.4 16 7M7.4 9 7 14.8M8.6 16.4 15 17.6M16.6 8 17 15.8" />
     </svg>
+  );
+}
+
+/** Teaching empty state for a brand-new (or emptied) space. A company wiki
+ *  explains its seeded structure and invites the first note; a personal space
+ *  nudges toward capturing. Category chips create a note inside that section. */
+function SpaceWelcome({
+  space,
+  categories,
+  onCreateInside,
+}: {
+  space: Space | null;
+  categories: Category[];
+  onCreateInside: (folder: string) => void;
+}) {
+  const isCompany = space?.kind === "company";
+  const name = space?.name?.trim() || (isCompany ? "your company" : "you");
+  const chips = categories.slice(0, 10);
+  return (
+    <div className="grid h-full place-items-center px-6 py-16">
+      <div className="max-w-xl text-center">
+        <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl border border-border bg-surface text-2xl shadow-sm">
+          {isCompany ? "🏢" : "🌱"}
+        </div>
+        <h2 className="font-heading text-2xl font-bold tracking-tight text-ink">
+          {isCompany ? `Welcome to ${name}'s wiki` : "Your second self is empty"}
+        </h2>
+        <p className="mx-auto mt-2 max-w-md text-pretty text-sm leading-relaxed text-muted">
+          {isCompany
+            ? "This shared brain is seeded with the sections an AI-native company needs from day zero. Pick one to write your first note — or connect your team's tools to fill it automatically."
+            : "Nothing here yet. Pick a section to write your first note — or connect your tools so it fills in as you go."}
+        </p>
+
+        {chips.length > 0 && (
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
+            {chips.map((c) => (
+              <button
+                key={c.folder}
+                onClick={() => onCreateInside(c.folder)}
+                className="rounded-full border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink shadow-sm transition-colors hover:border-brand hover:text-brand-ink"
+              >
+                + {c.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-7">
+          <button
+            onClick={() => onCreateInside(chips[0]?.folder ?? "notes")}
+            className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:opacity-95"
+          >
+            {isCompany ? "Write the first note" : "Create your first note"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

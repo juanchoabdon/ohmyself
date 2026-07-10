@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FullNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
+import { MarkdownEditor } from "./MarkdownEditor";
 
 export function NoteView({
   note,
@@ -28,8 +29,8 @@ export function NoteView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const focusTarget = useRef<"title" | "body" | null>(null);
+  const clickCoords = useRef<{ x: number; y: number } | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync local fields whenever a different note opens; leave edit mode.
   useEffect(() => {
@@ -43,16 +44,16 @@ export function NoteView({
     }
   }, [note?.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus the field the user clicked once the editors mount.
+  // Focus the title field if that's what the user clicked. The body is a
+  // WYSIWYG editor that self-focuses via its autoFocus prop.
   useLayoutEffect(() => {
     if (!editing) return;
-    const el = focusTarget.current === "title" ? titleRef.current : bodyRef.current;
-    if (el) {
+    if (focusTarget.current === "title" && titleRef.current) {
+      const el = titleRef.current;
       el.focus();
       const len = el.value.length;
       el.setSelectionRange(len, len);
     }
-    focusTarget.current = null;
   }, [editing]);
 
   if (loading) return <Centered>Loading…</Centered>;
@@ -76,9 +77,15 @@ export function NoteView({
       visibility !== note.meta.visibility ||
       tags !== note.meta.tags.join(", "));
 
-  function start(target: "title" | "body") {
+  function start(target: "title" | "body", e?: React.MouseEvent) {
     if (!editable || busy) return;
+    // Clicking a link (e.g. a [source] in a note) should follow the link, not edit.
+    if (e && (e.target as HTMLElement).closest("a")) return;
+    // If the user is selecting text (to copy), don't hijack it into edit mode.
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
     focusTarget.current = target;
+    clickCoords.current = e ? { x: e.clientX, y: e.clientY } : null;
     setEditing(true);
   }
 
@@ -191,11 +198,11 @@ export function NoteView({
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title"
             spellCheck={false}
-            className="w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
+            className="oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
           />
         ) : (
           <h1
-            onClick={() => start("title")}
+            onClick={(e) => start("title", e)}
             className={`text-[1.7rem] font-bold tracking-tight text-balance ${
               editable ? "cursor-text rounded transition-colors hover:bg-surface" : ""
             }`}
@@ -210,7 +217,7 @@ export function NoteView({
             value={tags}
             onChange={(e) => setTags(e.target.value)}
             placeholder="tags, comma, separated"
-            className="mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50"
+            className="oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50"
           />
         ) : (
           note.meta.tags.length > 0 && (
@@ -226,16 +233,15 @@ export function NoteView({
       </header>
 
       {editing ? (
-        <AutoTextarea
-          ref={bodyRef}
+        <MarkdownEditor
           value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Write in markdown… click anywhere to keep typing."
-          className="w-full resize-none overflow-hidden bg-transparent text-[0.98rem] leading-7 text-ink outline-none placeholder:text-muted/50"
+          onChange={setBody}
+          autoFocus={focusTarget.current === "body"}
+          focusCoords={clickCoords.current}
         />
       ) : (
         <div
-          onClick={() => start("body")}
+          onClick={(e) => start("body", e)}
           className={`prose min-h-[8rem] ${editable ? "cursor-text" : ""}`}
           title={editable ? "Click to edit" : undefined}
         >

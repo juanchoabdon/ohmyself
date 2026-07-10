@@ -7,6 +7,14 @@ import { VisibilityBadge } from "./VisibilityBadge";
 interface Props {
   notes: IndexedNote[];
   categories: Category[];
+  /** Per-pillar note counts (shown even before a pillar's notes are loaded). */
+  folderCounts: Record<string, number>;
+  /** Top-level pillars whose notes have been fetched. */
+  loadedFolders: Set<string>;
+  /** Top-level pillars currently being fetched. */
+  loadingFolders?: Set<string>;
+  /** Ask the parent to lazily load a pillar's notes (on expand). */
+  onExpandFolder: (folder: string) => void;
   selected: string | null;
   onSelect: (path: string) => void;
   query: string;
@@ -19,6 +27,11 @@ interface Props {
   onRenameFolder?: (folder: string) => void;
   onDeleteFolder?: (folder: string) => void;
 }
+
+// Pillars that live in the brain (queried by planning skills / MCP) but are not
+// meant to be browsed in the sidebar tree. Commitments are meeting-derived
+// follow-ups, surfaced during daily/weekly planning — not a folder to scroll.
+const HIDDEN_PILLARS = new Set(["commitments"]);
 
 interface TreeNode {
   name: string; // path segment (folder) — files use their note title for display
@@ -64,9 +77,28 @@ function buildForest(notes: IndexedNote[]): Map<string, TreeNode> {
   return roots;
 }
 
+/** A leading YYYY-MM-DD in a note's filename (used by meetings/ and commitments/). */
+function fileDate(node: TreeNode): string | null {
+  if (node.isFolder) return null;
+  const leaf = node.name.split("/").pop() ?? node.name;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(leaf);
+  return m ? m[1]! : null;
+}
+
 function sortNodes(nodes: TreeNode[]): TreeNode[] {
   return [...nodes].sort((a, b) => {
     if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+    if (!a.isFolder && !b.isFolder) {
+      const ad = fileDate(a);
+      const bd = fileDate(b);
+      if (ad && bd) {
+        if (ad !== bd) return bd.localeCompare(ad); // newest first
+      } else if (ad) {
+        return -1; // dated entries above undated ones
+      } else if (bd) {
+        return 1;
+      }
+    }
     const an = a.isFolder ? a.name : a.note?.title ?? a.name;
     const bn = b.isFolder ? b.name : b.note?.title ?? b.name;
     return an.localeCompare(bn);
@@ -90,6 +122,9 @@ function titleCase(name: string): string {
 export function Sidebar({
   notes,
   categories,
+  folderCounts,
+  loadedFolders,
+  onExpandFolder,
   selected,
   onSelect,
   query,
@@ -124,18 +159,25 @@ export function Sidebar({
     return paths;
   }, [forest]);
 
-  // Collapse all folders (pillars + nested) once notes first load.
-  // Pillar keys come from categories (covers empty ones too, not just forest).
-  const initialized = useRef(false);
+  // Every pillar / nested folder starts collapsed. We collapse each key the
+  // first time we see it (pillars can arrive after categories — e.g. `memory`
+  // only shows up via counts — and nested folders appear on expand), while
+  // preserving whatever the user has manually expanded since.
+  const seen = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!initialized.current && notes.length > 0 && categories.length > 0) {
-      initialized.current = true;
-      const pillarKeys = categories.map((c) => `__pillar__/${c.folder}`);
-      setCollapsed(new Set([...pillarKeys, ...folderPaths]));
-    }
-  }, [notes, categories, folderPaths]);
+    const keys = [
+      ...categories.map((c) => `__pillar__/${c.folder}`),
+      ...Object.keys(folderCounts).map((f) => `__pillar__/${f}`),
+      ...folderPaths,
+    ];
+    const fresh = keys.filter((k) => !seen.current.has(k));
+    if (fresh.length === 0) return;
+    for (const k of keys) seen.current.add(k);
+    setCollapsed((prev) => new Set([...prev, ...fresh]));
+  }, [categories, folderCounts, folderPaths]);
 
-  // Category roots in config order, then any extra folders found in notes.
+  // Category roots in config order, then any other pillar known from counts or
+  // already-loaded notes.
   const roots = useMemo(() => {
     const ordered: string[] = [];
     const used = new Set<string>();
@@ -144,11 +186,12 @@ export function Sidebar({
       ordered.push(cat.folder);
       used.add(cat.folder);
     }
-    for (const folder of Array.from(forest.keys()).sort()) {
+    const extra = new Set<string>([...Object.keys(folderCounts), ...forest.keys()]);
+    for (const folder of Array.from(extra).sort()) {
       if (!used.has(folder)) ordered.push(folder);
     }
-    return ordered;
-  }, [categories, forest]);
+    return ordered.filter((f) => !HIDDEN_PILLARS.has(f));
+  }, [categories, folderCounts, forest]);
 
   const isOpen = (path: string) => filtering || !collapsed.has(path);
   const toggle = (path: string) =>
@@ -163,6 +206,7 @@ export function Sidebar({
     return sortNodes(nodes).map((node) => {
       const pad = 8 + depth * 14;
       if (!node.isFolder) {
+        const date = fileDate(node);
         return (
           <li key={node.path}>
             <button
@@ -172,7 +216,10 @@ export function Sidebar({
                 selected === node.path ? "bg-brand-weak text-ink" : "text-ink/80 hover:bg-bg"
               }`}
             >
-              <span className="min-w-0 flex-1 truncate">{node.note?.title ?? node.name}</span>
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
+                {date && <span className="shrink-0 tabular-nums text-[0.7rem] text-muted/70">{date}</span>}
+                <span className="truncate">{node.note?.title ?? node.name}</span>
+              </span>
               {node.note && <VisibilityBadge visibility={node.note.visibility} />}
             </button>
           </li>
@@ -265,15 +312,25 @@ export function Sidebar({
         {roots.map((rootName) => {
           const node = forest.get(rootName);
           const items = node ? node.children : [];
-          const isEmpty = items.length === 0 && !node?.note;
-          if (filtering && isEmpty) return null;
+          const count = folderCounts[rootName];
+          const loaded = loadedFolders.has(rootName);
+          const hasForestItems = items.length > 0 || Boolean(node?.note);
+          // While filtering, a pillar with no matching notes is hidden entirely.
+          if (filtering && !hasForestItems) return null;
+          const isEmpty = count !== undefined ? count === 0 : !hasForestItems;
+          const displayCount = count ?? (node ? countFiles(node) : 0);
           const pillarKey = `__pillar__/${rootName}`;
           const open = isOpen(pillarKey);
           return (
             <div key={rootName} className="mb-2">
               <h3 className="group flex items-center justify-between gap-1 rounded-md px-1 py-1 text-[0.7rem] font-semibold capitalize tracking-wide text-muted">
                 <button
-                  onClick={() => toggle(pillarKey)}
+                  onClick={() => {
+                    if (filtering) return;
+                    const willOpen = collapsed.has(pillarKey);
+                    toggle(pillarKey);
+                    if (willOpen && !loaded) onExpandFolder(rootName);
+                  }}
                   disabled={filtering}
                   aria-label={open ? "Collapse" : "Expand"}
                   className="flex min-w-0 flex-1 items-center gap-1 text-left disabled:cursor-default"
@@ -302,11 +359,16 @@ export function Sidebar({
                       <PlusIcon />
                     </button>
                   )}
+                  {!isEmpty && (
+                    <span className="text-[0.7rem] tabular-nums text-muted/60">{displayCount}</span>
+                  )}
                 </span>
               </h3>
               {open &&
                 (isEmpty ? (
                   <p className="px-2 py-1 pl-4 text-xs italic text-muted/70">Empty — nothing here yet</p>
+                ) : !loaded && !filtering ? (
+                  <PillarLoading rows={Math.min(Math.max(displayCount, 1), 4)} />
                 ) : (
                   <ul className="pl-3">{renderNodes(items, 0)}</ul>
                 ))}
@@ -315,6 +377,19 @@ export function Sidebar({
         })}
       </nav>
     </aside>
+  );
+}
+
+/** Skeleton rows shown while a pillar's notes stream in on first expand. */
+function PillarLoading({ rows }: { rows: number }) {
+  return (
+    <ul className="pl-3" aria-busy="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <li key={i} className="flex items-center py-1.5" style={{ paddingLeft: 8 }}>
+          <span className="skeleton h-3.5 rounded" style={{ width: `${55 + ((i * 13) % 35)}%` }} />
+        </li>
+      ))}
+    </ul>
   );
 }
 

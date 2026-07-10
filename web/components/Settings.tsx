@@ -2,12 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, siteBase } from "@/lib/api";
-import type { ApiToken, FriendVisibility, Me, SharedByMe, SharedWithMe, UserSummary, Visibility } from "@/lib/types";
+import type { ApiToken, FriendVisibility, Me, SharedByMe, SharedWithMe, Space, UserSummary, Visibility } from "@/lib/types";
+import { Sources } from "./Sources";
+import { SpaceSettings } from "./SpaceSettings";
+
+type TabKey = "space" | "mcp" | "connectors" | "friends";
 
 interface Props {
   token: string;
   open: boolean;
   onClose: () => void;
+  initialTab?: TabKey;
+  /** The space currently active in the dashboard (self or company). */
+  activeSpace?: Space | null;
+  /** Called when the active space's branding/name changes, so the shell updates. */
+  onSpaceUpdated?: (space: Space) => void;
+  /** Called when a connector ingest changes the brain, so the page can refresh the sidebar. */
+  onChanged?: () => void;
 }
 
 const SCOPES: { value: Visibility; label: string; help: string }[] = [
@@ -21,7 +32,15 @@ const FRIEND_SCOPES: { value: FriendVisibility; label: string; help: string }[] 
   { value: "private", label: "Private", help: "Public + private notes. Never your secret notes." },
 ];
 
-export function Settings({ token, open, onClose }: Props) {
+export function Settings({ token, open, onClose, initialTab, activeSpace, onSpaceUpdated, onChanged }: Props) {
+  const isCompany = activeSpace?.kind === "company";
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "space", label: isCompany ? "Company" : "Appearance" },
+    { key: "mcp", label: "MCP & tokens" },
+    { key: "connectors", label: "Connectors" },
+    { key: "friends", label: "Friends" },
+  ];
+  const [tab, setTab] = useState<TabKey>(initialTab ?? "mcp");
   const [tokens, setTokens] = useState<ApiToken[]>([]);
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState("");
@@ -49,6 +68,10 @@ export function Settings({ token, open, onClose }: Props) {
 
   const mcpUrl = `${siteBase()}/mcp`;
   const restUrl = `${siteBase()}/v1`;
+
+  useEffect(() => {
+    if (open && initialTab) setTab(initialTab);
+  }, [open, initialTab]);
 
   useEffect(() => {
     if (!open) return;
@@ -200,8 +223,14 @@ export function Settings({ token, open, onClose }: Props) {
 }`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/30 p-4 backdrop-blur-sm">
-      <div className="my-8 w-full max-w-2xl rounded-2xl border border-border bg-surface shadow-2xl">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/30 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="my-8 w-full max-w-2xl rounded-2xl border border-border bg-surface shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
           <h2 className="font-heading text-lg font-semibold tracking-tight">Connect your second self</h2>
           <button onClick={onClose} className="rounded-lg px-2 py-1 text-sm text-muted hover:text-ink">
@@ -209,7 +238,39 @@ export function Settings({ token, open, onClose }: Props) {
           </button>
         </div>
 
+        <div role="tablist" aria-label="Settings sections" className="flex gap-1 border-b border-border px-5">
+          {tabs.map((t) => {
+            const active = t.key === tab;
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(t.key)}
+                className={`relative -mb-px border-b-2 px-3 py-2.5 text-sm font-medium transition-colors duration-150 ${
+                  active ? "border-brand text-ink" : "border-transparent text-muted hover:text-ink"
+                }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
         <div className="space-y-7 px-5 py-5">
+          {tab === "space" && activeSpace && (
+            <SpaceSettings
+              token={token}
+              space={activeSpace}
+              onUpdated={(s) => onSpaceUpdated?.(s)}
+            />
+          )}
+          {tab === "space" && !activeSpace && (
+            <p className="text-sm text-muted">Loading your space…</p>
+          )}
+
+          {tab === "mcp" && (
+            <>
           {/* One-click OAuth (recommended) */}
           <section>
             <h3 className="text-sm font-semibold text-ink">Connect Claude or ChatGPT</h3>
@@ -321,8 +382,14 @@ export function Settings({ token, open, onClose }: Props) {
               ))}
             </div>
           </section>
+          </>
+          )}
+
+          {/* Meeting sources / connectors */}
+          {tab === "connectors" && <Sources token={token} open={open} onChanged={onChanged} />}
 
           {/* Friends */}
+          {tab === "friends" && (
           <section>
             <h3 className="text-sm font-semibold text-ink">Friends</h3>
             <p className="mt-1 text-sm text-muted">
@@ -448,8 +515,10 @@ export function Settings({ token, open, onClose }: Props) {
               ))}
             </div>
           </section>
+          )}
 
           {/* Claude / MCP setup */}
+          {tab === "mcp" && (
           <section>
             <h3 className="text-sm font-semibold text-ink">Add to Claude Desktop</h3>
             <p className="mt-1 text-sm text-muted">
@@ -462,6 +531,7 @@ export function Settings({ token, open, onClose }: Props) {
               <span className="font-mono">Authorization: Bearer &lt;token&gt;</span>.
             </p>
           </section>
+          )}
         </div>
       </div>
     </div>

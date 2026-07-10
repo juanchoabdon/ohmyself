@@ -25,3 +25,9 @@ export function serviceClient(): SupabaseClient {
 export function brainBucket(): string {
   return process.env.BRAIN_BUCKET ?? "brain";
 }
+
+/** Public bucket for space logos — served openly so the switcher/public agent
+ *  can render them without an auth token. */
+export function logoBucket(): string {
+  return process.env.LOGO_BUCKET ?? "space-logos";
+}

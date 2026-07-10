@@ -1,23 +1,38 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  addToProject,
   allowedVisibilities,
   buildCore,
   buildFriendDirectory,
   canWrite,
+  distillEnabled,
   getDisplayName,
   getUserConfig,
+  ingest,
+  listCommitments,
+  listSpacesForUser,
   serializeNote,
+  setCommitmentStatus,
   setUserConfig,
   slugify,
+  stampFlowyaTaskId,
   todayISO,
+  upsertPerson,
+  upsertProject,
   type AuthContext,
+  type CommitmentOwner,
+  type CommitmentStatus,
   type FriendEntry,
   type NoteType,
+  type ProjectKind,
+  type Space,
+  type SpaceRole,
   type UserConfig,
   type Visibility,
 } from "../core/index.js";
 import { ForbiddenError, NotFoundError } from "../core/errors.js";
+import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
 
 const VisibilityEnum = z.enum(["public", "private", "secret"]);
 
@@ -39,14 +54,6 @@ function goalPath(period: string): string {
   if (m) return `goals/${m[1]}/${m[2] ?? "yearly"}.md`;
   return `goals/${slugify(period)}.md`;
 }
-
-const PROJECT_KINDS = {
-  prd: { folder: "prds", type: "prd", index: false },
-  spec: { folder: "specs", type: "spec", index: false },
-  transcript: { folder: "transcripts", type: "transcript", index: false },
-  note: { folder: "notes", type: "note", index: false },
-  subproject: { folder: "subprojects", type: "project", index: true },
-} as const;
 
 /** A skill lives at skills/<slug>/SKILL.md. The first blockquote line is the
  *  "when to use" description; the rest is the instruction body. */
@@ -70,14 +77,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   }
   let _config: UserConfig | null = null;
   async function config(): Promise<UserConfig> {
-    return (_config ??= await getUserConfig(auth.userId));
+    return (_config ??= await getUserConfig(auth.spaceId));
   }
   async function upsert(
     path: string,
     input: Parameters<typeof brain.upsertNote>[2],
   ) {
     requireWrite();
-    const { note, created } = await brain.upsertNote(auth.userId, path, input, await config(), allowed);
+    const { note, created } = await brain.upsertNote(auth.spaceId, path, input, await config(), allowed);
     return { ok: true, path: note.path, created, visibility: note.meta.visibility };
   }
 
@@ -98,7 +105,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ query, types, tags, limit }) => {
-      const res = await brain.search(auth.userId, query, { allowed, types, tags, limit });
+      const res = await brain.search(auth.spaceId, query, { allowed, types, tags, limit });
       return text(res);
     },
   );
@@ -116,7 +123,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ type, tags, limit }) => {
-      const res = await brain.listNotes(auth.userId, {
+      const res = await brain.listNotes(auth.spaceId, {
         allowed,
         types: type ? [type] : undefined,
         tags,
@@ -135,7 +142,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       inputSchema: { path: z.string().describe("relative note path, e.g. projects/x/_index.md") },
     },
     async ({ path }) => {
-      const note = await brain.readNote(auth.userId, path, allowed);
+      const note = await brain.readNote(auth.spaceId, path, allowed);
       return text(serializeNote(note.meta, note.body));
     },
   );
@@ -153,7 +160,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ topic, limit }) => {
-      const ctx = await brain.getContext(auth.userId, topic, allowed, limit ?? 6);
+      const ctx = await brain.getContext(auth.spaceId, topic, allowed, limit ?? 6);
       return text(ctx);
     },
   );
@@ -168,13 +175,13 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       inputSchema: {},
     },
     async () => {
-      const name = await getDisplayName(auth.userId);
+      const name = await getDisplayName(auth.spaceId);
       // Framing instruction so the agent answers in-character as the second self.
       const persona = name
         ? `You are speaking as the second self of ${name}. Begin your reply with "I'm the second self of ${name}." then summarize who they are using only the profile below.`
         : `You are speaking as this person's second self. Begin your reply with "I'm your second self." then summarize who they are using only the profile below.`;
 
-      const idNotes = await brain.listNotes(auth.userId, { allowed, types: ["identity"], limit: 50 });
+      const idNotes = await brain.listNotes(auth.spaceId, { allowed, types: ["identity"], limit: 50 });
       if (idNotes.length === 0) {
         return text(
           `${persona}\n\n(No identity has been set yet — say so briefly and invite them to add it. ` +
@@ -189,7 +196,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       const sections: string[] = [];
       for (const n of ordered) {
         try {
-          const note = await brain.readNote(auth.userId, n.path, allowed);
+          const note = await brain.readNote(auth.spaceId, n.path, allowed);
           const body = note.body.trim();
           if (!body) continue;
           sections.push(`## ${note.meta.title || n.title || n.path}\n\n${body}`);
@@ -391,6 +398,142 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
   );
 
+  // ── Company spaces (read-only access to wikis you belong to) ──────────────
+  // The personal MCP inherits read access to every company wiki the user is a
+  // member of, addressable by a stable `space` slug (see list_spaces). Reads are
+  // capped by role: members see public+private; owners/admins see everything up
+  // to their own scope. Never writes — to write, connect the company's own MCP.
+
+  interface SpaceEntry {
+    slug: string;
+    id: string;
+    name: string;
+    role: SpaceRole;
+    allowed: Visibility[];
+  }
+  function spaceReadVisibilities(role: SpaceRole): Visibility[] {
+    const cap = allowedVisibilities(auth.scope);
+    // Plain members never see founders-only ("secret") company notes.
+    return role === "owner" || role === "admin" ? cap : cap.filter((v) => v !== "secret");
+  }
+  let _spaces: SpaceEntry[] | null = null;
+  async function companySpaces(): Promise<SpaceEntry[]> {
+    if (_spaces) return _spaces;
+    const list: Space[] = await listSpacesForUser(auth.userId);
+    const seen = new Set<string>();
+    _spaces = list
+      .filter((s) => s.kind === "company")
+      .map((s) => {
+        const role: SpaceRole = s.role ?? "member";
+        let slug = s.slug || slugify(s.name) || "space";
+        while (seen.has(slug)) slug = `${slug}-${s.id.slice(0, 4)}`;
+        seen.add(slug);
+        return { slug, id: s.id, name: s.name, role, allowed: spaceReadVisibilities(role) };
+      });
+    return _spaces;
+  }
+  function findSpace(list: SpaceEntry[], slug: string): SpaceEntry {
+    const found = list.find((s) => s.slug === slug);
+    if (!found) {
+      throw new NotFoundError(`no space '${slug}' — call list_spaces to see the wikis you can read`);
+    }
+    return found;
+  }
+
+  server.registerTool(
+    "list_spaces",
+    {
+      title: "List company wikis",
+      description:
+        "List the company wikis (shared team brains) you're a member of. Returns each space's slug (use it as the `space` argument for recall_space, search_space, list_space_notes, read_space_note), its name, and your role. These are separate from your personal brain and from friends' brains.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {},
+    },
+    async () =>
+      text((await companySpaces()).map((s) => ({ space: s.slug, name: s.name, role: s.role }))),
+  );
+
+  server.registerTool(
+    "recall_space",
+    {
+      title: "Recall from a company wiki",
+      description:
+        "Recall everything relevant to a topic from a company wiki you belong to — same as recall, but scoped to that space's brain. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        topic: z.string().describe("the topic or question to recall context for"),
+        limit: z.number().int().positive().max(20).optional(),
+      },
+    },
+    async ({ space, topic, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(await brain.getContext(s.id, topic, s.allowed, limit ?? 6));
+    },
+  );
+
+  server.registerTool(
+    "search_space",
+    {
+      title: "Search a company wiki",
+      description:
+        "Full-text search across a company wiki you belong to — same as search_brain, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        query: z.string().describe("search terms"),
+        types: z.array(z.string()).optional().describe("filter by note types"),
+        tags: z.array(z.string()).optional().describe("filter by tags (any match)"),
+        limit: z.number().int().positive().max(50).optional(),
+      },
+    },
+    async ({ space, query, types, tags, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(await brain.search(s.id, query, { allowed: s.allowed, types, tags, limit }));
+    },
+  );
+
+  server.registerTool(
+    "list_space_notes",
+    {
+      title: "List a company wiki's notes",
+      description:
+        "List notes in a company wiki you belong to, optionally filtered by type and tags — same as list_notes, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        type: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ space, type, tags, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(
+        await brain.listNotes(s.id, { allowed: s.allowed, types: type ? [type] : undefined, tags, limit }),
+      );
+    },
+  );
+
+  server.registerTool(
+    "read_space_note",
+    {
+      title: "Read a company wiki note",
+      description:
+        "Read the full markdown of one note in a company wiki you belong to by path — same as read_note, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string().describe("relative note path, e.g. product/spec.md"),
+      },
+    },
+    async ({ space, path }) => {
+      const s = findSpace(await companySpaces(), space);
+      const note = await brain.readNote(s.id, path, s.allowed);
+      return text(serializeNote(note.meta, note.body));
+    },
+  );
+
   // ── Customize the taxonomy (level-1 categories) ───────────────────────────
 
   server.registerTool(
@@ -432,7 +575,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       const created = !existing;
       if (created) noteTypes.push(next);
       else noteTypes[idx] = next;
-      _config = await setUserConfig(auth.userId, { ...current, noteTypes });
+      _config = await setUserConfig(auth.spaceId, { ...current, noteTypes });
       return text({ ok: true, created, category: next, categories: _config.noteTypes });
     },
   );
@@ -457,7 +600,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       if (noteTypes.length === 0) {
         throw new ForbiddenError("cannot remove the last category; the taxonomy needs at least one");
       }
-      _config = await setUserConfig(auth.userId, { ...current, noteTypes });
+      _config = await setUserConfig(auth.spaceId, { ...current, noteTypes });
       return text({ ok: true, removed: catId, categories: _config.noteTypes });
     },
   );
@@ -562,14 +705,13 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ name, summary, status, tags, append, visibility }) => {
-      const slug = slugify(name);
-      const header = status ? `> Status: **${status}**\n\n` : "";
-      const res = await upsert(`projects/${slug}/_index.md`, {
-        type: "project",
-        title: name,
-        body: summary !== undefined ? `${header}${summary}` : undefined,
-        append,
+      requireWrite();
+      const res = await upsertProject(brain, auth.spaceId, await config(), allowed, {
+        name,
+        summary,
+        status,
         tags,
+        append,
         visibility,
       });
       return text(res);
@@ -594,10 +736,16 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ project, kind, title, body, append, visibility, tags }) => {
-      const k = PROJECT_KINDS[kind];
-      const base = `projects/${slugify(project)}/${k.folder}/${slugify(title)}`;
-      const path = k.index ? `${base}/_index.md` : `${base}.md`;
-      const res = await upsert(path, { type: k.type, title, body, append, visibility, tags });
+      requireWrite();
+      const res = await addToProject(brain, auth.spaceId, await config(), allowed, {
+        project,
+        kind: kind as ProjectKind,
+        title,
+        body,
+        append,
+        visibility,
+        tags,
+      });
       return text(res);
     },
   );
@@ -619,12 +767,11 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ name, relationship, notes, append, visibility, tags }) => {
-      const rel = relationship ? `> ${relationship}\n\n` : "";
-      const body = notes !== undefined || relationship ? `${rel}${notes ?? ""}` : undefined;
-      const res = await upsert(`people/${slugify(name)}.md`, {
-        type: "person",
-        title: name,
-        body,
+      requireWrite();
+      const res = await upsertPerson(brain, auth.spaceId, await config(), allowed, {
+        name,
+        relationship,
+        notes,
         append,
         visibility,
         tags,
@@ -685,6 +832,172 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
   );
 
+  // ── Meeting Intelligence (ingest + query) ─────────────────────────────────
+
+  server.registerTool(
+    "ingest_source",
+    {
+      title: "Ingest a source into the wiki",
+      description:
+        "Distill a raw source (a meeting transcript, workshop notes, a pasted doc) into the brain: person facts, project updates, commitments, a short meeting note, and reconciliation of open commitments. The raw text is NOT stored — only the distilled signal, with an optional link back to the source. Use this for Atlas workshops, Granola pastes, or any transcript.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        content: z.string().describe("the raw source text to distill"),
+        kind: z
+          .enum(["meeting", "workshop", "note"])
+          .optional()
+          .describe("what kind of source this is (default: meeting)"),
+        title: z.string().optional(),
+        date: z.string().optional().describe("ISO date of the source"),
+        sourceUrl: z.string().optional().describe("link back to the immutable source"),
+        mode: z
+          .enum(["light", "full"])
+          .optional()
+          .describe("light = person facts + concepts only (historical backfill); full = everything"),
+        visibility: VisibilityEnum.optional(),
+      },
+    },
+    async ({ content, kind, title, date, sourceUrl, mode, visibility }) => {
+      requireWrite();
+      if (!distillEnabled()) {
+        return text("Ingest needs OPENAI_API_KEY configured on the server.");
+      }
+      const res = await ingest(brain, auth.spaceId, await config(), allowed, {
+        kind: kind ?? "meeting",
+        rawText: content,
+        title,
+        date,
+        sourceUrl,
+        mode: mode ?? "full",
+        visibility,
+      });
+      return text({
+        isNoise: res.isNoise,
+        meetingPath: res.meetingPath,
+        touched: res.touched,
+        commitments: res.commitments,
+        resolved: res.resolved,
+      });
+    },
+  );
+
+  server.registerTool(
+    "list_meetings",
+    {
+      title: "List meeting notes",
+      description:
+        "List distilled meeting notes (most recent first). These are the summaries produced by ingest_source / the Drive connector, not raw transcripts.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        limit: z.number().int().positive().max(100).optional(),
+      },
+    },
+    async ({ limit }) => {
+      const rows = await brain.listNotes(auth.spaceId, {
+        types: ["meeting"],
+        allowed,
+        limit: limit ?? 25,
+      });
+      return text(rows);
+    },
+  );
+
+  server.registerTool(
+    "list_action_items",
+    {
+      title: "List commitments / action items",
+      description:
+        "List meeting-derived commitments, filtered by owner ('me' or a person) and status (open/resolved/dropped). Owner=me + status=open is your 'to capture in Flowya' list; owner=other is your 'waiting on' list. These are context, not Flowya tasks.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        owner: z.string().optional().describe("'me' or a person name/slug"),
+        status: z.enum(["open", "resolved", "dropped"]).optional(),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ owner, status, limit }) => {
+      const rows = await listCommitments(brain, auth.spaceId, {
+        owner: owner as CommitmentOwner | undefined,
+        status: status as CommitmentStatus | undefined,
+        allowed,
+        limit,
+      });
+      return text(rows);
+    },
+  );
+
+  server.registerTool(
+    "update_action_item",
+    {
+      title: "Update a commitment / action item",
+      description:
+        "Update a meeting-derived commitment: mark it resolved/dropped, and/or link it to the Flowya task it became. Use this after capturing an owner=me commitment into Flowya (pass its flowyaTaskId), or when a source confirms a commitment is done. Keeps the wiki in sync with Flowya.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        path: z.string().describe("the commitment note path (from list_action_items)"),
+        status: z.enum(["open", "resolved", "dropped"]).optional(),
+        flowyaTaskId: z.string().optional().describe("the Flowya task id this commitment became"),
+        reason: z.string().optional().describe("short note on why it was resolved/dropped"),
+      },
+    },
+    async ({ path, status, flowyaTaskId, reason }) => {
+      requireWrite();
+      if (flowyaTaskId) await stampFlowyaTaskId(brain, auth.spaceId, allowed, path, flowyaTaskId);
+      if (status) await setCommitmentStatus(brain, auth.spaceId, allowed, path, status, { reason });
+      return text({ ok: true, path, status, flowyaTaskId });
+    },
+  );
+
+  // ── Wiki-lint review (Karpathy's Lint op, human-in-the-loop) ───────────────
+
+  server.registerTool(
+    "get_lint_report",
+    {
+      title: "Get the latest wiki-lint report",
+      description:
+        "Read the most recent wiki-lint report (or a specific dated one). The server's periodic lint auto-applies high-confidence mechanical fixes and PROPOSES the judgment calls (ambiguous merges, concept culls, rehomes, orphan/thin flags). Use this in a weekly review to surface those proposals, then apply the approved ones with apply_lint.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        date: z.string().optional().describe("YYYY-MM-DD; omit for the latest report"),
+      },
+    },
+    async ({ date }) => {
+      return text(await getLintReport(auth.spaceId, allowed, date));
+    },
+  );
+
+  server.registerTool(
+    "apply_lint",
+    {
+      title: "Apply an approved wiki-lint proposal",
+      description:
+        "Apply ONE proposal from a lint report after JD approves it — merge (fold `drop` into `keep`, facts preserved + inbound links repointed), cull (demote a non-glossary concept to a plain note, content kept), or rehome (move a misfiled note to its real pillar). Runs the server's tested non-destructive path; do NOT reimplement merges by hand. For merge, pass keep+drop; for cull, pass path; for rehome, pass from+home (and optional title).",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+      inputSchema: {
+        op: z.enum(["merge", "cull", "rehome"]),
+        keep: z.string().optional().describe("merge: the surviving note path"),
+        drop: z.string().optional().describe("merge: the note path to fold in and delete"),
+        path: z.string().optional().describe("cull: the concept note path to demote"),
+        from: z.string().optional().describe("rehome: the misfiled note path"),
+        home: z.enum(["person", "project", "concept", "note"]).optional().describe("rehome: destination pillar"),
+        title: z.string().optional().describe("rehome: override the destination title (optional)"),
+      },
+    },
+    async ({ op, keep, drop, path, from, home, title }) => {
+      requireWrite();
+      if (op === "merge") {
+        if (!keep || !drop) throw new ForbiddenError("merge requires both keep and drop");
+        return text(await applyLintMerge(auth.spaceId, keep, drop, allowed));
+      }
+      if (op === "cull") {
+        if (!path) throw new ForbiddenError("cull requires path");
+        return text(await applyLintCull(auth.spaceId, path, allowed));
+      }
+      if (!from || !home) throw new ForbiddenError("rehome requires from and home");
+      return text(await applyLintRehome(auth.spaceId, from, home, allowed, title));
+    },
+  );
+
   // ── Power tools (generic CRUD) ─────────────────────────────────────────────
 
   server.registerTool(
@@ -710,7 +1023,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         throw new ForbiddenError("cannot create a note above your scope");
       }
       // Pass `allowed` so a note can't exceed scope via its type's default visibility.
-      const note = await brain.createNote(auth.userId, args, await config(), allowed);
+      const note = await brain.createNote(auth.spaceId, args, await config(), allowed);
       return text({ created: note.path, meta: note.meta });
     },
   );
@@ -732,7 +1045,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ path, ...patch }) => {
       requireWrite();
-      const note = await brain.updateNote(auth.userId, path, patch, allowed);
+      const note = await brain.updateNote(auth.spaceId, path, patch, allowed);
       return text({ updated: note.path, meta: note.meta });
     },
   );
@@ -747,7 +1060,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ path, text: t }) => {
       requireWrite();
-      const note = await brain.appendToNote(auth.userId, path, t, allowed);
+      const note = await brain.appendToNote(auth.spaceId, path, t, allowed);
       return text({ appended: note.path });
     },
   );
@@ -762,7 +1075,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ a, b }) => {
       requireWrite();
-      await brain.linkNotes(auth.userId, a, b, allowed);
+      await brain.linkNotes(auth.spaceId, a, b, allowed);
       return text({ linked: [a, b] });
     },
   );
@@ -807,7 +1120,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       inputSchema: {},
     },
     async () => {
-      const skills = await brain.listNotes(auth.userId, { allowed, types: ["skill"], limit: 200 });
+      const skills = await brain.listNotes(auth.spaceId, { allowed, types: ["skill"], limit: 200 });
       return text(
         skills.map((s) => ({ name: s.title, path: s.path, when: s.excerpt, tags: s.tags })),
       );
@@ -825,7 +1138,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ name }) => {
       const path = name.includes("/") ? name : skillPath(name);
-      const note = await brain.readNote(auth.userId, path, allowed);
+      const note = await brain.readNote(auth.spaceId, path, allowed);
       return text(serializeNote(note.meta, note.body));
     },
   );
@@ -833,7 +1146,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   // Expose each saved skill as a native MCP prompt (slash-command) so clients
   // like Claude/ChatGPT surface them directly. Body is read lazily on invoke.
   try {
-    const skills = await brain.listNotes(auth.userId, { allowed, types: ["skill"], limit: 200 });
+    const skills = await brain.listNotes(auth.spaceId, { allowed, types: ["skill"], limit: 200 });
     const seen = new Set<string>();
     for (const s of skills) {
       let name = slugify(s.title || s.path);
@@ -843,7 +1156,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         name,
         { title: s.title, description: (s.excerpt ?? "skill").slice(0, 140) },
         async () => {
-          const note = await brain.readNote(auth.userId, s.path, allowed);
+          const note = await brain.readNote(auth.spaceId, s.path, allowed);
           return {
             messages: [{ role: "user" as const, content: { type: "text" as const, text: note.body } }],
           };

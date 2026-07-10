@@ -33,6 +33,8 @@ export interface CreateNoteInput {
   visibility?: Visibility;
   tags?: string[];
   links?: string[];
+  /** Extra frontmatter keys (e.g. source_url, owner, status). Preserved round-trip. */
+  extra?: Record<string, unknown>;
   /** Explicit relative path; if omitted it is derived from type + title. */
   path?: string;
 }
@@ -43,6 +45,8 @@ export interface UpdateNoteInput {
   visibility?: Visibility;
   tags?: string[];
   links?: string[];
+  /** Extra frontmatter keys; shallow-merged into existing extra on update. */
+  extra?: Record<string, unknown>;
 }
 
 export interface UpsertNoteInput {
@@ -54,6 +58,8 @@ export interface UpsertNoteInput {
   visibility?: Visibility;
   tags?: string[];
   links?: string[];
+  /** Extra frontmatter keys; shallow-merged into existing extra on update. */
+  extra?: Record<string, unknown>;
 }
 
 /** Ties a content Vault + a derived BrainIndex together and enforces
@@ -111,6 +117,7 @@ export class Brain {
       links: input.links ?? [],
       created: todayISO(),
       updated: todayISO(),
+      extra: input.extra && Object.keys(input.extra).length ? input.extra : undefined,
     };
     const body = input.body ?? "";
     await this.vault.write(userId, path, serializeNote(meta, body));
@@ -142,6 +149,7 @@ export class Brain {
       if (input.visibility !== undefined) patch.visibility = input.visibility;
       if (input.tags?.length) patch.tags = Array.from(new Set([...meta.tags, ...input.tags]));
       if (input.links?.length) patch.links = Array.from(new Set([...meta.links, ...input.links]));
+      if (input.extra && Object.keys(input.extra).length) patch.extra = input.extra;
       if (input.body !== undefined) {
         patch.body = input.append
           ? `${curBody.replace(/\s+$/, "")}\n\n${input.body.trim()}\n`
@@ -164,6 +172,7 @@ export class Brain {
         visibility,
         tags: input.tags,
         links: input.links,
+        extra: input.extra,
         path: clean,
       },
       config,
@@ -201,6 +210,10 @@ export class Brain {
     if (patch.title !== undefined) meta.title = patch.title;
     if (patch.tags !== undefined) meta.tags = patch.tags;
     if (patch.links !== undefined) meta.links = patch.links;
+    if (patch.extra !== undefined) {
+      const merged = { ...(current.meta.extra ?? {}), ...patch.extra };
+      meta.extra = Object.keys(merged).length ? merged : undefined;
+    }
     if (patch.visibility !== undefined) {
       if (!allowed.includes(patch.visibility)) {
         throw new ForbiddenError("cannot set a visibility above your scope");
@@ -256,6 +269,10 @@ export class Brain {
 
   async listNotes(userId: string, opts: ListOptions): Promise<IndexedNote[]> {
     return this.index.list(userId, opts);
+  }
+
+  async folderCounts(userId: string, allowed: Visibility[]) {
+    return this.index.folderCounts(userId, allowed);
   }
 
   async search(userId: string, query: string, opts: SearchOptions): Promise<IndexedNote[]> {

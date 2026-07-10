@@ -36,6 +36,12 @@ export interface Category {
   label: string;
 }
 
+/** A top-level pillar and how many notes it holds (for the lazy sidebar). */
+export interface FolderCount {
+  folder: string;
+  count: number;
+}
+
 export interface ApiToken {
   id: string;
   name: string;
@@ -81,11 +87,107 @@ export interface UserSummary {
   displayName: string;
 }
 
+export type SpaceKind = "self" | "company";
+export type SpaceRole = "owner" | "admin" | "member";
+
+/** A brain the user can act in: their personal "self" space or a company space. */
+export interface Space {
+  id: string;
+  kind: SpaceKind;
+  slug: string | null;
+  name: string;
+  ownerUserId: string;
+  themeColor: string | null;
+  logoUrl: string | null;
+  role?: SpaceRole;
+}
+
+export interface SpaceMember {
+  userId: string;
+  name: string;
+  username: string;
+  role: SpaceRole;
+  createdAt: string;
+}
+
 export interface Me {
   userId: string;
+  spaceId: string;
+  role: SpaceRole;
   scope: Visibility;
   readonly: boolean;
   via?: string;
   username: string | null;
   displayName: string | null;
+}
+
+/** Progress of a server-side historical backfill (fire-and-forget). */
+export interface BackfillItem {
+  title: string;
+  outcome: "created" | "updated" | "noise" | "error";
+  touched: number;
+  at: string;
+}
+
+export interface BackfillState {
+  status: "running" | "done" | "error";
+  /** light = historical backfill (people/concepts); full = Sync now (meetings). */
+  mode?: "light" | "full";
+  lookbackMonths: number;
+  done: number;
+  total: number;
+  startedAt: string;
+  /** Transcript being distilled next (the live "now"). */
+  current?: string;
+  /** Most-recently finished transcripts (newest first) for the live feed. */
+  recent?: BackfillItem[];
+  lastStepAt?: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface ConnectionSettings {
+  autoSync?: boolean;
+  lookbackMonths?: number;
+  keepRaw?: boolean;
+  visibility?: Visibility;
+  driveFolderId?: string;
+  seenFileIds?: string[];
+  backfill?: BackfillState;
+  [key: string]: unknown;
+}
+
+/** An external connector account (e.g. a connected Google Drive for meetings). */
+export interface Connection {
+  id: string;
+  provider: string;
+  status: "active" | "error" | "disabled";
+  accountEmail?: string;
+  accountLabel?: string;
+  lastSyncAt?: string;
+  lastError?: string;
+  settings: ConnectionSettings;
+  createdAt: string;
+}
+
+export interface DriveNoteCandidate {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+  createdTime?: string;
+  webViewLink?: string;
+}
+
+export interface SyncResult {
+  created: string[];
+  updated: string[];
+  skipped: string[];
+  candidates?: DriveNoteCandidate[];
+  ingestedIds?: string[];
+  /** Fresh candidates handled this call (success + noise + error). */
+  processed?: number;
+  /** Fresh candidates still pending after this call. */
+  remaining?: number;
+  /** Fresh candidates at the start of this call (= processed + remaining). */
+  total?: number;
 }

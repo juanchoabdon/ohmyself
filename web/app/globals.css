@@ -134,6 +134,14 @@ main {
   outline-offset: 2px;
 }
 
+/* Inline note editing should feel seamless — no boxed focus ring around the
+   title/body/tags fields (they already sit flush with the rendered page). */
+.oms-inline-edit:focus,
+.oms-inline-edit:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
@@ -427,6 +435,54 @@ main {
 @keyframes shimmer {
   100% {
     transform: translateX(100%);
+  }
+}
+
+/* ---------- Loading: spinner + connectors progress bar ---------- */
+.oms-spin {
+  animation: spin-slow 0.7s linear infinite;
+}
+
+.oms-track {
+  position: relative;
+  height: 6px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--border);
+}
+.oms-track__bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--brand);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--brand) 55%, transparent);
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.oms-track__indeterminate {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 42%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--brand) 85%, transparent),
+    var(--brand),
+    color-mix(in oklch, var(--brand) 85%, transparent),
+    transparent
+  );
+  box-shadow: 0 0 10px color-mix(in oklch, var(--brand) 45%, transparent);
+  animation: oms-slide 1.15s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+@keyframes oms-slide {
+  0% {
+    left: -45%;
+  }
+  100% {
+    left: 100%;
   }
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { siClaude, siGooglecalendar, siNotion, siGmail, siWhatsapp } from "simple-icons";
 import { supabase } from "@/lib/supabaseClient";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -72,29 +72,121 @@ function useReveal() {
   }, []);
 }
 
+/* ---------------- Mode: self ⇄ startup ---------------- */
+
+type Mode = "self" | "startup";
+
+const ModeCtx = createContext<Mode>("self");
+const useMode = () => useContext(ModeCtx);
+
+/** Indigo accent that repaints the whole page when the startup experience is
+ *  active. Derived via color-mix so the weak tint adapts to light & dark. */
+const STARTUP_ACCENT = {
+  ["--brand" as string]: "oklch(0.585 0.196 273)",
+  ["--brand-ink" as string]: "oklch(0.585 0.196 273)",
+  ["--brand-weak" as string]: "color-mix(in oklch, oklch(0.585 0.196 273) 16%, transparent)",
+} as React.CSSProperties;
+
 export default function Landing() {
   useReveal();
+  const [mode, setMode] = useState<Mode>("self");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("landing-mode");
+    if (saved === "startup" || saved === "self") setMode(saved);
+  }, []);
+
+  function choose(next: Mode) {
+    setMode(next);
+    window.localStorage.setItem("landing-mode", next);
+  }
 
   return (
-    <div className="relative min-h-screen overflow-x-clip">
-      <Backdrop />
-      <Nav />
-      <Hero />
-      <HowItWorks />
-      <BrainPreview />
-      <Features />
-      <Privacy />
-      <FinalCta />
-      <Footer />
-    </div>
+    <ModeCtx.Provider value={mode}>
+      <div
+        className="relative min-h-screen overflow-x-clip"
+        style={mode === "startup" ? STARTUP_ACCENT : undefined}
+      >
+        <Backdrop />
+        <Nav />
+        <Hero mode={mode} onMode={choose} />
+        <HowItWorks />
+        <BrainPreview />
+        <Features />
+        <Privacy />
+        <FinalCta />
+        <Footer />
+      </div>
+    </ModeCtx.Provider>
   );
 }
 
 function Logo({ className = "" }: { className?: string }) {
+  const mode = useMode();
+  if (mode === "startup") {
+    return (
+      <span className={`font-display font-semibold tracking-tight ${className}`}>
+        <span
+          style={{
+            backgroundImage:
+              "linear-gradient(92deg, oklch(0.585 0.196 273), oklch(0.62 0.17 300))",
+            WebkitBackgroundClip: "text",
+            backgroundClip: "text",
+            color: "transparent",
+          }}
+        >
+          ohmystartup
+        </span>
+      </span>
+    );
+  }
   return (
     <span className={`font-display font-semibold tracking-tight ${className}`}>
       <span className="brand-gradient">ohmyself!</span>
     </span>
+  );
+}
+
+/** Big segmented control — the main selector that flips the entire landing. */
+function ModeToggle({ mode, onMode }: { mode: Mode; onMode: (m: Mode) => void }) {
+  const opts: { id: Mode; label: string; hint: string }[] = [
+    { id: "self", label: "For yourself", hint: "your second self" },
+    { id: "startup", label: "For your startup", hint: "your company brain" },
+  ];
+  return (
+    <div className="inline-flex rounded-full border border-border bg-surface/80 p-1 shadow-sm backdrop-blur-sm">
+      {opts.map((o) => {
+        const active = mode === o.id;
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onMode(o.id)}
+            aria-pressed={active}
+            className={`group relative rounded-full px-4 py-2 text-sm font-semibold transition-colors duration-200 sm:px-5 ${
+              active ? "text-white" : "text-muted hover:text-ink"
+            }`}
+          >
+            {active && (
+              <span
+                aria-hidden
+                className="absolute inset-0 rounded-full bg-brand shadow-sm transition-all duration-200"
+              />
+            )}
+            <span className="relative flex items-center gap-2">
+              {o.label}
+              <span
+                className={`hidden text-[0.7rem] font-normal sm:inline ${
+                  active ? "text-white/80" : "text-muted/70"
+                }`}
+              >
+                {o.hint}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -118,6 +210,8 @@ function Backdrop() {
 }
 
 function Nav() {
+  const mode = useMode();
+  const startup = mode === "startup";
   // null = unknown (still checking), so we render nothing auth-specific to avoid a flash.
   const [authed, setAuthed] = useState<boolean | null>(null);
 
@@ -163,8 +257,8 @@ function Nav() {
               href="/app"
               className="group inline-flex items-center gap-1.5 rounded-lg bg-brand px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-transform duration-200 ease-out-quart hover:-translate-y-0.5 hover:opacity-95"
             >
-              <span className="sm:hidden">My second self</span>
-              <span className="hidden sm:inline">Go to my second self</span>
+              <span className="sm:hidden">{startup ? "My startup" : "My second self"}</span>
+              <span className="hidden sm:inline">{startup ? "Go to my startup" : "Go to my second self"}</span>
               <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
             </Link>
           ) : authed === false ? (
@@ -180,7 +274,7 @@ function Nav() {
                 className="rounded-lg bg-brand px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-transform duration-200 ease-out-quart hover:-translate-y-0.5 hover:opacity-95"
               >
                 <span className="sm:hidden">Get started</span>
-                <span className="hidden sm:inline">Create your second self</span>
+                <span className="hidden sm:inline">{startup ? "Create your startup wiki" : "Create your second self"}</span>
               </Link>
             </>
           ) : null}
@@ -190,11 +284,16 @@ function Nav() {
   );
 }
 
-function Hero() {
+function Hero({ mode, onMode }: { mode: Mode; onMode: (m: Mode) => void }) {
+  const startup = mode === "startup";
   return (
-    <section className="mx-auto max-w-6xl px-5 pb-10 pt-16 md:pt-24">
+    <section className="mx-auto max-w-6xl px-5 pb-10 pt-12 md:pt-16">
       <div className="mx-auto max-w-3xl text-center">
-        <span className="reveal inline-flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1 text-xs font-medium text-muted shadow-sm">
+        <div className="reveal flex justify-center">
+          <ModeToggle mode={mode} onMode={onMode} />
+        </div>
+
+        <span className="reveal mt-8 inline-flex items-center gap-2 rounded-full border border-border bg-surface/80 px-3 py-1 text-xs font-medium text-muted shadow-sm">
           <span className="h-1.5 w-1.5 rounded-full bg-brand" />
           Open source · built on MCP
         </span>
@@ -202,23 +301,34 @@ function Hero() {
         <h1 className="reveal mt-6 font-heading text-balance text-5xl font-bold leading-[1.05] tracking-tight md:text-7xl">
           Meet <Logo className="text-5xl md:text-7xl" />
           <br />
-          your second self.
+          {startup ? "your company's brain." : "your second self."}
         </h1>
 
-        <p className="reveal mx-auto mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted">
-          A private knowledge base of everything about you — goals, projects,
-          people, journal — kept as plain markdown. Then connect{" "}
-          <strong className="font-semibold text-ink">Claude</strong>,{" "}
-          <strong className="font-semibold text-ink">ChatGPT</strong>, or any agent
-          via MCP, and let it answer for you — or share a public agent so anyone can ask.
-        </p>
+        {startup ? (
+          <p className="reveal mx-auto mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted">
+            A shared knowledge base for everything your startup is building —
+            thesis, product specs, decisions, people, GTM — kept as plain
+            markdown. Then connect{" "}
+            <strong className="font-semibold text-ink">Claude</strong>,{" "}
+            <strong className="font-semibold text-ink">ChatGPT</strong>, or any
+            agent via MCP so your whole team builds from one source of truth.
+          </p>
+        ) : (
+          <p className="reveal mx-auto mt-6 max-w-xl text-pretty text-lg leading-relaxed text-muted">
+            A private knowledge base of everything about you — goals, projects,
+            people, journal — kept as plain markdown. Then connect{" "}
+            <strong className="font-semibold text-ink">Claude</strong>,{" "}
+            <strong className="font-semibold text-ink">ChatGPT</strong>, or any agent
+            via MCP, and let it answer for you — or share a public agent so anyone can ask.
+          </p>
+        )}
 
         <div className="reveal mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
             href="/login?mode=signup"
             className="group inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 font-semibold text-white shadow-lg shadow-brand/25 transition-transform duration-200 ease-out-quart hover:-translate-y-0.5 hover:opacity-95"
           >
-            Create your second self
+            {startup ? "Create your startup wiki" : "Create your second self"}
             <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
           </Link>
           <a
@@ -232,8 +342,9 @@ function Hero() {
         <div className="reveal mt-14">
           <AvatarOrbit />
           <p className="mx-auto mt-6 max-w-md text-sm text-muted">
-            Your knowledge center — feed it from your tools, then let any agent
-            (or other people) talk to it.
+            {startup
+              ? "Your company's knowledge center — feed it from your team's tools, then let any agent (or your users) talk to it."
+              : "Your knowledge center — feed it from your tools, then let any agent (or other people) talk to it."}
           </p>
         </div>
       </div>
@@ -243,6 +354,7 @@ function Hero() {
 
 /** Central "you" avatar with real tool/agent logos orbiting around it. */
 function AvatarOrbit() {
+  const startup = useMode() === "startup";
   const tools: { label: string; icon: Brand }[] = [
     { label: "Claude", icon: siClaude },
     { label: "ChatGPT", icon: siChatgpt },
@@ -299,7 +411,7 @@ function AvatarOrbit() {
                   "inset 0 3px 10px rgba(255,255,255,0.5), inset 0 -16px 28px oklch(0.45 0.16 28 / 0.28), 0 18px 34px oklch(0.66 0.19 38 / 0.4)",
               }}
             >
-              <SelfAvatar className="h-full w-full" />
+              {startup ? <CompanyAvatar className="h-full w-full" /> : <SelfAvatar className="h-full w-full" />}
               {/* glossy sheen so it still reads as a 3D orb */}
               <div aria-hidden className="pointer-events-none absolute inset-0 rounded-full border border-white/40" />
               <div aria-hidden className="pointer-events-none absolute left-5 top-3 h-5 w-10 -rotate-12 rounded-full bg-white/45 blur-md" />
@@ -307,7 +419,7 @@ function AvatarOrbit() {
           </div>
           <div className="mt-3.5 flex justify-center">
             <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs font-semibold lowercase tracking-wide text-ink shadow-sm">
-              you
+              {startup ? "your co." : "you"}
             </span>
           </div>
         </div>
@@ -382,19 +494,57 @@ function SelfAvatar({ className = "" }: { className?: string }) {
   );
 }
 
+/** A friendly "company" medallion for the startup experience — a bright glyph
+ *  that reads as an org/brain rather than a single face. Fills its container. */
+function CompanyAvatar({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 100 100" className={className} role="img" aria-label="Your company brain">
+      <defs>
+        <radialGradient id="ca-bg" cx="34%" cy="26%" r="90%">
+          <stop offset="0" stopColor="#EEF0FF" />
+          <stop offset="1" stopColor="#C7CCFF" />
+        </radialGradient>
+        <linearGradient id="ca-mark" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#6366F1" />
+          <stop offset="1" stopColor="#8B5CF6" />
+        </linearGradient>
+        <clipPath id="ca-clip">
+          <circle cx="50" cy="50" r="50" />
+        </clipPath>
+      </defs>
+      <g clipPath="url(#ca-clip)">
+        <rect width="100" height="100" fill="url(#ca-bg)" />
+        {/* three linked nodes = a team building from one brain */}
+        <g stroke="url(#ca-mark)" strokeWidth="3.4" strokeLinecap="round">
+          <line x1="50" y1="38" x2="34" y2="64" />
+          <line x1="50" y1="38" x2="66" y2="64" />
+          <line x1="34" y1="64" x2="66" y2="64" />
+        </g>
+        <circle cx="50" cy="36" r="9" fill="url(#ca-mark)" />
+        <circle cx="33" cy="65" r="8" fill="url(#ca-mark)" />
+        <circle cx="67" cy="65" r="8" fill="url(#ca-mark)" />
+        <circle cx="50" cy="36" r="3.4" fill="#fff" opacity="0.9" />
+        <circle cx="33" cy="65" r="3" fill="#fff" opacity="0.9" />
+        <circle cx="67" cy="65" r="3" fill="#fff" opacity="0.9" />
+      </g>
+    </svg>
+  );
+}
+
 /* ---------------- How it works (the wow animation) ---------------- */
 
 function HowItWorks() {
+  const startup = useMode() === "startup";
   return (
     <section id="how" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal mx-auto max-w-2xl text-center">
         <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
-          From scattered life to one mind
+          {startup ? "From scattered docs to one company brain" : "From scattered life to one mind"}
         </h2>
         <p className="mt-3 text-pretty text-muted">
-          Your tools pour into a living markdown self. Then plug it into Claude,
-          ChatGPT, or any MCP client — or share a public agent so anyone can ask
-          about you.
+          {startup
+            ? "Your team's tools pour into a living markdown wiki. Then plug it into Claude, ChatGPT, or any MCP client — or share a public agent so your users can ask about your company."
+            : "Your tools pour into a living markdown self. Then plug it into Claude, ChatGPT, or any MCP client — or share a public agent so anyone can ask about you."}
         </p>
       </div>
 
@@ -430,15 +580,31 @@ function StageCard({
 }
 
 function CaptureStage() {
-  const items: { icon: Brand | "edit" | "goal"; label: string; mode: "auto" | "you" }[] = [
-    { icon: siGooglecalendar, label: "Meeting transcripts", mode: "auto" },
-    { icon: siGmail, label: "Emails & threads", mode: "auto" },
-    { icon: siNotion, label: "Docs & PRDs", mode: "auto" },
-    { icon: "edit", label: "Journal & ideas", mode: "you" },
-    { icon: "goal", label: "Goals & to-dos", mode: "you" },
-  ];
+  const startup = useMode() === "startup";
+  const items: { icon: Brand | "edit" | "goal"; label: string; mode: "auto" | "you" }[] = startup
+    ? [
+        { icon: siGooglecalendar, label: "Meeting transcripts", mode: "auto" },
+        { icon: siGmail, label: "Emails & threads", mode: "auto" },
+        { icon: siNotion, label: "Docs & PRDs", mode: "auto" },
+        { icon: "edit", label: "Decisions & specs", mode: "you" },
+        { icon: "goal", label: "Roadmap & goals", mode: "you" },
+      ]
+    : [
+        { icon: siGooglecalendar, label: "Meeting transcripts", mode: "auto" },
+        { icon: siGmail, label: "Emails & threads", mode: "auto" },
+        { icon: siNotion, label: "Docs & PRDs", mode: "auto" },
+        { icon: "edit", label: "Journal & ideas", mode: "you" },
+        { icon: "goal", label: "Goals & to-dos", mode: "you" },
+      ];
   return (
-    <StageCard title="Capture" subtitle="Auto-synced from your tools — or add & edit anything yourself">
+    <StageCard
+      title="Capture"
+      subtitle={
+        startup
+          ? "Auto-synced from your team's tools — or write specs & decisions yourself"
+          : "Auto-synced from your tools — or add & edit anything yourself"
+      }
+    >
       <div className="space-y-2.5">
         {items.map((it, i) => (
           <div
@@ -489,13 +655,22 @@ function PencilGlyph({ size = 11, className = "" }: { size?: number; className?:
 }
 
 function BrainStage() {
-  const cards = [
-    { t: "identity / about-me", v: "private" },
-    { t: "projects / ohmyself", v: "public" },
-    { t: "finances / overview", v: "secret" },
-  ] as const;
+  const startup = useMode() === "startup";
+  const cards = (
+    startup
+      ? [
+          { t: "company / thesis", v: "private" },
+          { t: "product / prd-v1", v: "private" },
+          { t: "finance / model", v: "secret" },
+        ]
+      : [
+          { t: "identity / about-me", v: "private" },
+          { t: "projects / ohmyself", v: "public" },
+          { t: "finances / overview", v: "secret" },
+        ]
+  ) as { t: string; v: "public" | "private" | "secret" }[];
   return (
-    <StageCard title="Your self" subtitle="Plain .md, linked & indexed">
+    <StageCard title={startup ? "Your company" : "Your self"} subtitle="Plain .md, linked & indexed">
       <div className="relative">
         <div className="animate-pulse-soft absolute inset-0 -z-0 rounded-xl" />
         <div className="relative space-y-2">
@@ -516,8 +691,16 @@ function BrainStage() {
 }
 
 function AskStage() {
+  const startup = useMode() === "startup";
   return (
-    <StageCard title="Connect & share" subtitle="Any agent via MCP — or a public one for everyone">
+    <StageCard
+      title="Connect & share"
+      subtitle={
+        startup
+          ? "Any agent via MCP — or a public one for your users"
+          : "Any agent via MCP — or a public one for everyone"
+      }
+    >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex items-center gap-1.5 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm text-ink">
@@ -537,10 +720,12 @@ function AskStage() {
             Public agent · anyone can ask
           </div>
           <div className="ml-auto w-fit rounded-2xl rounded-br-sm bg-brand px-3 py-1.5 text-xs text-white">
-            What are Juan&apos;s 2026 goals?
+            {startup ? "What is the team building this quarter?" : "What are Juan's 2026 goals?"}
           </div>
           <div className="mt-1.5 rounded-2xl rounded-bl-sm border border-border bg-surface px-3 py-1.5 text-xs text-ink">
-            <span className="type-line">Ship ohmyself! v1, grow the team…</span>
+            <span className="type-line">
+              {startup ? "Shipping the v1 wiki, hiring two engineers…" : "Ship ohmyself! v1, grow the team…"}
+            </span>
           </div>
         </div>
       </div>
@@ -609,7 +794,30 @@ const DEMO_NOTES: IndexedNote[] = [
   { path: "finances/overview.md", title: "Finances", type: "note", visibility: "secret", tags: ["finance", "confidential"], links: ["goals/2026/_index.md"], updated: "2026-06-01" },
 ];
 
+/** A believable example company wiki — thesis, product, market, GTM, people and
+ *  decisions wired together the way an AI-native startup's brain would be. */
+const DEMO_NOTES_COMPANY: IndexedNote[] = [
+  { path: "company/thesis.md", title: "Thesis", type: "thesis", visibility: "private", tags: ["thesis", "north-star"], links: ["company/mission.md", "product/_index.md", "market/landscape.md"], updated: "2026-06-12" },
+  { path: "company/mission.md", title: "Mission", type: "company", visibility: "public", tags: ["mission"], links: ["goals/2026/_index.md"], updated: "2026-05-30" },
+  { path: "product/_index.md", title: "Product", type: "product", visibility: "private", tags: ["product", "roadmap"], links: ["product/prd-v1.md", "product/spec-agents.md", "goals/2026/_index.md"], updated: "2026-06-28" },
+  { path: "product/prd-v1.md", title: "v1 PRD", type: "prd", visibility: "private", tags: ["prd"], links: ["product/_index.md", "decisions/stack.md"], updated: "2026-06-20" },
+  { path: "product/spec-agents.md", title: "Agent spec", type: "spec", visibility: "private", tags: ["spec", "mcp"], links: ["product/_index.md"], updated: "2026-06-18" },
+  { path: "market/landscape.md", title: "Landscape", type: "market", visibility: "private", tags: ["market", "research"], links: ["gtm/_index.md"], updated: "2026-05-02" },
+  { path: "gtm/_index.md", title: "Go-to-market", type: "gtm", visibility: "private", tags: ["gtm", "growth"], links: ["gtm/pricing.md", "people/head-of-growth.md"], updated: "2026-06-01" },
+  { path: "gtm/pricing.md", title: "Pricing", type: "gtm", visibility: "secret", tags: ["gtm", "pricing"], links: ["finance/model.md"], updated: "2026-06-10" },
+  { path: "goals/2026/_index.md", title: "2026 Goals", type: "goal", visibility: "private", tags: ["goals", "2026"], links: ["company/thesis.md"], updated: "2026-01-04" },
+  { path: "decisions/stack.md", title: "Stack decision", type: "decision", visibility: "private", tags: ["decision", "eng"], links: ["product/_index.md"], updated: "2026-04-14" },
+  { path: "decisions/hiring.md", title: "Hiring bar", type: "decision", visibility: "private", tags: ["decision", "people"], links: ["people/_index.md"], updated: "2026-03-22" },
+  { path: "people/_index.md", title: "Team", type: "person", visibility: "private", tags: ["people", "team"], links: ["people/cofounder.md", "people/head-of-growth.md"], updated: "2026-06-05" },
+  { path: "people/cofounder.md", title: "Co-founder", type: "person", visibility: "private", tags: ["team"], links: [], updated: "2026-05-19" },
+  { path: "people/head-of-growth.md", title: "Head of Growth", type: "person", visibility: "private", tags: ["team", "growth"], links: [], updated: "2026-05-19" },
+  { path: "finance/model.md", title: "Financial model", type: "finance", visibility: "secret", tags: ["finance", "confidential"], links: ["goals/2026/_index.md"], updated: "2026-06-01" },
+  { path: "ops/handbook.md", title: "Handbook", type: "ops", visibility: "private", tags: ["ops", "culture"], links: ["company/mission.md"], updated: "2026-02-11" },
+  { path: "skills/product-sense.md", title: "Product sense", type: "skill", visibility: "public", tags: ["skill", "product"], links: [], updated: "2026-02-11" },
+];
+
 function BrainPreview() {
+  const startup = useMode() === "startup";
   return (
     <section id="brain" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal mx-auto max-w-2xl text-center">
@@ -618,32 +826,32 @@ function BrainPreview() {
           Live preview · drag it around
         </span>
         <h2 className="mt-5 font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
-          Your whole self, as one living map
+          {startup ? "Your whole company, as one living map" : "Your whole self, as one living map"}
         </h2>
         <p className="mt-3 text-pretty text-muted">
-          Every note becomes a node. They wire themselves together by their links,
-          their folders, and the tags they share — so your projects, people, goals
-          and journal turn into a single mind you can actually see.
+          {startup
+            ? "Every note becomes a node. They wire themselves together by their links, their folders, and the tags they share — so your thesis, product, market, people and decisions turn into a single company brain your whole team can see."
+            : "Every note becomes a node. They wire themselves together by their links, their folders, and the tags they share — so your projects, people, goals and journal turn into a single mind you can actually see."}
         </p>
       </div>
 
       <div className="reveal mt-12">
         <div className="relative h-[460px] overflow-hidden rounded-3xl border border-border shadow-lg shadow-brand/10 md:h-[560px]">
-          <BrainMap notes={DEMO_NOTES} onOpenNote={() => {}} />
+          <BrainMap notes={startup ? DEMO_NOTES_COMPANY : DEMO_NOTES} onOpenNote={() => {}} />
         </div>
         <p className="mx-auto mt-5 max-w-lg text-center text-sm text-muted">
-          This is a sample second self. Sign up and yours fills in as you capture —
-          color = type, the ring = privacy (
+          {startup ? "This is a sample company wiki." : "This is a sample second self."} Sign up and yours
+          fills in as you capture — color = type, the ring = privacy (
           <span className="font-medium text-ink">public</span> /{" "}
           <span className="font-medium text-ink">private</span> /{" "}
-          <span className="font-medium text-ink">secret</span>).
+          <span className="font-medium text-ink">{startup ? "founders-only" : "secret"}</span>).
         </p>
         <div className="mt-7 flex justify-center">
           <Link
             href="/login?mode=signup"
             className="group inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 font-semibold text-white shadow-lg shadow-brand/25 transition-transform duration-200 ease-out-quart hover:-translate-y-0.5 hover:opacity-95"
           >
-            Map your own mind
+            {startup ? "Map your company" : "Map your own mind"}
             <span className="transition-transform duration-200 group-hover:translate-x-0.5">→</span>
           </Link>
         </div>
@@ -655,40 +863,70 @@ function BrainPreview() {
 /* ---------------- Features ---------------- */
 
 function Features() {
-  const features = [
-    {
-      title: "Markdown, not a database",
-      body: "Every note is a portable .md file with frontmatter. Own it, fork it, sync it like Obsidian — no lock-in.",
-    },
-    {
-      title: "Three privacy levels",
-      body: "Mark notes public, private, or secret. The agent only ever reveals what your scope allows.",
-    },
-    {
-      title: "Any agent, via MCP",
-      body: "Plug Claude, ChatGPT, or any MCP client into your second self to read, search, create, and link notes — bidirectionally.",
-    },
-    {
-      title: "Bidirectional connectors",
-      body: "Pull meeting transcripts from your calendar today; add new sources with a small connector interface.",
-    },
-    {
-      title: "Search & context",
-      body: "Full-text search and a context endpoint give agents exactly the right notes for a question.",
-    },
-    {
-      title: "A public agent others can talk to",
-      body: "Expose a public agent on your site so anyone can ask about you — it only ever answers from your public notes.",
-    },
-  ];
+  const startup = useMode() === "startup";
+  const features = startup
+    ? [
+        {
+          title: "Markdown, not a database",
+          body: "Every note is a portable .md file with frontmatter. Own it, fork it, sync it like Obsidian — no lock-in for your company's knowledge.",
+        },
+        {
+          title: "Roles & shared access",
+          body: "Invite your team. Owners, admins, and members each see the right visibility — founders-only secrets stay founders-only.",
+        },
+        {
+          title: "Any agent, via MCP",
+          body: "Plug Claude, ChatGPT, or Cursor into your company wiki to read specs, search decisions, and build — bidirectionally.",
+        },
+        {
+          title: "Company-native structure",
+          body: "New wikis seed with thesis, product, market, GTM, ops and decisions folders — the shape of an AI-native company from day zero.",
+        },
+        {
+          title: "Search & context",
+          body: "Full-text search and a context endpoint give your team's agents exactly the right notes for a question.",
+        },
+        {
+          title: "A public agent for your users",
+          body: "Expose a public agent so customers and investors can ask about your company — it only ever answers from public notes.",
+        },
+      ]
+    : [
+        {
+          title: "Markdown, not a database",
+          body: "Every note is a portable .md file with frontmatter. Own it, fork it, sync it like Obsidian — no lock-in.",
+        },
+        {
+          title: "Three privacy levels",
+          body: "Mark notes public, private, or secret. The agent only ever reveals what your scope allows.",
+        },
+        {
+          title: "Any agent, via MCP",
+          body: "Plug Claude, ChatGPT, or any MCP client into your second self to read, search, create, and link notes — bidirectionally.",
+        },
+        {
+          title: "Bidirectional connectors",
+          body: "Pull meeting transcripts from your calendar today; add new sources with a small connector interface.",
+        },
+        {
+          title: "Search & context",
+          body: "Full-text search and a context endpoint give agents exactly the right notes for a question.",
+        },
+        {
+          title: "A public agent others can talk to",
+          body: "Expose a public agent on your site so anyone can ask about you — it only ever answers from your public notes.",
+        },
+      ];
   return (
     <section id="features" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal mx-auto max-w-2xl text-center">
         <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
-          A self that actually grows with you
+          {startup ? "A company brain that grows with the team" : "A self that actually grows with you"}
         </h2>
         <p className="mt-3 text-pretty text-muted">
-          The more you feed it, the better it helps you decide.
+          {startup
+            ? "The more your team feeds it, the faster everyone builds from the same truth."
+            : "The more you feed it, the better it helps you decide."}
         </p>
       </div>
       <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -710,29 +948,48 @@ function Features() {
 /* ---------------- Privacy ---------------- */
 
 function Privacy() {
-  const levels = [
-    {
-      v: "public" as const,
-      title: "Public",
-      body: "Anyone can ask your public agent and get these. Great for juandisanchez.com.",
-    },
-    {
-      v: "private" as const,
-      title: "Private",
-      body: "Only you (signed in) and your personal agent can see and edit these.",
-    },
-    {
-      v: "secret" as const,
-      title: "Secret",
-      body: "Sensitive notes — finances, secrets — gated behind the highest scope.",
-    },
-  ];
+  const startup = useMode() === "startup";
+  const levels = startup
+    ? [
+        {
+          v: "public" as const,
+          title: "Public",
+          body: "Anyone can ask your company's public agent — great for your site, users, and investors.",
+        },
+        {
+          v: "private" as const,
+          title: "Private",
+          body: "Your team (signed in) and their agents can see and edit these.",
+        },
+        {
+          v: "secret" as const,
+          title: "Founders-only",
+          body: "Cap table, finances, sensitive strategy — gated behind the highest scope.",
+        },
+      ]
+    : [
+        {
+          v: "public" as const,
+          title: "Public",
+          body: "Anyone can ask your public agent and get these. Great for juandisanchez.com.",
+        },
+        {
+          v: "private" as const,
+          title: "Private",
+          body: "Only you (signed in) and your personal agent can see and edit these.",
+        },
+        {
+          v: "secret" as const,
+          title: "Secret",
+          body: "Sensitive notes — finances, secrets — gated behind the highest scope.",
+        },
+      ];
   return (
     <section id="privacy" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal rounded-3xl border border-border bg-surface/80 p-8 shadow-sm md:p-12">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
-            You decide what it can say
+            {startup ? "Your team decides what it can say" : "You decide what it can say"}
           </h2>
           <p className="mt-3 text-pretty text-muted">
             One repo, three visibilities — enforced everywhere, from the API to MCP.
@@ -753,6 +1010,7 @@ function Privacy() {
 }
 
 function FinalCta() {
+  const startup = useMode() === "startup";
   return (
     <section className="mx-auto max-w-6xl px-5 py-20">
       <div className="reveal relative overflow-hidden rounded-3xl border border-border bg-surface p-10 text-center shadow-sm md:p-16">
@@ -765,15 +1023,16 @@ function FinalCta() {
           Start your <Logo className="text-3xl md:text-5xl" />
         </h2>
         <p className="relative mx-auto mt-4 max-w-md text-pretty text-muted">
-          New accounts get a starter second self seeded automatically. Private by
-          default — you choose what becomes public.
+          {startup
+            ? "New startup wikis seed with a company-native structure automatically. Private by default — you choose what your users can see."
+            : "New accounts get a starter second self seeded automatically. Private by default — you choose what becomes public."}
         </p>
         <div className="relative mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Link
             href="/login?mode=signup"
             className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 font-semibold text-white shadow-lg shadow-brand/25 transition-transform duration-200 ease-out-quart hover:-translate-y-0.5"
           >
-            Create your second self →
+            {startup ? "Create your startup wiki →" : "Create your second self →"}
           </Link>
           <a
             href={GITHUB}
@@ -790,11 +1049,12 @@ function FinalCta() {
 }
 
 function Footer() {
+  const startup = useMode() === "startup";
   return (
     <footer className="border-t border-border/70">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-5 py-8 text-sm text-muted sm:flex-row">
         <Logo className="text-base" />
-        <p>Your second self — view it, search it, ask it.</p>
+        <p>{startup ? "Your company's brain — view it, search it, ask it." : "Your second self — view it, search it, ask it."}</p>
         <a href={GITHUB} target="_blank" rel="noreferrer" className="transition-colors hover:text-ink">
           Open source
         </a>

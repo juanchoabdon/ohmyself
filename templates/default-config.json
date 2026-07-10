@@ -14,6 +14,9 @@
     { "id": "finance",    "label": "Finance",    "folder": "finance",    "defaultVisibility": "secret" },
     { "id": "note",       "label": "Note",       "folder": "notes",      "defaultVisibility": "private" },
     { "id": "todo",       "label": "Todo",       "folder": "todos",      "defaultVisibility": "private" },
+    { "id": "meeting",    "label": "Meeting",    "folder": "meetings",   "defaultVisibility": "private" },
+    { "id": "concept",    "label": "Concept",    "folder": "concepts",   "defaultVisibility": "private" },
+    { "id": "commitment", "label": "Commitment", "folder": "commitments","defaultVisibility": "private" },
     { "id": "skill",      "label": "Skill",      "folder": "skills",     "defaultVisibility": "private" }
   ]
 }

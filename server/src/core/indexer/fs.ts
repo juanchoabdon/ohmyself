@@ -1,5 +1,12 @@
 import { excerptOf, parseNote } from "../frontmatter.js";
-import type { IndexRecord, IndexedNote, ListOptions, SearchOptions } from "../types.js";
+import type {
+  FolderCount,
+  IndexRecord,
+  IndexedNote,
+  ListOptions,
+  SearchOptions,
+  Visibility,
+} from "../types.js";
 import type { Vault } from "../vault/types.js";
 import type { BrainIndex } from "./types.js";
 
@@ -67,9 +74,20 @@ export class FsIndex implements BrainIndex {
   }
 
   async list(userId: string, opts: ListOptions): Promise<IndexedNote[]> {
-    const all = this.filter(await this.scan(userId), opts);
+    let all = this.filter(await this.scan(userId), opts);
+    if (opts.prefix) all = all.filter((n) => n.path.startsWith(opts.prefix!));
     all.sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? ""));
     return all.slice(0, opts.limit ?? 200);
+  }
+
+  async folderCounts(userId: string, allowed: Visibility[]): Promise<FolderCount[]> {
+    const notes = this.filter(await this.scan(userId), { allowed });
+    const counts = new Map<string, number>();
+    for (const n of notes) {
+      const top = n.path.split("/")[0] || "(root)";
+      counts.set(top, (counts.get(top) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([folder, count]) => ({ folder, count }));
   }
 
   async search(userId: string, query: string, opts: SearchOptions): Promise<IndexedNote[]> {

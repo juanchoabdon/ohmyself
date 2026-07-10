@@ -37,6 +37,37 @@ export const DEFAULT_CONFIG: UserConfig = {
     { id: "finance", label: "Finance", folder: "finance", defaultVisibility: "secret" },
     { id: "note", label: "Note", folder: "notes", defaultVisibility: "private" },
     { id: "todo", label: "Todo", folder: "todos", defaultVisibility: "private" },
+    { id: "meeting", label: "Meeting", folder: "meetings", defaultVisibility: "private" },
+    { id: "concept", label: "Concept", folder: "concepts", defaultVisibility: "private" },
+    { id: "commitment", label: "Commitment", folder: "commitments", defaultVisibility: "private" },
+    { id: "skill", label: "Skill", folder: "skills", defaultVisibility: "private" },
+  ],
+};
+
+/** Default taxonomy for a **company** space — an AI-native startup wiki from
+ *  scratch. Mirrors templates/company-default-config.json. In a company space
+ *  the visibility ladder reads as company-wide (`public`) / internal (`private`)
+ *  / founders-only (`secret`); the labels are surfaced in the UI. */
+export const DEFAULT_COMPANY_CONFIG: UserConfig = {
+  version: 1,
+  visibilityLevels: ["public", "private", "secret"],
+  defaultVisibility: "private",
+  noteTypes: [
+    { id: "company", label: "Company", folder: "company", defaultVisibility: "private" },
+    { id: "thesis", label: "Thesis", folder: "thesis", defaultVisibility: "private" },
+    { id: "product", label: "Product", folder: "product", defaultVisibility: "private" },
+    { id: "prd", label: "PRD", folder: "product", defaultVisibility: "private" },
+    { id: "spec", label: "Spec", folder: "product", defaultVisibility: "private" },
+    { id: "market", label: "Market", folder: "market", defaultVisibility: "private" },
+    { id: "research", label: "Research", folder: "research", defaultVisibility: "private" },
+    { id: "person", label: "Person", folder: "people", defaultVisibility: "private" },
+    { id: "gtm", label: "Go-to-market", folder: "gtm", defaultVisibility: "private" },
+    { id: "ops", label: "Ops", folder: "ops", defaultVisibility: "private" },
+    { id: "finance", label: "Finance", folder: "finance", defaultVisibility: "secret" },
+    { id: "decision", label: "Decision", folder: "decisions", defaultVisibility: "private" },
+    { id: "meeting", label: "Meeting", folder: "meetings", defaultVisibility: "private" },
+    { id: "goal", label: "Goal", folder: "goals", defaultVisibility: "private" },
+    { id: "note", label: "Note", folder: "notes", defaultVisibility: "private" },
     { id: "skill", label: "Skill", folder: "skills", defaultVisibility: "private" },
   ],
 };

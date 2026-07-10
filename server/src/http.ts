@@ -115,6 +115,7 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<voi
     auth = await resolveAuth({
       authorization: headerStr(req.headers["authorization"]),
       "x-brain-scope": headerStr(req.headers["x-brain-scope"]),
+      "x-brain-space": headerStr(req.headers["x-brain-space"]),
     });
   } catch (err) {
     const status = err instanceof BrainError ? err.status : 401;

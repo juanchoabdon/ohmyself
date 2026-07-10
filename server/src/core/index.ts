@@ -13,7 +13,27 @@ export * from "./config.js";
 export * from "./errors.js";
 export { Brain, slugify } from "./brain.js";
 export { parseNote, serializeNote, todayISO, excerptOf } from "./frontmatter.js";
-export { getUserConfig, setUserConfig, getDisplayName } from "./config-store.js";
+export {
+  getUserConfig,
+  setUserConfig,
+  getDisplayName,
+  getSpaceConfig,
+  setSpaceConfig,
+  seedSpaceConfig,
+} from "./config-store.js";
+export {
+  getSpace,
+  resolveRole,
+  listSpacesForUser,
+  createCompanySpace,
+  updateSpace,
+  listMembers,
+  addMember,
+  updateMemberRole,
+  removeMember,
+} from "./spaces.js";
+export type { Space, SpaceKind, CreateSpaceInput, UpdateSpaceInput, SpaceMember } from "./spaces.js";
+export { serviceClient, brainBucket, logoBucket } from "./supabase.js";
 export { createToken, listTokens, revokeToken, lookupToken } from "./tokens.js";
 export type { ApiTokenRow } from "./tokens.js";
 export {
@@ -37,6 +57,63 @@ export {
 export type { FriendVisibility, SharedByMe, SharedWithMe, FriendEntry } from "./friends.js";
 export { searchUsers, getProfileSummary, setUsername, normalizeUsername } from "./users.js";
 export type { UserSummary } from "./users.js";
+export { upsertPerson, appendPersonFact, personPath, setPersonHeadline } from "./people.js";
+export type { UpsertPersonInput, PersonWriteResult } from "./people.js";
+export {
+  PROJECT_KINDS,
+  upsertProject,
+  addToProject,
+  projectIndexPath,
+} from "./projects.js";
+export type {
+  ProjectKind,
+  UpsertProjectInput,
+  AddToProjectInput,
+  ProjectWriteResult,
+} from "./projects.js";
+export {
+  addCommitment,
+  setCommitmentStatus,
+  stampFlowyaTaskId,
+  listCommitments,
+} from "./actions.js";
+export type {
+  CommitmentOwner,
+  CommitmentStatus,
+  AddCommitmentInput,
+  CommitmentWriteResult,
+  ListCommitmentsOptions,
+} from "./actions.js";
+export { ingest, distillEnabled } from "./ingest.js";
+export type { IngestInput, IngestResult } from "./ingest.js";
+export {
+  encryptCredential,
+  decryptCredential,
+  listConnections,
+  getConnectionWithCredential,
+  upsertConnection,
+  updateConnection,
+  deleteConnection,
+  listActiveConnectionsForProvider,
+} from "./connections.js";
+export type {
+  Connection,
+  ConnectionWithCredential,
+  ConnectionSettings,
+  ConnectionStatus,
+  BackfillState,
+  BackfillItem,
+  UpsertConnectionInput,
+  ConnectionStatePatch,
+} from "./connections.js";
+export { distill } from "./distill.js";
+export type {
+  DistillResult,
+  DistillInput,
+  IngestKind,
+  IngestMode,
+  GroundingContext,
+} from "./distill.js";
 
 export interface OhmyselfCore {
   brain: Brain;

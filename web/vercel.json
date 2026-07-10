@@ -4,12 +4,22 @@
   "buildCommand": "next build",
   "installCommand": "npm install --no-audit --no-fund",
   "rewrites": [
-    { "source": "/mcp", "destination": "https://ohmyself-api.vercel.app/mcp" },
-    { "source": "/v1/:path*", "destination": "https://ohmyself-api.vercel.app/v1/:path*" },
-    { "source": "/oauth/:path*", "destination": "https://ohmyself-api.vercel.app/oauth/:path*" },
+    { "source": "/mcp", "destination": "https://ohmyself-api-production.up.railway.app/mcp" },
+    {
+      "source": "/v1/:path*",
+      "destination": "https://ohmyself-api-production.up.railway.app/v1/:path*"
+    },
+    {
+      "source": "/oauth/:path*",
+      "destination": "https://ohmyself-api-production.up.railway.app/oauth/:path*"
+    },
+    {
+      "source": "/connectors/:path*",
+      "destination": "https://ohmyself-api-production.up.railway.app/connectors/:path*"
+    },
     {
       "source": "/.well-known/:path*",
-      "destination": "https://ohmyself-api.vercel.app/.well-known/:path*"
+      "destination": "https://ohmyself-api-production.up.railway.app/.well-known/:path*"
     }
   ]
 }

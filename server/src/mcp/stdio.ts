@@ -13,8 +13,13 @@ import { buildMcpServer } from "./tools.js";
 async function main(): Promise<void> {
   const requested = process.env.OHMYSELF_SCOPE;
   const scope: Scope = isScope(requested) ? requested : "secret";
+  // Local stdio operates on a single brain: the self space (spaceId === userId).
+  const userId = process.env.OHMYSELF_USER_ID ?? "local";
+  const spaceId = process.env.OHMYSELF_SPACE_ID ?? userId;
   const auth: AuthContext = {
-    userId: process.env.OHMYSELF_USER_ID ?? "local",
+    userId,
+    spaceId,
+    role: "owner",
     scope,
     readonly: scope === "public",
   };

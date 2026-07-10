@@ -18,8 +18,9 @@ out/
 secrets/
 .supabase/.temp/
 
-# Local vault (personal brain content lives outside the repo)
-vault/
+# Local vault (personal brain content lives outside the repo).
+# Root-anchored so it doesn't also swallow the `src/core/vault/` SOURCE dir.
+/vault/
 .vault/
 
 # OS / editor
