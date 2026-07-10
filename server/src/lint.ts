@@ -29,8 +29,10 @@ import {
   buildCore,
   getUserConfig,
   listActiveConnectionsForProvider,
+  listConnections,
   personPath,
   projectIndexPath,
+  setCommitmentOwner,
   setPersonHeadline,
   slugify,
   type Brain,
@@ -93,6 +95,12 @@ export interface RehomeOutcome {
   reason: string;
   applied: boolean;
 }
+export interface SelfFixOutcome {
+  kind: "person-page" | "commitment";
+  path: string;
+  detail: string;
+  applied: boolean;
+}
 
 export interface LintReport {
   ranAt: string;
@@ -104,6 +112,7 @@ export interface LintReport {
   culled: CullOutcome[];
   headlines: HeadlineOutcome[];
   rehomed: RehomeOutcome[];
+  selfFixes: SelfFixOutcome[];
   orphans: { path: string; why: string }[];
 }
 
@@ -638,6 +647,91 @@ async function rehomePass(
   }
 }
 
+/** Predicate: does a name/slug refer to the OWNER? Uses the connected account's
+ *  name/email. Conservative: exact email/local-part, or ≥2 shared distinctive
+ *  name tokens where the smaller set is fully contained in the larger. */
+function buildOwnerMatcher(ownerNames: string[]): (candidate: string) => boolean {
+  const emails = ownerNames.map((n) => norm(n)).filter((n) => n.includes("@"));
+  const tokenSets = ownerNames.filter((n) => !n.includes("@")).map((n) => nameTokens(n));
+  return (candidate: string) => {
+    const c = norm(candidate);
+    if (!c) return false;
+    if (c === "me") return true;
+    for (const e of emails) if (c === e || c === e.split("@")[0]) return true;
+    const ct = nameTokens(candidate);
+    if (ct.size === 0) return false;
+    for (const owner of tokenSets) {
+      if (owner.size === 0) continue;
+      let inter = 0;
+      for (const t of ct) if (owner.has(t)) inter++;
+      if (inter >= 2 && inter === Math.min(ct.size, owner.size)) return true;
+    }
+    return false;
+  };
+}
+
+/** Fix the "owner treated as another person" drift: delete self person-pages the
+ *  ingester wrongly created, and re-attribute commitments owned by the owner (by
+ *  name) back to "me". Person-page deletion is destructive → only when apply=high. */
+async function ownerPass(
+  brain: Brain,
+  userId: string,
+  allowed: Visibility[],
+  apply: LintApplyMode,
+  report: LintReport,
+): Promise<void> {
+  const conns = await listConnections(userId).catch(() => []);
+  const ownerNames = Array.from(
+    new Set(conns.flatMap((c) => [c.accountLabel, c.accountEmail]).map((s) => (s ?? "").trim()).filter(Boolean)),
+  );
+  if (!ownerNames.length) return;
+  const isOwner = buildOwnerMatcher(ownerNames);
+
+  // 1. Person pages that are actually the owner.
+  const people = await brain.listNotes(userId, { types: ["person"], allowed, limit: 5000 });
+  const selfPages = people.filter((p) => isOwner(p.title));
+  for (const p of selfPages) {
+    const willApply = apply === "high";
+    if (willApply) {
+      try {
+        const all = await brain.listNotes(userId, { allowed, limit: 100000 });
+        for (const n of all) {
+          if (n.path !== p.path && n.links?.includes(p.path)) {
+            await brain
+              .updateNote(userId, n.path, { links: n.links.filter((l) => l !== p.path) }, allowed)
+              .catch(() => {});
+          }
+        }
+        await brain.deleteNote(userId, p.path, allowed);
+      } catch (err) {
+        report.selfFixes.push({ kind: "person-page", path: p.path, detail: `delete failed: ${(err as Error).message}`, applied: false });
+        continue;
+      }
+    }
+    report.selfFixes.push({
+      kind: "person-page",
+      path: p.path,
+      detail: `owner's own page ("${p.title}") — ${willApply ? "deleted" : "would delete"}`,
+      applied: willApply,
+    });
+  }
+
+  // 2. Commitments the ingester attributed to the owner by name → "me". This is a
+  //    metadata fix (nothing destroyed), so it runs whenever safe writes are on.
+  const canWrite = safeWritesEnabled();
+  const commits = await brain.listNotes(userId, { types: ["commitment"], allowed, limit: 5000 });
+  let fixed = 0;
+  for (const c of commits) {
+    const tag = c.tags.find((t) => t.startsWith("owner:"))?.slice("owner:".length) ?? "";
+    if (!tag || tag === "me") continue;
+    if (!isOwner(tag.replace(/-/g, " "))) continue;
+    if (fixed >= 300) break;
+    fixed++;
+    if (canWrite) await setCommitmentOwner(brain, userId, allowed, c.path, "me").catch(() => {});
+    report.selfFixes.push({ kind: "commitment", path: c.path, detail: `owner "${tag}" → me`, applied: canWrite });
+  }
+}
+
 function orphanPass(entities: Note[], report: LintReport): void {
   for (const e of entities) {
     const thin = contentLen(e.body) < THIN_CHARS;
@@ -669,11 +763,13 @@ export async function runWikiLint(
     culled: [],
     headlines: [],
     rehomed: [],
+    selfFixes: [],
     orphans: [],
   };
   if (!embeddingsEnabled()) return report;
 
-  // Merge first (may delete pages), then reload entities for the rest.
+  // Owner cleanup first (may delete self person-pages), then merge, then the rest.
+  await ownerPass(brain, userId, allowed, apply, report);
   await mergePass(brain, userId, allowed, apply, report);
   const entities = await loadEntities(brain, userId, allowed);
 
@@ -726,6 +822,11 @@ async function writeReport(
     `### Rehomed (${report.rehomed.length})`,
     report.rehomed.length
       ? report.rehomed.map((r) => `- ${r.applied ? "✅" : "•"} ${r.from} → **${r.home}** ${r.to} — ${r.reason}`).join("\n")
+      : "_none_",
+    "",
+    `### Owner self-fixes (${report.selfFixes.length})`,
+    report.selfFixes.length
+      ? report.selfFixes.map((s) => `- ${s.applied ? "✅" : "•"} [${s.kind}] ${s.path} — ${s.detail}`).join("\n")
       : "_none_",
     "",
     `### Orphan / thin pages (${report.orphans.length}) — review`,

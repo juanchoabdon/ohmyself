@@ -76,6 +76,7 @@ export type {
 export {
   addCommitment,
   setCommitmentStatus,
+  setCommitmentOwner,
   stampFlowyaTaskId,
   listCommitments,
 } from "./actions.js";

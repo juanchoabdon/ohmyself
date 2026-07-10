@@ -118,6 +118,25 @@ export async function setCommitmentStatus(
   );
 }
 
+/** Re-attribute a commitment to a different owner (e.g. fix one the ingester
+ *  mislabeled as another person when it was really the wiki owner → "me").
+ *  Rewrites the owner tag, the `extra.owner`, and the body's Owner line. */
+export async function setCommitmentOwner(
+  brain: Brain,
+  userId: string,
+  allowed: Visibility[],
+  path: string,
+  owner: CommitmentOwner,
+): Promise<void> {
+  const note = await brain.readNote(userId, path, allowed);
+  const tags = note.meta.tags.filter((t) => !t.startsWith("owner:"));
+  tags.push(ownerTag(owner));
+  const body = /^\s*-\s*\*\*Owner:\*\*/m.test(note.body)
+    ? note.body.replace(/^(\s*-\s*\*\*Owner:\*\*\s*).*$/m, `$1${owner}`)
+    : note.body;
+  await brain.updateNote(userId, path, { tags, body, extra: { owner } }, allowed);
+}
+
 /** Link a commitment to a Flowya task once the user captures it there. */
 export async function stampFlowyaTaskId(
   brain: Brain,
