@@ -18,6 +18,7 @@ import {
   buildCore,
   getUserConfig,
   listActiveConnectionsForProvider,
+  profileStaleConcepts,
   profileStalePeople,
 } from "../core/index.js";
 import { GOOGLE_DRIVE_MEETINGS_PROVIDER } from "../connectors/google-auth.js";
@@ -36,6 +37,8 @@ async function main(): Promise<void> {
   const minFacts = Number(argFor("--min") ?? "3") || 3;
   const limit = Number(argFor("--limit") ?? "5000") || 5000;
   const concurrency = Number(argFor("--conc") ?? "4") || 4;
+  const doPeople = !hasFlag("--concepts-only");
+  const doConcepts = !hasFlag("--people-only");
 
   const { brain } = buildCore();
   const allowed = allowedVisibilities("secret");
@@ -48,35 +51,35 @@ async function main(): Promise<void> {
     userIds = Array.from(new Set(conns.map((c) => c.userId)));
   }
 
+  const kinds = [doPeople && "people", doConcepts && "concepts"].filter(Boolean).join("+");
   console.log(
-    `Profile backfill — users=${userIds.length} force=${force} min=${minFacts} conc=${concurrency}`,
+    `Profile backfill — users=${userIds.length} kinds=${kinds} force=${force} min=${minFacts} conc=${concurrency}`,
   );
 
-  const totals = { scanned: 0, profiled: 0, skipped: 0, errors: 0 };
+  const totals = { profiled: 0, skipped: 0, errors: 0 };
   for (const userId of userIds) {
     try {
       const config = await getUserConfig(userId);
-      const r = await profileStalePeople(brain, userId, config, allowed, {
-        minFacts,
-        force,
-        limit,
-        concurrency,
-      });
-      totals.scanned += r.scanned;
-      totals.profiled += r.profiled;
-      totals.skipped += r.skipped;
-      totals.errors += r.errors;
-      console.log(
-        `  ${userId}: scanned=${r.scanned} profiled=${r.profiled} skipped=${r.skipped} errors=${r.errors}`,
-      );
+      if (doPeople) {
+        const r = await profileStalePeople(brain, userId, config, allowed, { minFacts, force, limit, concurrency });
+        totals.profiled += r.profiled;
+        totals.skipped += r.skipped;
+        totals.errors += r.errors;
+        console.log(`  ${userId} people:   profiled=${r.profiled} skipped=${r.skipped} errors=${r.errors} (of ${r.scanned})`);
+      }
+      if (doConcepts) {
+        const c = await profileStaleConcepts(brain, userId, config, allowed, { minFacts, force, limit, concurrency });
+        totals.profiled += c.profiled;
+        totals.skipped += c.skipped;
+        totals.errors += c.errors;
+        console.log(`  ${userId} concepts: profiled=${c.profiled} skipped=${c.skipped} errors=${c.errors} (of ${c.scanned})`);
+      }
     } catch (err) {
       console.error(`  ${userId} FAILED:`, (err as Error).message);
     }
   }
 
-  console.log(
-    `\nDone. scanned=${totals.scanned} profiled=${totals.profiled} skipped=${totals.skipped} errors=${totals.errors}`,
-  );
+  console.log(`\nDone. profiled=${totals.profiled} skipped=${totals.skipped} errors=${totals.errors}`);
 }
 
 main().catch((e) => {

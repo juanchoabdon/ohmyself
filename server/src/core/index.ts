@@ -59,7 +59,7 @@ export { searchUsers, getProfileSummary, setUsername, normalizeUsername } from "
 export type { UserSummary } from "./users.js";
 export { upsertPerson, appendPersonFact, personPath, setPersonHeadline } from "./people.js";
 export type { UpsertPersonInput, PersonWriteResult } from "./people.js";
-export { profilePerson, profileStalePeople } from "./profile.js";
+export { profilePerson, profileStalePeople, profileConcept, profileStaleConcepts } from "./profile.js";
 export type { ProfilePersonResult, ProfileBatchResult, ProfileOptions } from "./profile.js";
 export {
   PROJECT_KINDS,

@@ -145,6 +145,49 @@ function buildPrompt(headline: string, log: string, ownerContext?: string): { sy
   return { system, user };
 }
 
+function buildConceptPrompt(title: string, headline: string, log: string, ownerContext?: string): { system: string; user: string } {
+  const system = [
+    "Eres el motor de perfilado de un LLM-Wiki personal (patrón Karpathy).",
+    "A partir de observaciones fechadas de reuniones, sintetizas una explicación",
+    "breve de QUÉ ES un concepto/entidad (una plataforma, un proyecto ajeno, un",
+    "término, una iniciativa, un equipo, una herramienta) tal como aparece en el",
+    "mundo del dueño del wiki. Reglas:",
+    "- Escribe en español, claro y concreto, sin relleno.",
+    "- Fundaméntate SOLO en las observaciones. No inventes hechos que no estén.",
+    "- Si algo es inferencia, márcalo con hedging ('parece', 'al parecer').",
+    "- NO repitas la lista de hechos uno por uno; destílalos en prosa.",
+    "",
+    "Devuelve SOLO un objeto JSON con dos claves: \"headline\" y \"read\".",
+    "",
+    '"headline": UNA sola línea que defina qué es, re-inferida desde TODAS las',
+    "  observaciones (no solo la primera): categoría + para qué sirve/qué hace.",
+    '  Ej: "Plataforma interna de Rappi para desarrollo de producto E2E".',
+    '  Sin markdown, sin comillas, sin ">". Cadena vacía "" solo si es imposible inferir.',
+    "",
+    '"read": explicación en markdown con esta forma (omite una sección si no hay evidencia):',
+    "",
+    "<un párrafo que explique qué es y qué hace, en 2–4 frases>",
+    "",
+    "**Cómo se relaciona con el dueño:** <por qué le importa / cómo lo usa o lo toca>",
+    "",
+    "**Notas clave:** <viñetas cortas con lo más relevante: estado, componentes, decisiones>",
+    "",
+    "En \"read\" no incluyas encabezados de nivel #, ni el nombre como título, ni preámbulo.",
+  ].join("\n");
+
+  const user = [
+    ownerContext ? `CONTEXTO DEL DUEÑO: ${ownerContext}` : "",
+    `CONCEPTO: ${title}`,
+    headline ? `DEFINICIÓN ACTUAL (headline): ${headline.replace(/^>\s?/gm, "").trim()}` : "",
+    "",
+    "OBSERVACIONES FECHADAS:",
+    log.slice(0, MAX_INPUT_CHARS),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { system, user };
+}
+
 export interface ProfileOptions {
   /** Minimum dated facts required to bother profiling. Default 3. */
   minFacts?: number;
@@ -213,6 +256,60 @@ export async function profilePerson(
   return { ok: true, path, facts: freshFacts };
 }
 
+/** Generate/refresh the inferred "Qué es" summary for one concept page.
+ *  Same idempotent shape as {@link profilePerson}: a one-line headline + a
+ *  distilled block between markers, over the untouched dated log. */
+export async function profileConcept(
+  brain: Brain,
+  userId: string,
+  config: UserConfig,
+  allowed: Visibility[],
+  slugOrPath: string,
+  opts: ProfileOptions = {},
+): Promise<ProfilePersonResult> {
+  const path = slugOrPath.startsWith("concepts/") ? slugOrPath : `concepts/${slugify(slugOrPath)}.md`;
+  if (!apiKey()) return { ok: false, path, skipped: "no-llm" };
+  const note = await brain.readNote(userId, path, allowed).catch(() => null);
+  if (!note) return { ok: false, path, skipped: "no-note" };
+
+  const facts = countFacts(note.body);
+  const minFacts = opts.minFacts ?? 2;
+  if (facts < minFacts) return { ok: false, path, skipped: "too-thin", facts };
+
+  const already = Number(note.meta.extra?.profile_facts ?? 0);
+  const hasRead = note.body.includes(READ_START);
+  if (!opts.force && hasRead && already === facts) return { ok: true, path, skipped: "up-to-date", facts };
+
+  const { headline, log } = splitBody(note.body);
+  const title = note.meta.title || slugOrPath;
+  const { system, user } = buildConceptPrompt(title, headline, log, opts.ownerContext);
+  const result = await callOpenAIJSON(system, user);
+  const read = result?.read;
+  if (!read) return { ok: false, path, skipped: "no-llm", facts };
+
+  const fresh = await brain.readNote(userId, path, allowed).catch(() => note);
+  const { headline: h2, log: log2 } = splitBody(fresh.body);
+  const freshFacts = countFacts(fresh.body) || facts;
+
+  const inferred = result?.headline?.replace(/^>\s*/, "").trim();
+  const headlineBlock = inferred ? `> ${inferred}` : h2;
+
+  const block = [
+    READ_START,
+    "## Qué es",
+    `_Resumen inferido de ${freshFacts} menciones · actualizado ${todayISO()}_`,
+    "",
+    read,
+    READ_END,
+  ].join("\n");
+
+  const body =
+    [headlineBlock, block, log2].filter((s) => s && s.trim()).join("\n\n").replace(/\s+$/, "") + "\n";
+
+  await brain.updateNote(userId, path, { body, extra: { profile_facts: freshFacts, profiled_at: todayISO() } }, allowed);
+  return { ok: true, path, facts: freshFacts };
+}
+
 export interface ProfileBatchResult {
   scanned: number;
   profiled: number;
@@ -247,6 +344,45 @@ export async function profileStalePeople(
       if (!p) break;
       try {
         const r = await profilePerson(brain, userId, config, allowed, p.path, opts);
+        if (r.ok && !r.skipped) {
+          generated++;
+          out.profiled++;
+          out.people.push({ path: r.path, facts: r.facts ?? 0, status: "profiled" });
+        } else {
+          out.skipped++;
+        }
+      } catch {
+        out.errors++;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: conc }, worker));
+  return out;
+}
+
+/** Profile all concept pages with enough mentions whose summary is stale or
+ *  missing. Mirrors {@link profileStalePeople} over the `concepts/` prefix. */
+export async function profileStaleConcepts(
+  brain: Brain,
+  userId: string,
+  config: UserConfig,
+  allowed: Visibility[],
+  opts: ProfileOptions & { limit?: number; concurrency?: number } = {},
+): Promise<ProfileBatchResult> {
+  const concepts = await brain.listNotes(userId, { prefix: "concepts/", allowed, limit: 5000 });
+  const out: ProfileBatchResult = { scanned: concepts.length, profiled: 0, skipped: 0, errors: 0, people: [] };
+
+  const limit = opts.limit ?? Infinity;
+  const conc = opts.concurrency ?? 4;
+  const queue = [...concepts];
+  let generated = 0;
+
+  async function worker(): Promise<void> {
+    while (queue.length && generated < limit) {
+      const c = queue.shift();
+      if (!c) break;
+      try {
+        const r = await profileConcept(brain, userId, config, allowed, c.path, opts);
         if (r.ok && !r.skipped) {
           generated++;
           out.profiled++;

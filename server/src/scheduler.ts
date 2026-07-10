@@ -12,6 +12,7 @@ import {
   buildCore,
   getUserConfig,
   listActiveConnectionsForProvider,
+  profileStaleConcepts,
   profileStalePeople,
 } from "./core/index.js";
 import { GOOGLE_DRIVE_MEETINGS_PROVIDER } from "./connectors/google-auth.js";
@@ -34,6 +35,8 @@ async function profileTick(): Promise<void> {
         const config = await getUserConfig(userId);
         const r = await profileStalePeople(brain, userId, config, allowed, { limit: cap });
         if (r.profiled) console.log(`[profile] ${userId}: refreshed ${r.profiled} read(s)`);
+        const c = await profileStaleConcepts(brain, userId, config, allowed, { limit: cap });
+        if (c.profiled) console.log(`[profile] ${userId}: refreshed ${c.profiled} concept(s)`);
       } catch (err) {
         console.error(`[profile] ${userId} failed:`, (err as Error).message);
       }
