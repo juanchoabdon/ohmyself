@@ -46,15 +46,15 @@ export function detach(work: () => Promise<void>): void {
 /** Merge a patch into the connection's backfill state, preserving whatever the
  *  sync just wrote (e.g. the grown seenFileIds list) and bumping the heartbeat. */
 async function patchBackfill(
-  userId: string,
+  spaceId: string,
   connectionId: string,
   patch: Partial<BackfillState>,
 ): Promise<void> {
-  const conn = await getConnectionWithCredential(userId, connectionId);
+  const conn = await getConnectionWithCredential(spaceId, connectionId);
   if (!conn) return;
   const cur = (conn.settings?.backfill ?? {}) as BackfillState;
   const next: BackfillState = { ...cur, ...patch, lastStepAt: new Date().toISOString() };
-  await updateConnection(userId, connectionId, { settings: { ...conn.settings, backfill: next } });
+  await updateConnection(spaceId, connectionId, { settings: { ...conn.settings, backfill: next } });
 }
 
 /** Kick off a run and return its initial state. Counts the fresh candidates in
@@ -62,15 +62,15 @@ async function patchBackfill(
  *  Idempotent per connection: a new call supersedes the old loop via a fresh
  *  `startedAt` run token. */
 export async function startBackfill(
-  userId: string,
+  spaceId: string,
   connectionId: string,
   lookbackMonths: number,
   mode: "light" | "full" = "light",
 ): Promise<BackfillState> {
-  const conn = await getConnectionWithCredential(userId, connectionId);
+  const conn = await getConnectionWithCredential(spaceId, connectionId);
   if (!conn) throw new Error("connection not found");
 
-  const preview = await syncDriveConnection(userId, connectionId, {
+  const preview = await syncDriveConnection(spaceId, connectionId, {
     mode,
     dryRun: true,
     lookbackMonths,
@@ -90,8 +90,8 @@ export async function startBackfill(
     recent: [],
     ...(total > 0 ? {} : { finishedAt: now }),
   };
-  await updateConnection(userId, connectionId, { settings: { ...conn.settings, backfill: state } });
-  if (total > 0) detach(() => runBackfillLoop(userId, connectionId, state.startedAt));
+  await updateConnection(spaceId, connectionId, { settings: { ...conn.settings, backfill: state } });
+  if (total > 0) detach(() => runBackfillLoop(spaceId, connectionId, state.startedAt));
   return state;
 }
 
@@ -99,12 +99,12 @@ export async function startBackfill(
  *  none remain. Stops early if the run was superseded (newer `startedAt`), the
  *  status changed, or the connection vanished. */
 export async function runBackfillLoop(
-  userId: string,
+  spaceId: string,
   connectionId: string,
   runToken: string,
 ): Promise<void> {
   for (;;) {
-    const conn = await getConnectionWithCredential(userId, connectionId);
+    const conn = await getConnectionWithCredential(spaceId, connectionId);
     if (!conn) return;
     const bf = conn.settings?.backfill;
     if (!bf || bf.status !== "running") return;
@@ -112,14 +112,14 @@ export async function runBackfillLoop(
 
     let result;
     try {
-      result = await syncDriveConnection(userId, connectionId, {
+      result = await syncDriveConnection(spaceId, connectionId, {
         mode: bf.mode ?? "light",
         lookbackMonths: bf.lookbackMonths,
         batchSize: BATCH,
         max: DISCOVER_MAX,
       });
     } catch (err) {
-      await patchBackfill(userId, connectionId, {
+      await patchBackfill(spaceId, connectionId, {
         status: "error",
         error: (err as Error).message,
         finishedAt: new Date().toISOString(),
@@ -137,7 +137,7 @@ export async function runBackfillLoop(
     const recent = [...justDone, ...(bf.recent ?? [])].slice(0, RECENT_CAP);
 
     if (remaining > 0 && processed > 0) {
-      await patchBackfill(userId, connectionId, {
+      await patchBackfill(spaceId, connectionId, {
         status: "running",
         done,
         total,
@@ -146,7 +146,7 @@ export async function runBackfillLoop(
       });
       continue; // keep distilling — no HTTP hop, no timeout
     }
-    await patchBackfill(userId, connectionId, {
+    await patchBackfill(spaceId, connectionId, {
       status: "done",
       done,
       total,

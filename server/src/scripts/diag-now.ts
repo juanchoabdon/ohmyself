@@ -21,16 +21,9 @@ async function main(): Promise<void> {
 
   const com = await sb.from("note_index").select("path", { count: "exact", head: true }).eq("user_id", userId).eq("type", "commitment");
   console.log("total commitment notes:", com.count);
-  const mp = "meetings/2026-07-09-simplifying-mobile-arch-follow-up.md";
-  const forMeeting = await brain.listNotes(userId, { types: ["commitment"], allowed, limit: 500 });
-  const linked = [] as string[];
-  for (const r of forMeeting) {
-    const note = await brain.readNote(userId, r.path, allowed);
-    if (note.meta.extra?.source === mp || String(note.meta.extra?.source_url ?? "").includes("1TlTCNJTwgeYv4WQyeTvctFI")) linked.push(r.path);
-  }
-  console.log(`commitments for ${mp}:`, linked.length, linked);
-
-  const note = await brain.readNote(userId, mp, allowed).catch(() => null);
-  console.log("\nmeeting links:", note?.meta.links);
+  const day = await sb.from("note_index").select("path,tags").eq("user_id", userId).like("path", "commitments/2026-07-09-%");
+  const rows = (day.data as Array<{ path: string; tags: string[] }> | null) ?? [];
+  console.log(`\ncommitments dated 2026-07-09: ${rows.length}`);
+  for (const r of rows) console.log("  ", r.path);
 }
 main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

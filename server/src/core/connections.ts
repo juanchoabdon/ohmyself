@@ -64,6 +64,9 @@ export interface ConnectionSettings {
 
 export interface Connection {
   id: string;
+  /** The space (self or company brain) this connection ingests into. */
+  spaceId: string;
+  /** The user who connected the account (auditing / OAuth ownership). */
   userId: string;
   provider: string;
   status: ConnectionStatus;
@@ -83,6 +86,7 @@ export interface ConnectionWithCredential extends Connection {
 
 interface ConnectionRow {
   id: string;
+  space_id: string;
   user_id: string;
   provider: string;
   credential_enc: string;
@@ -132,6 +136,7 @@ export function decryptCredential(payload: string): string {
 function toConnection(row: ConnectionRow): Connection {
   return {
     id: row.id,
+    spaceId: row.space_id,
     userId: row.user_id,
     provider: row.provider,
     status: row.status,
@@ -145,26 +150,26 @@ function toConnection(row: ConnectionRow): Connection {
   };
 }
 
-/** List a user's connections (no credentials). Optionally filter by provider. */
-export async function listConnections(userId: string, provider?: string): Promise<Connection[]> {
+/** List a space's connections (no credentials). Optionally filter by provider. */
+export async function listConnections(spaceId: string, provider?: string): Promise<Connection[]> {
   const db = serviceClient();
-  let q = db.from("connections").select("*").eq("user_id", userId);
+  let q = db.from("connections").select("*").eq("space_id", spaceId);
   if (provider) q = q.eq("provider", provider);
   const { data, error } = await q.order("created_at", { ascending: true });
   if (error) throw new Error(`listConnections: ${error.message}`);
   return (data as ConnectionRow[]).map(toConnection);
 }
 
-/** Fetch a single connection WITH its decrypted credential. */
+/** Fetch a single connection WITH its decrypted credential, scoped to a space. */
 export async function getConnectionWithCredential(
-  userId: string,
+  spaceId: string,
   id: string,
 ): Promise<ConnectionWithCredential | null> {
   const db = serviceClient();
   const { data, error } = await db
     .from("connections")
     .select("*")
-    .eq("user_id", userId)
+    .eq("space_id", spaceId)
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(`getConnection: ${error.message}`);
@@ -174,6 +179,9 @@ export async function getConnectionWithCredential(
 }
 
 export interface UpsertConnectionInput {
+  /** The space this connection ingests into (self or company brain). */
+  spaceId: string;
+  /** The user who connected the account. */
   userId: string;
   provider: string;
   credential: string;
@@ -183,10 +191,11 @@ export interface UpsertConnectionInput {
   status?: ConnectionStatus;
 }
 
-/** Create or update a connection, keyed by (user, provider, account_email). */
+/** Create or update a connection, keyed by (space, provider, account_email). */
 export async function upsertConnection(input: UpsertConnectionInput): Promise<Connection> {
   const db = serviceClient();
   const row = {
+    space_id: input.spaceId,
     user_id: input.userId,
     provider: input.provider,
     credential_enc: encryptCredential(input.credential),
@@ -197,7 +206,7 @@ export async function upsertConnection(input: UpsertConnectionInput): Promise<Co
   };
   const { data, error } = await db
     .from("connections")
-    .upsert(row, { onConflict: "user_id,provider,account_email" })
+    .upsert(row, { onConflict: "space_id,provider,account_email" })
     .select("*")
     .single();
   if (error) throw new Error(`upsertConnection: ${error.message}`);
@@ -213,9 +222,9 @@ export interface ConnectionStatePatch {
   credential?: string;
 }
 
-/** Update sync state / settings / credential for a connection. */
+/** Update sync state / settings / credential for a connection, scoped to a space. */
 export async function updateConnection(
-  userId: string,
+  spaceId: string,
   id: string,
   patch: ConnectionStatePatch,
 ): Promise<void> {
@@ -227,13 +236,13 @@ export async function updateConnection(
   if (patch.settings !== undefined) update.settings = patch.settings;
   if (patch.credential !== undefined) update.credential_enc = encryptCredential(patch.credential);
   if (Object.keys(update).length === 0) return;
-  const { error } = await db.from("connections").update(update).eq("user_id", userId).eq("id", id);
+  const { error } = await db.from("connections").update(update).eq("space_id", spaceId).eq("id", id);
   if (error) throw new Error(`updateConnection: ${error.message}`);
 }
 
-export async function deleteConnection(userId: string, id: string): Promise<void> {
+export async function deleteConnection(spaceId: string, id: string): Promise<void> {
   const db = serviceClient();
-  const { error } = await db.from("connections").delete().eq("user_id", userId).eq("id", id);
+  const { error } = await db.from("connections").delete().eq("space_id", spaceId).eq("id", id);
   if (error) throw new Error(`deleteConnection: ${error.message}`);
 }
 

@@ -119,30 +119,9 @@ export function NoteView({
 
   return (
     <article className="mx-auto w-full max-w-3xl px-8 py-10">
-      {/* Slim action bar — only while editing */}
-      {editing && (
-        <div className="sticky top-0 z-10 -mx-8 mb-5 flex items-center justify-between border-b border-border bg-bg/85 px-8 py-2.5 backdrop-blur">
-          <span className="text-xs font-medium text-muted">{dirty ? "Unsaved changes" : "Editing"}</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={cancel}
-              disabled={busy}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted hover:text-ink disabled:opacity-60"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={save}
-              disabled={busy || !title.trim() || !dirty}
-              className="rounded-lg bg-brand px-3.5 py-1.5 text-sm font-semibold text-white hover:opacity-95 disabled:opacity-60"
-            >
-              {busy ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
-      )}
-
       <header className="mb-6 border-b border-border pb-5">
+        {/* Always-present top row. Buttons swap in place (Edit/Delete ⇄ Cancel/Save)
+            so entering edit mode never inserts a bar above the content (no scroll jump). */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted">
             <span className="rounded bg-bg px-1.5 py-0.5 font-medium capitalize">{note.meta.type}</span>
@@ -159,33 +138,58 @@ export function NoteView({
             ) : (
               <VisibilityBadge visibility={note.meta.visibility} />
             )}
-            {!editing && note.meta.updated && <span>· updated {note.meta.updated}</span>}
+            {editing ? (
+              <span>· {dirty ? "unsaved changes" : "editing"}</span>
+            ) : (
+              note.meta.updated && <span>· updated {note.meta.updated}</span>
+            )}
           </div>
-          {!editing && (onSave || onDelete) && (
+          {(onSave || onDelete) && (
             <div className="flex items-center gap-1.5">
-              {onSave && (
-                <button
-                  onClick={() => start("body")}
-                  className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-ink hover:border-brand hover:text-brand-ink"
-                >
-                  Edit
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await onDelete();
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                  disabled={busy}
-                  className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret disabled:opacity-60"
-                >
-                  Delete
-                </button>
+              {editing ? (
+                <>
+                  <button
+                    onClick={cancel}
+                    disabled={busy}
+                    className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:text-ink disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={save}
+                    disabled={busy || !title.trim() || !dirty}
+                    className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-60"
+                  >
+                    {busy ? "Saving…" : "Save"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  {onSave && (
+                    <button
+                      onClick={() => start("body")}
+                      className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-ink hover:border-brand hover:text-brand-ink"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await onDelete();
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                      disabled={busy}
+                      className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret disabled:opacity-60"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}

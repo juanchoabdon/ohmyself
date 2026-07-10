@@ -274,7 +274,7 @@ export const googleDriveMeetingsConnector: Connector<DriveMeetingsOptions> = {
       const title = normalizeGeminiName(c.name).title;
       try {
         const rawText = await exportDocText(accessToken, c.id);
-        const r = await ingest(ctx.brain, ctx.userId, ctx.config, ctx.allowed, {
+        const r = await ingest(ctx.brain, ctx.spaceId, ctx.config, ctx.allowed, {
           kind: "meeting",
           rawText,
           title,

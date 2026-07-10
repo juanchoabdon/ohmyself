@@ -27,7 +27,7 @@ export async function runScheduledTick(): Promise<{ synced: number; resumed: num
       const last = bf.lastStepAt ? Date.parse(bf.lastStepAt) : 0;
       if (Date.now() - last > STALL_MS) {
         resumed++;
-        detach(() => runBackfillLoop(conn.userId, conn.id, bf.startedAt));
+        detach(() => runBackfillLoop(conn.spaceId, conn.id, bf.startedAt));
       }
       continue;
     }
@@ -37,7 +37,7 @@ export async function runScheduledTick(): Promise<{ synced: number; resumed: num
     synced++;
     detach(async () => {
       try {
-        await syncDriveConnection(conn.userId, conn.id, { mode: "full", max: DISCOVER_MAX });
+        await syncDriveConnection(conn.spaceId, conn.id, { mode: "full", max: DISCOVER_MAX });
       } catch (err) {
         console.error(`[scheduler] sync ${conn.id} failed:`, (err as Error).message);
       }

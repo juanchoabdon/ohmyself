@@ -50,22 +50,27 @@ function stateSecret(): Buffer {
   return crypto.createHash("sha256").update(`google-oauth:${secret}`).digest();
 }
 
-export function signState(userId: string): string {
-  const payload = Buffer.from(JSON.stringify({ userId, ts: Date.now() })).toString("base64url");
+export function signState(userId: string, spaceId?: string): string {
+  // spaceId is the brain the resulting connection ingests into. Defaults to the
+  // user's self space (spaceId == userId) when omitted, preserving old links.
+  const payload = Buffer.from(
+    JSON.stringify({ userId, spaceId: spaceId ?? userId, ts: Date.now() }),
+  ).toString("base64url");
   const sig = crypto.createHmac("sha256", stateSecret()).update(payload).digest("base64url");
   return `${payload}.${sig}`;
 }
 
-export function verifyState(state: string): { userId: string } | null {
+export function verifyState(state: string): { userId: string; spaceId: string } | null {
   const [payload, sig] = state.split(".");
   if (!payload || !sig) return null;
   const expected = crypto.createHmac("sha256", stateSecret()).update(payload).digest("base64url");
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   try {
-    const { userId, ts } = JSON.parse(Buffer.from(payload, "base64url").toString());
+    const { userId, spaceId, ts } = JSON.parse(Buffer.from(payload, "base64url").toString());
     if (typeof userId !== "string" || typeof ts !== "number") return null;
     if (Date.now() - ts > STATE_TTL_MS) return null;
-    return { userId };
+    // Older links without spaceId fall back to the self space (== userId).
+    return { userId, spaceId: typeof spaceId === "string" ? spaceId : userId };
   } catch {
     return null;
   }
@@ -73,7 +78,7 @@ export function verifyState(state: string): { userId: string } | null {
 
 // ── OAuth flow ───────────────────────────────────────────────────────────────
 
-export function buildAuthorizeUrl(userId: string): string {
+export function buildAuthorizeUrl(userId: string, spaceId?: string): string {
   const params = new URLSearchParams({
     client_id: clientId(),
     redirect_uri: redirectUri(),
@@ -82,7 +87,7 @@ export function buildAuthorizeUrl(userId: string): string {
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: "true",
-    state: signState(userId),
+    state: signState(userId, spaceId),
   });
   return `${AUTH_ENDPOINT}?${params.toString()}`;
 }

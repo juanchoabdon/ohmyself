@@ -251,11 +251,23 @@ export async function ingest(
 
   // 5. Meeting note (full mode only) with a link back to the raw source.
   if (mode === "full" && meetingPath) {
+    // Surface the decisions and action items IN the note body (not just as
+    // separate, hidden commitment pages) so the meeting reads as self-contained.
+    const decisions = distilled.project_updates
+      .map((p) => (p.project ? `- **${p.project}:** ${p.update}` : `- ${p.update}`))
+      .filter(Boolean);
+    const actions = distilled.action_items.map((a) => {
+      const owner = a.owner.trim().toLowerCase() === "me" ? "Me" : a.owner.trim();
+      const due = a.due ? ` _(due: ${a.due})_` : "";
+      return `- **${owner}** — ${a.text}${due}`;
+    });
     const body = [
       distilled.attendees.length ? `- **Attendees:** ${distilled.attendees.join(", ")}` : null,
       input.sourceUrl ? `- **Source:** ${input.sourceUrl}` : null,
       "",
       distilled.summary,
+      decisions.length ? `\n## Decisions & updates\n${decisions.join("\n")}` : null,
+      actions.length ? `\n## Action items\n${actions.join("\n")}` : null,
     ]
       .filter((l) => l !== null)
       .join("\n");

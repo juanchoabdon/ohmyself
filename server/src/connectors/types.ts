@@ -1,8 +1,9 @@
 import type { Brain, UserConfig, Visibility } from "../core/index.js";
 
-/** Everything a connector needs to read/write a user's brain, scoped. */
+/** Everything a connector needs to read/write a brain, scoped to a space. */
 export interface ConnectorContext {
-  userId: string;
+  /** The space (self or company brain) this connector ingests into. */
+  spaceId: string;
   brain: Brain;
   allowed: Visibility[];
   config: UserConfig;

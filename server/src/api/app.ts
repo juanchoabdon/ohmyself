@@ -558,7 +558,7 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireJwt(auth);
     const provider = c.req.query("provider") ?? undefined;
-    const conns = await listConnections(auth.userId, provider);
+    const conns = await listConnections(auth.spaceId, provider);
     // Never expose the credential to the browser.
     return c.json({
       connections: conns.map((k) => ({
@@ -578,7 +578,7 @@ export function createApp(): Hono<Env> {
   app.delete("/v1/connections/:id", async (c) => {
     const auth = c.get("auth");
     requireJwt(auth);
-    await deleteConnection(auth.userId, c.req.param("id"));
+    await deleteConnection(auth.spaceId, c.req.param("id"));
     return c.json({ deleted: c.req.param("id") });
   });
 
@@ -593,7 +593,7 @@ export function createApp(): Hono<Env> {
       lookbackMonths?: number;
       batchSize?: number;
     };
-    const result = await syncDriveConnection(auth.userId, c.req.param("id"), {
+    const result = await syncDriveConnection(auth.spaceId, c.req.param("id"), {
       mode: body.mode === "light" ? "light" : "full",
       dryRun: Boolean(body.dryRun),
       lookbackMonths: body.lookbackMonths,
@@ -616,7 +616,7 @@ export function createApp(): Hono<Env> {
     };
     const months = Number(body.lookbackMonths ?? 12) || 12;
     const mode = body.mode === "full" ? "full" : "light";
-    const state = await startBackfill(auth.userId, c.req.param("id"), months, mode);
+    const state = await startBackfill(auth.spaceId, c.req.param("id"), months, mode);
     return c.json(state);
   });
 
@@ -628,7 +628,8 @@ export function createApp(): Hono<Env> {
     if (!googleAuthConfigured()) {
       throw new BadRequestError("Google connector is not configured (set GOOGLE_CLIENT_ID/SECRET)");
     }
-    return c.json({ url: buildAuthorizeUrl(auth.userId) });
+    // Connect INTO the currently-active space (self or company).
+    return c.json({ url: buildAuthorizeUrl(auth.userId, auth.spaceId) });
   });
 
   // Callback: public (no Authorization header on a browser redirect). Identity
@@ -658,6 +659,7 @@ export function createApp(): Hono<Env> {
         visibility: "private",
       };
       await upsertConnection({
+        spaceId: verified.spaceId,
         userId: verified.userId,
         provider: GOOGLE_DRIVE_MEETINGS_PROVIDER,
         credential: tokens.refreshToken,
@@ -678,9 +680,9 @@ export function createApp(): Hono<Env> {
     const connector = getConnector(c.req.param("id"));
     if (!connector) throw new BadRequestError(`unknown connector: ${c.req.param("id")}`);
     const options = await c.req.json().catch(() => ({}));
-    const config = await getUserConfig(auth.userId);
+    const config = await getUserConfig(auth.spaceId);
     const result = await connector.pull(
-      { userId: auth.userId, brain, allowed: allowedVisibilities(auth.scope), config },
+      { spaceId: auth.spaceId, brain, allowed: allowedVisibilities(auth.scope), config },
       options,
     );
     return c.json(result);

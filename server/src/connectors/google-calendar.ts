@@ -95,11 +95,11 @@ export const googleCalendarConnector: Connector<CalendarPullOptions> = {
       const path = `${folder}/${date}-${slugify(e.title)}.md`;
       try {
         // Skip if it already exists (idempotent pulls).
-        await ctx.brain.readNote(ctx.userId, path, ctx.allowed);
+        await ctx.brain.readNote(ctx.spaceId, path, ctx.allowed);
         result.skipped.push(path);
       } catch {
         await ctx.brain.createNote(
-          ctx.userId,
+          ctx.spaceId,
           {
             type: "transcript",
             title: e.title,

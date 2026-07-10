@@ -11,7 +11,7 @@ import {
   allowedVisibilities,
   buildCore,
   getConnectionWithCredential,
-  getUserConfig,
+  getSpaceConfig,
   updateConnection,
   type ConnectionSettings,
 } from "./core/index.js";
@@ -36,22 +36,23 @@ export interface SyncOptions {
   max?: number;
 }
 
-/** Run a sync for one Google Drive meetings connection. */
+/** Run a sync for one Google Drive meetings connection. `spaceId` is the tenant
+ *  the connection ingests into (its self or company brain). */
 export async function syncDriveConnection(
-  userId: string,
+  spaceId: string,
   connectionId: string,
   opts: SyncOptions = {},
 ): Promise<DriveMeetingsResult> {
-  const conn = await getConnectionWithCredential(userId, connectionId);
+  const conn = await getConnectionWithCredential(spaceId, connectionId);
   if (!conn) throw new Error("connection not found");
   if (conn.provider !== GOOGLE_DRIVE_MEETINGS_PROVIDER) {
     throw new Error(`unsupported provider for sync: ${conn.provider}`);
   }
 
   const { brain } = buildCore();
-  const config = await getUserConfig(userId);
+  const config = await getSpaceConfig(spaceId);
   const settings: ConnectionSettings = conn.settings ?? {};
-  const allowed = allowedVisibilities("secret"); // owner's own brain, server-side
+  const allowed = allowedVisibilities("secret"); // trusted server-side write into the space's brain
 
   const mode: IngestMode = opts.mode ?? "full";
   const seenFull = (settings.seenFileIds as string[] | undefined) ?? [];
@@ -64,7 +65,7 @@ export async function syncDriveConnection(
 
   try {
     const result = (await googleDriveMeetingsConnector.pull(
-      { userId, brain, allowed, config },
+      { spaceId, brain, allowed, config },
       {
         refreshToken: conn.credential,
         mode,
@@ -84,7 +85,7 @@ export async function syncDriveConnection(
         mode === "light"
           ? { seenLightIds: mergeSeenIds(seenLight, result.ingestedIds) }
           : { seenFileIds: mergeSeenIds(seenFull, result.ingestedIds) };
-      await updateConnection(userId, connectionId, {
+      await updateConnection(spaceId, connectionId, {
         status: "active",
         lastSyncAt: new Date().toISOString(),
         lastError: null,
@@ -96,7 +97,7 @@ export async function syncDriveConnection(
     }
     return result;
   } catch (err) {
-    await updateConnection(userId, connectionId, {
+    await updateConnection(spaceId, connectionId, {
       status: "error",
       lastError: (err as Error).message,
     });
