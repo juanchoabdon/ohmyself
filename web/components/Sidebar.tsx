@@ -148,6 +148,39 @@ export function Sidebar({
   const filtersRef = useRef<HTMLDivElement>(null);
   const canEdit = Boolean(onCreateInside || onRenameFolder || onDeleteFolder);
 
+  // Resizable width (drag the right edge). Persisted so it survives reloads.
+  const MIN_W = 240;
+  const MAX_W = 640;
+  const [width, setWidth] = useState(288); // w-72
+  const [dragging, setDragging] = useState(false);
+  const asideRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const saved = Number(localStorage.getItem("oms-sidebar-w"));
+    if (saved >= MIN_W && saved <= MAX_W) setWidth(saved);
+  }, []);
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: MouseEvent) => {
+      const left = asideRef.current?.getBoundingClientRect().left ?? 0;
+      const next = Math.min(MAX_W, Math.max(MIN_W, e.clientX - left));
+      setWidth(next);
+    };
+    const onUp = () => setDragging(false);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [dragging]);
+  useEffect(() => {
+    localStorage.setItem("oms-sidebar-w", String(width));
+  }, [width]);
+
   const types = useMemo(() => Array.from(new Set(notes.map((n) => n.type))).sort(), [notes]);
   const filtering = Boolean(query.trim() || typeFilter || visFilter);
   const activeFilters = (visFilter ? 1 : 0) + (typeFilter ? 1 : 0);
@@ -288,7 +321,11 @@ export function Sidebar({
   }
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-surface">
+    <aside
+      ref={asideRef}
+      style={{ width }}
+      className="relative flex h-full shrink-0 flex-col border-r border-border bg-surface"
+    >
       <div className="border-b border-border p-3">
         {canEdit && onCreateInside && (
           <button
@@ -451,6 +488,23 @@ export function Sidebar({
           );
         })}
       </nav>
+
+      {/* Drag handle on the right edge to resize the sidebar. */}
+      <div
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDoubleClick={() => setWidth(288)}
+        title="Drag to resize · double-click to reset"
+        className="group absolute inset-y-0 -right-1 z-30 w-2 cursor-col-resize"
+      >
+        <span
+          className={`absolute inset-y-0 right-1 w-px transition-colors ${
+            dragging ? "bg-brand" : "bg-transparent group-hover:bg-brand/60"
+          }`}
+        />
+      </div>
     </aside>
   );
 }
