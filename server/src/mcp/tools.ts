@@ -12,6 +12,8 @@ import {
   ingest,
   listCommitments,
   listSpacesForUser,
+  profilePerson,
+  profileStalePeople,
   serializeNote,
   setCommitmentStatus,
   setUserConfig,
@@ -777,6 +779,38 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         tags,
       });
       return text(res);
+    },
+  );
+
+  server.registerTool(
+    "profile_person",
+    {
+      title: "Profile a person (synthesized read)",
+      description:
+        "Synthesize a durable 'Read' of a person (how they are, how to work with them) from the dated facts on their page, and write it near the top of people/<slug>.md. Idempotent — regenerates the read as facts grow. Pass person to profile one; omit it to refresh everyone whose read is stale.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        person: z.string().optional().describe("name or slug; omit to refresh all stale people"),
+        minFacts: z.number().optional().describe("min dated facts required (default 3)"),
+        limit: z.number().optional().describe("when refreshing all, cap regenerations (default 40)"),
+        force: z.boolean().optional().describe("regenerate even if unchanged"),
+      },
+    },
+    async ({ person, minFacts, limit, force }) => {
+      requireWrite();
+      if (person) {
+        const r = await profilePerson(brain, auth.spaceId, await config(), allowed, person, {
+          minFacts,
+          force,
+        });
+        return text(r);
+      }
+      const r = await profileStalePeople(brain, auth.spaceId, await config(), allowed, {
+        minFacts,
+        force,
+        limit: limit ?? 40,
+      });
+      return text(r);
     },
   );
 

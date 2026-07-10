@@ -85,9 +85,10 @@ export const api = {
   // Lazy sidebar: fetch a folder's notes (prefix) on expand, or the whole brain
   // (no prefix) for the map / active filters. High default limit so a single
   // folder is never truncated.
-  listNotes: (token: string, opts?: { prefix?: string; limit?: number }) => {
+  listNotes: (token: string, opts?: { prefix?: string; limit?: number; exclude?: string[] }) => {
     const q = new URLSearchParams();
     if (opts?.prefix) q.set("prefix", opts.prefix);
+    if (opts?.exclude?.length) q.set("exclude", opts.exclude.join(","));
     q.set("limit", String(opts?.limit ?? 5000));
     return call<{ notes: IndexedNote[] }>(`/v1/notes?${q.toString()}`, token);
   },

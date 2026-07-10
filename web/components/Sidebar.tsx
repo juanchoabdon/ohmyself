@@ -15,6 +15,10 @@ interface Props {
   loadingFolders?: Set<string>;
   /** Ask the parent to lazily load a pillar's notes (on expand). */
   onExpandFolder: (folder: string) => void;
+  /** Initial scaffold still loading (show skeleton). */
+  loading?: boolean;
+  /** A server search is in flight (show skeleton results). */
+  searching?: boolean;
   selected: string | null;
   onSelect: (path: string) => void;
   query: string;
@@ -125,6 +129,8 @@ export function Sidebar({
   folderCounts,
   loadedFolders,
   onExpandFolder,
+  loading,
+  searching,
   selected,
   onSelect,
   query,
@@ -138,11 +144,29 @@ export function Sidebar({
   onDeleteFolder,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersRef = useRef<HTMLDivElement>(null);
   const canEdit = Boolean(onCreateInside || onRenameFolder || onDeleteFolder);
 
   const types = useMemo(() => Array.from(new Set(notes.map((n) => n.type))).sort(), [notes]);
   const filtering = Boolean(query.trim() || typeFilter || visFilter);
+  const activeFilters = (visFilter ? 1 : 0) + (typeFilter ? 1 : 0);
   const forest = useMemo(() => buildForest(notes), [notes]);
+
+  // Close the filters popover on outside click / Escape.
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (filtersRef.current && !filtersRef.current.contains(e.target as Node)) setFiltersOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFiltersOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [filtersOpen]);
 
   // Every nested folder path — used to collapse all folders by default.
   const folderPaths = useMemo(() => {
@@ -275,41 +299,92 @@ export function Sidebar({
             New entry
           </button>
         )}
-        <input
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search your self…"
-          className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm focus:border-brand"
-        />
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
-          <FilterChip
-            active={visFilter === null && typeFilter === null}
-            onClick={() => {
-              onVisFilter(null);
-              onTypeFilter(null);
-            }}
-          >
-            All
-          </FilterChip>
-          {(["public", "private", "secret"] as Visibility[]).map((v) => (
-            <FilterChip key={v} active={visFilter === v} onClick={() => onVisFilter(visFilter === v ? null : v)}>
-              {v}
-            </FilterChip>
-          ))}
-        </div>
-        {types.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {types.map((t) => (
-              <FilterChip key={t} active={typeFilter === t} onClick={() => onTypeFilter(typeFilter === t ? null : t)}>
-                {t}
-              </FilterChip>
-            ))}
+        <div ref={filtersRef} className="relative flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <input
+              value={query}
+              onChange={(e) => onQuery(e.target.value)}
+              placeholder="Search your self…"
+              className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm focus:border-brand"
+            />
+            {searching && (
+              <span className="oms-spinner absolute right-2.5 top-1/2 -translate-y-1/2" aria-hidden />
+            )}
           </div>
-        )}
+          <button
+            onClick={() => setFiltersOpen((o) => !o)}
+            aria-label="Filters"
+            title="Filters"
+            className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-lg border transition-colors ${
+              activeFilters || filtersOpen
+                ? "border-brand text-brand-ink"
+                : "border-border text-muted hover:text-ink"
+            }`}
+          >
+            <FunnelIcon />
+            {activeFilters > 0 && (
+              <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[10px] font-semibold text-white">
+                {activeFilters}
+              </span>
+            )}
+          </button>
+
+          {filtersOpen && (
+            <div className="absolute right-0 top-full z-20 mt-1.5 w-64 rounded-xl border border-border bg-surface p-3 shadow-lg">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Visibility</span>
+                {activeFilters > 0 && (
+                  <button
+                    onClick={() => {
+                      onVisFilter(null);
+                      onTypeFilter(null);
+                    }}
+                    className="text-[11px] font-medium text-brand hover:underline"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <FilterChip active={visFilter === null} onClick={() => onVisFilter(null)}>
+                  All
+                </FilterChip>
+                {(["public", "private", "secret"] as Visibility[]).map((v) => (
+                  <FilterChip key={v} active={visFilter === v} onClick={() => onVisFilter(visFilter === v ? null : v)}>
+                    {v}
+                  </FilterChip>
+                ))}
+              </div>
+
+              {types.length > 0 && (
+                <>
+                  <div className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-muted">Type</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <FilterChip active={typeFilter === null} onClick={() => onTypeFilter(null)}>
+                      All
+                    </FilterChip>
+                    {types.map((t) => (
+                      <FilterChip
+                        key={t}
+                        active={typeFilter === t}
+                        onClick={() => onTypeFilter(typeFilter === t ? null : t)}
+                      >
+                        {t}
+                      </FilterChip>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto p-2">
-        {roots.map((rootName) => {
+        {(loading && roots.length === 0) || searching ? (
+          <SidebarSkeleton />
+        ) : null}
+        {searching ? null : roots.map((rootName) => {
           const node = forest.get(rootName);
           const items = node ? node.children : [];
           const count = folderCounts[rootName];
@@ -501,6 +576,34 @@ function Chevron({ open }: { open: boolean }) {
       aria-hidden
     >
       <path d="M3 1.5 7 5 3 8.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SidebarSkeleton() {
+  // A few shimmering rows so loading/search feels alive instead of blank.
+  const widths = ["70%", "52%", "84%", "44%", "64%", "76%", "48%"];
+  return (
+    <div className="space-y-1.5 p-1" aria-hidden>
+      {widths.map((w, i) => (
+        <div key={i} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+          <span className="oms-skel h-2.5 w-2.5 rounded-full" />
+          <span className="oms-skel h-2.5 rounded" style={{ width: w }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FunnelIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M2 3h12l-4.5 5.5V13L6.5 11V8.5L2 3Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

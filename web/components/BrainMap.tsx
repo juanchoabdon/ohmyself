@@ -53,6 +53,8 @@ const TYPE_OKLCH: Record<string, [number, number, number]> = {
   todo: [0.76, 0.13, 200], // cyan
   prd: [0.74, 0.15, 268], // indigo
   spec: [0.76, 0.15, 330], // magenta
+  meeting: [0.78, 0.13, 195], // teal — meeting hubs
+  concept: [0.8, 0.14, 110], // chartreuse — glossary
   transcript: [0.74, 0.1, 140], // green-grey
   note: [0.74, 0.03, 70], // warm neutral
 };

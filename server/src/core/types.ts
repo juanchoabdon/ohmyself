@@ -45,6 +45,8 @@ export interface IndexRecord extends IndexedNote {
 
 export interface ListOptions {
   types?: string[];
+  /** Exclude these note types (e.g. ["commitment"] to keep task-debt out of the map). */
+  excludeTypes?: string[];
   tags?: string[];
   /** Visibilities the caller is allowed to see. */
   allowed: Visibility[];

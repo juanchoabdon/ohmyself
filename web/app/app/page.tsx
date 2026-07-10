@@ -56,6 +56,7 @@ export default function Dashboard() {
   const [loadedFolders, setLoadedFolders] = useState<Set<string>>(new Set());
   const [loadingFolders, setLoadingFolders] = useState<Set<string>>(new Set());
   const [searchResults, setSearchResults] = useState<IndexedNote[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   // Refs mirror lazy-load state so async callbacks don't read stale closures.
   const loadedRef = useRef<Set<string>>(new Set());
@@ -245,14 +246,18 @@ export default function Dashboard() {
     const q = query.trim();
     if (!q) {
       setSearchResults(null);
+      setSearching(false);
       return;
     }
+    setSearching(true);
     searchTimer.current = setTimeout(async () => {
       try {
         const { results } = await api.search(token, q);
         setSearchResults(results);
       } catch {
         setSearchResults([]);
+      } finally {
+        setSearching(false);
       }
     }, 250);
   }, [query, token]);
@@ -321,10 +326,13 @@ export default function Dashboard() {
     }
   };
 
-  /** Load the entire brain (for the Map view and global type/visibility filters). */
+  /** Load the entire brain (for the Map view and global type/visibility filters).
+   *  Commitments are hidden everywhere in the UI (they're meeting-derived task
+   *  debt, not knowledge nodes), so we exclude them here too — otherwise ~1.3k
+   *  commitments crowd out the real graph under the row cap. */
   const ensureAllLoaded = async () => {
     if (!token || allLoadedRef.current) return;
-    const { notes } = await api.listNotes(token);
+    const { notes } = await api.listNotes(token, { exclude: ["commitment"] });
     allLoadedRef.current = true;
     setBaseNotes(notes);
     markLoaded([...new Set(notes.map((n) => n.path.split("/")[0]!)), ...folderCounts.map((f) => f.folder)]);
@@ -615,6 +623,8 @@ export default function Dashboard() {
           loadedFolders={loadedFolders}
           loadingFolders={loadingFolders}
           onExpandFolder={ensureFolder}
+          loading={!ready}
+          searching={searching}
           selected={selected}
           onSelect={openNote}
           query={query}

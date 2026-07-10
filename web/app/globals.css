@@ -443,6 +443,38 @@ main {
   animation: spin-slow 0.7s linear infinite;
 }
 
+/* Self-contained ring spinner (e.g. inside the search field while querying). */
+.oms-spinner {
+  display: inline-block;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  border: 2px solid color-mix(in oklch, var(--brand) 28%, transparent);
+  border-top-color: var(--brand);
+  animation: spin-slow 0.7s linear infinite;
+}
+
+/* Shimmering placeholder block for skeleton rows. */
+.oms-skel {
+  display: inline-block;
+  background: linear-gradient(
+    90deg,
+    var(--border) 0%,
+    color-mix(in oklch, var(--border) 45%, var(--surface)) 50%,
+    var(--border) 100%
+  );
+  background-size: 200% 100%;
+  animation: oms-shimmer 1.3s ease-in-out infinite;
+}
+@keyframes oms-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 .oms-track {
   position: relative;
   height: 6px;

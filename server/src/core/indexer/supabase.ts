@@ -89,6 +89,7 @@ export class SupabaseIndex implements BrainIndex {
       .eq("space_id", spaceId)
       .in("visibility", opts.allowed);
     if (opts.types?.length) q = q.in("type", opts.types);
+    if (opts.excludeTypes?.length) q = q.not("type", "in", `(${opts.excludeTypes.join(",")})`);
     if (opts.tags?.length) q = q.overlaps("tags", opts.tags);
     if (opts.prefix) q = q.like("path", `${opts.prefix.replace(/[%_]/g, "\\$&")}%`);
     q = q.order("updated", { ascending: false, nullsFirst: false }).limit(opts.limit ?? 200);
@@ -137,12 +138,21 @@ export class SupabaseIndex implements BrainIndex {
     const trimmed = query.trim();
     if (!trimmed) return this.list(spaceId, opts);
     const sb = serviceClient();
-    let q = sb
-      .from("note_index")
-      .select(SELECT)
-      .eq("space_id", spaceId)
-      .in("visibility", opts.allowed)
-      .textSearch("fts", trimmed, { type: "websearch", config: "simple" });
+    let q = sb.from("note_index").select(SELECT).eq("space_id", spaceId).in("visibility", opts.allowed);
+
+    // Prefix search: turn each token into `<token>:*` and AND them, using a raw
+    // to_tsquery (omit `type`). websearch/plainto only match whole lexemes — so
+    // "amal" wouldn't find "Amalia" and "sim mob" wouldn't find "Simplifying
+    // Mobile". Prefix matching makes as-you-type search actually work.
+    const tokens = trimmed
+      .split(/\s+/)
+      .map((t) => t.replace(/[^\p{L}\p{N}]+/gu, ""))
+      .filter(Boolean);
+    if (tokens.length) {
+      q = q.textSearch("fts", tokens.map((t) => `${t}:*`).join(" & "), { config: "simple" });
+    } else {
+      q = q.textSearch("fts", trimmed, { type: "websearch", config: "simple" });
+    }
     if (opts.types?.length) q = q.in("type", opts.types);
     if (opts.tags?.length) q = q.overlaps("tags", opts.tags);
     q = q.limit(opts.limit ?? 50);

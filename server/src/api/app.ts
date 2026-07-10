@@ -424,6 +424,7 @@ export function createApp(): Hono<Env> {
     const res = await brain.listNotes(auth.spaceId, {
       allowed,
       types: csv(c.req.query("type")),
+      excludeTypes: csv(c.req.query("exclude")),
       tags: csv(c.req.query("tags")),
       prefix: c.req.query("prefix") || undefined,
       limit: Number.isFinite(limit) ? limit : 200,

@@ -7,11 +7,39 @@
  * process restart / deploy). No external scheduler, no 60s function cap.
  */
 
-import { listActiveConnectionsForProvider } from "./core/index.js";
+import {
+  allowedVisibilities,
+  buildCore,
+  getUserConfig,
+  listActiveConnectionsForProvider,
+  profileStalePeople,
+} from "./core/index.js";
 import { GOOGLE_DRIVE_MEETINGS_PROVIDER } from "./connectors/google-auth.js";
 import { syncDriveConnection } from "./sync.js";
 import { DISCOVER_MAX, STALL_MS, detach, runBackfillLoop } from "./backfill.js";
 import { lintAllUsers, scheduledApplyMode } from "./lint.js";
+
+/** Keep person "Read" profiles fresh: for each user with an auto-sync connection,
+ *  regenerate the read for people whose fact count changed (capped per tick so it
+ *  backfills gradually without a burst of LLM calls). Disable with PROFILE=off. */
+async function profileTick(): Promise<void> {
+  const conns = await listActiveConnectionsForProvider(GOOGLE_DRIVE_MEETINGS_PROVIDER);
+  const users = [...new Set(conns.map((c) => c.spaceId))];
+  const { brain } = buildCore();
+  const allowed = allowedVisibilities("secret");
+  const cap = Number(process.env.PROFILE_TICK_LIMIT ?? "25") || 25;
+  for (const userId of users) {
+    detach(async () => {
+      try {
+        const config = await getUserConfig(userId);
+        const r = await profileStalePeople(brain, userId, config, allowed, { limit: cap });
+        if (r.profiled) console.log(`[profile] ${userId}: refreshed ${r.profiled} read(s)`);
+      } catch (err) {
+        console.error(`[profile] ${userId} failed:`, (err as Error).message);
+      }
+    });
+  }
+}
 
 /** One scheduler pass: resume stalled backfills, else incrementally sync new
  *  meetings. Safe to call from both the interval and a manual trigger. */
@@ -66,5 +94,14 @@ export function startScheduler(): void {
     setTimeout(lintTick, 90_000); // after boot, once the sync tick has settled
     setInterval(lintTick, lintMs);
     console.log(`[scheduler] wiki-lint every ${Math.round(lintMs / 3600000)}h · mode=${scheduledApplyMode()}`);
+  }
+
+  if (process.env.PROFILE !== "off") {
+    const profMs = Number(process.env.PROFILE_INTERVAL_MS ?? String(3 * 60 * 60 * 1000)) || 3 * 60 * 60 * 1000;
+    const profileTickSafe = () =>
+      profileTick().catch((e) => console.error("[profile] tick failed:", (e as Error).message));
+    setTimeout(profileTickSafe, 150_000); // after boot, once sync/lint have settled
+    setInterval(profileTickSafe, profMs);
+    console.log(`[scheduler] person profiles every ${Math.round(profMs / 3600000)}h`);
   }
 }
