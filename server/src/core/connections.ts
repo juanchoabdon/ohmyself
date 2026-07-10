@@ -204,11 +204,25 @@ export async function upsertConnection(input: UpsertConnectionInput): Promise<Co
     settings: input.settings ?? {},
     status: input.status ?? ("active" as ConnectionStatus),
   };
-  const { data, error } = await db
+  // App-level upsert (find existing → update, else insert) instead of PostgREST
+  // ON CONFLICT. Postgres requires the ON CONFLICT target to match a unique index
+  // by its EXACT columns, but the space-scoped unique index is functional
+  // (space_id, provider, coalesce(account_email,'')), which a plain column list
+  // never matches — so a real upsert errors with "no unique or exclusion
+  // constraint matching the ON CONFLICT specification" and blocks every connect.
+  let find = db
     .from("connections")
-    .upsert(row, { onConflict: "space_id,provider,account_email" })
-    .select("*")
-    .single();
+    .select("id")
+    .eq("space_id", input.spaceId)
+    .eq("provider", input.provider);
+  find = input.accountEmail ? find.eq("account_email", input.accountEmail) : find.is("account_email", null);
+  const { data: existing, error: findErr } = await find.maybeSingle();
+  if (findErr) throw new Error(`upsertConnection: ${findErr.message}`);
+
+  const write = existing?.id
+    ? db.from("connections").update(row).eq("id", existing.id)
+    : db.from("connections").insert(row);
+  const { data, error } = await write.select("*").single();
   if (error) throw new Error(`upsertConnection: ${error.message}`);
   return toConnection(data as ConnectionRow);
 }
