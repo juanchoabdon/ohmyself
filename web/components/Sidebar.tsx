@@ -367,7 +367,7 @@ export function Sidebar({
           </button>
 
           {filtersOpen && (
-            <div className="absolute right-0 top-full z-20 mt-1.5 w-64 rounded-xl border border-border bg-surface p-3 shadow-lg">
+            <div className="absolute inset-x-0 top-full z-20 mt-1.5 rounded-xl border border-border bg-surface p-3 shadow-lg">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Visibility</span>
                 {activeFilters > 0 && (
