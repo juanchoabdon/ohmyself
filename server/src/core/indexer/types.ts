@@ -6,6 +6,7 @@ import type {
   IndexedNote,
   ListOptions,
   SearchOptions,
+  TimelineOptions,
   Visibility,
 } from "../types.js";
 
@@ -37,4 +38,15 @@ export interface BrainIndex {
     embedding: number[] | null,
     opts: SearchOptions,
   ): Promise<HybridHit[]>;
+
+  // ── Optional graph / navigation primitives ─────────────────────────────────
+
+  /** Notes that link TO `path` (incoming links / backlinks). */
+  backlinks?(userId: string, path: string, allowed: Visibility[], limit?: number): Promise<IndexedNote[]>;
+  /** Pure-vector nearest neighbours for a query embedding (chunks → notes). */
+  vectorSearch?(userId: string, embedding: number[], opts: SearchOptions): Promise<HybridHit[]>;
+  /** Notes ordered chronologically within an optional date window. */
+  timeline?(userId: string, opts: TimelineOptions): Promise<IndexedNote[]>;
+  /** Indexed notes that still lack an embedded chunk (embed safety-net). */
+  notesMissingChunks?(userId: string, limit: number): Promise<IndexRecord[]>;
 }

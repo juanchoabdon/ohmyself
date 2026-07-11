@@ -14,7 +14,9 @@ import {
   listActiveConnectionsForProvider,
   profileStaleConcepts,
   profileStalePeople,
+  serviceClient,
 } from "./core/index.js";
+import { embeddingsEnabled } from "./core/embeddings.js";
 import { GOOGLE_DRIVE_MEETINGS_PROVIDER } from "./connectors/google-auth.js";
 import { syncDriveConnection } from "./sync.js";
 import { DISCOVER_MAX, STALL_MS, detach, runBackfillLoop } from "./backfill.js";
@@ -39,6 +41,30 @@ async function profileTick(): Promise<void> {
         if (c.profiled) console.log(`[profile] ${userId}: refreshed ${c.profiled} concept(s)`);
       } catch (err) {
         console.error(`[profile] ${userId} failed:`, (err as Error).message);
+      }
+    });
+  }
+}
+
+/** Embedding safety-net: embed-on-write is best-effort (a write never fails on a
+ *  slow/failed embed), so a note can briefly end up without chunk embeddings.
+ *  Each tick, walk every space and (re)embed a capped batch of notes that still
+ *  have none, so they self-heal within minutes instead of waiting for the next
+ *  manual backfill. Idempotent. Disable with EMBED_RECONCILE=off. */
+async function embedTick(): Promise<void> {
+  if (!embeddingsEnabled()) return;
+  const cap = Number(process.env.EMBED_TICK_LIMIT ?? "50") || 50;
+  const sb = serviceClient();
+  const { data, error } = await sb.from("spaces").select("id");
+  if (error || !data) return;
+  const { brain } = buildCore();
+  for (const row of data as { id: string }[]) {
+    detach(async () => {
+      try {
+        const n = await brain.embedMissing(row.id, cap);
+        if (n) console.log(`[embed] ${row.id}: embedded ${n} note(s) missing chunks`);
+      } catch (err) {
+        console.error(`[embed] ${row.id} failed:`, (err as Error).message);
       }
     });
   }
@@ -106,5 +132,14 @@ export function startScheduler(): void {
     setTimeout(profileTickSafe, 150_000); // after boot, once sync/lint have settled
     setInterval(profileTickSafe, profMs);
     console.log(`[scheduler] person profiles every ${Math.round(profMs / 3600000)}h`);
+  }
+
+  if (process.env.EMBED_RECONCILE !== "off") {
+    const embMs = Number(process.env.EMBED_INTERVAL_MS ?? String(20 * 60 * 1000)) || 20 * 60 * 1000;
+    const embedTickSafe = () =>
+      embedTick().catch((e) => console.error("[embed] tick failed:", (e as Error).message));
+    setTimeout(embedTickSafe, 60_000); // after boot, once the first sync settles
+    setInterval(embedTickSafe, embMs);
+    console.log(`[scheduler] embedding reconcile every ${Math.round(embMs / 60000)} min`);
   }
 }

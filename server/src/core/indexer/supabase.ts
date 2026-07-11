@@ -8,6 +8,7 @@ import type {
   IndexedNote,
   ListOptions,
   SearchOptions,
+  TimelineOptions,
   Visibility,
 } from "../types.js";
 import type { BrainIndex } from "./types.js";
@@ -229,31 +230,11 @@ export class SupabaseIndex implements BrainIndex {
     await sb.from("note_chunks").delete().eq("space_id", spaceId).eq("path", path);
   }
 
-  async hybridSearch(
-    spaceId: string,
-    query: string,
-    embedding: number[] | null,
-    opts: SearchOptions,
-  ): Promise<HybridHit[]> {
-    const trimmed = query.trim();
-    if (!trimmed) return [];
-    const sb = serviceClient();
-    const limit = opts.limit ?? 20;
-    const { data, error } = await sb.rpc("hybrid_search_notes", {
-      p_space: spaceId,
-      p_tsquery: prefixTsquery(trimmed),
-      p_embedding: embedding ? toVectorLiteral(embedding) : "",
-      p_allowed: opts.allowed,
-      p_types: opts.types?.length ? opts.types : null,
-      p_tags: opts.tags?.length ? opts.tags : null,
-      // Over-fetch a candidate pool, then rerank + slice app-side.
-      p_limit: Math.max(limit * 3, 40),
-    });
-    if (error) throw new Error(`hybrid search failed: ${error.message}`);
-    const rows = (data as HybridRow[] | null) ?? [];
-    const qTokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+  /** Map raw hybrid_search_notes rows to reranked HybridHits. `qTokens` are the
+   *  lowercased query tokens used for the title-match bonus (empty for pure
+   *  vector search, where no lexical/title signal applies). */
+  private mapHybridRows(rows: HybridRow[], qTokens: string[], limit: number): HybridHit[] {
     const now = Date.now();
-
     const hits = rows.map<HybridHit>((r) => {
       const reasons: string[] = [];
       if (r.sem_rank != null) reasons.push("semantic");
@@ -261,7 +242,7 @@ export class SupabaseIndex implements BrainIndex {
 
       let score = r.score ?? 0;
       const titleLc = (r.title ?? "").toLowerCase();
-      if (qTokens.some((t) => titleLc.includes(t))) {
+      if (qTokens.length && qTokens.some((t) => titleLc.includes(t))) {
         score += TITLE_BONUS;
         reasons.push("title");
       }
@@ -294,8 +275,123 @@ export class SupabaseIndex implements BrainIndex {
         matchReasons: reasons,
       };
     });
-
     hits.sort((a, b) => b.score - a.score);
     return hits.slice(0, limit);
   }
+
+  async hybridSearch(
+    spaceId: string,
+    query: string,
+    embedding: number[] | null,
+    opts: SearchOptions,
+  ): Promise<HybridHit[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const sb = serviceClient();
+    const limit = opts.limit ?? 20;
+    const { data, error } = await sb.rpc("hybrid_search_notes", {
+      p_space: spaceId,
+      p_tsquery: prefixTsquery(trimmed),
+      p_embedding: embedding ? toVectorLiteral(embedding) : "",
+      p_allowed: opts.allowed,
+      p_types: opts.types?.length ? opts.types : null,
+      p_tags: opts.tags?.length ? opts.tags : null,
+      // Over-fetch a candidate pool, then rerank + slice app-side.
+      p_limit: Math.max(limit * 3, 40),
+    });
+    if (error) throw new Error(`hybrid search failed: ${error.message}`);
+    const rows = (data as HybridRow[] | null) ?? [];
+    const qTokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+    return this.mapHybridRows(rows, qTokens, limit);
+  }
+
+  /** Pure-vector nearest neighbours: run the hybrid RPC with an empty tsquery so
+   *  only the semantic CTE contributes. Used for "notes like this one". */
+  async vectorSearch(spaceId: string, embedding: number[], opts: SearchOptions): Promise<HybridHit[]> {
+    if (!embedding.length) return [];
+    const sb = serviceClient();
+    const limit = opts.limit ?? 10;
+    const { data, error } = await sb.rpc("hybrid_search_notes", {
+      p_space: spaceId,
+      p_tsquery: "",
+      p_embedding: toVectorLiteral(embedding),
+      p_allowed: opts.allowed,
+      p_types: opts.types?.length ? opts.types : null,
+      p_tags: opts.tags?.length ? opts.tags : null,
+      p_limit: Math.max(limit * 3, 30),
+    });
+    if (error) throw new Error(`vector search failed: ${error.message}`);
+    const rows = (data as HybridRow[] | null) ?? [];
+    return this.mapHybridRows(rows, [], limit);
+  }
+
+  /** Notes that link TO `path` (their frontmatter `links[]` contains it). */
+  async backlinks(
+    spaceId: string,
+    path: string,
+    allowed: Visibility[],
+    limit = 50,
+  ): Promise<IndexedNote[]> {
+    const sb = serviceClient();
+    const { data, error } = await sb
+      .from("note_index")
+      .select(SELECT)
+      .eq("space_id", spaceId)
+      .in("visibility", allowed)
+      .contains("links", [path])
+      .limit(limit);
+    if (error || !data) return [];
+    return (data as Row[]).map(toIndexed);
+  }
+
+  async timeline(spaceId: string, opts: TimelineOptions): Promise<IndexedNote[]> {
+    const sb = serviceClient();
+    const by = opts.by ?? "created";
+    let q = sb.from("note_index").select(SELECT).eq("space_id", spaceId).in("visibility", opts.allowed);
+    if (opts.types?.length) q = q.in("type", opts.types);
+    if (opts.tags?.length) q = q.overlaps("tags", opts.tags);
+    if (opts.prefix) q = q.like("path", `${opts.prefix.replace(/[%_]/g, "\\$&")}%`);
+    if (opts.from) q = q.gte(by, opts.from);
+    if (opts.to) q = q.lte(by, opts.to);
+    q = q
+      .order(by, { ascending: opts.order === "asc", nullsFirst: false })
+      .limit(opts.limit ?? 50);
+    const { data, error } = await q;
+    if (error || !data) return [];
+    return (data as Row[]).map(toIndexed);
+  }
+
+  async notesMissingChunks(spaceId: string, limit: number): Promise<IndexRecord[]> {
+    const sb = serviceClient();
+    const { data, error } = await sb.rpc("notes_missing_chunks", {
+      p_space: spaceId,
+      p_limit: limit,
+    });
+    if (error || !data) return [];
+    return (data as MissingRow[]).map((r) => ({
+      path: r.path,
+      id: r.note_id ?? undefined,
+      title: r.title,
+      type: r.type,
+      visibility: r.visibility as Visibility,
+      tags: r.tags ?? [],
+      links: [],
+      created: r.created ?? undefined,
+      updated: r.updated ?? undefined,
+      excerpt: r.content ? r.content.slice(0, 240) : undefined,
+      content: r.content ?? "",
+    }));
+  }
+}
+
+interface MissingRow {
+  path: string;
+  note_id: string | null;
+  title: string;
+  type: string;
+  visibility: string;
+  tags: string[] | null;
+  created: string | null;
+  updated: string | null;
+  content: string;
 }

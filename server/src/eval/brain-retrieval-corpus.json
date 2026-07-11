@@ -48,6 +48,36 @@
       "expected_paths": ["notes/roadmap-aside-consumer-h2-specs-on-the-side.md"],
       "expected_route": "fast_recall",
       "difficulty": "direct"
+    },
+    {
+      "id": "ohmyself-flowya-money-multihop",
+      "question": "how do ohmyself and Flowya come together as one product, and how would I make money from it?",
+      "expected_paths": [
+        "projects/ohmyself/specs/unified-ohmyself-and-flowya-product-strategy.md",
+        "projects/flowya/specs/flowya-pro-monetization.md",
+        "projects/flowya/specs/cobrar-por-flowya-stripe.md"
+      ],
+      "expected_route": "deep_research",
+      "difficulty": "multi_hop",
+      "note": "Synthesis across the unification strategy AND a monetization spec — exercises research_brain's multi-query planning."
+    },
+    {
+      "id": "brain-retrieval-evolution",
+      "question": "trace how my thinking about the brain's retrieval evolved into a research agent",
+      "expected_paths": ["projects/ohmyself/specs/brain-retrieval-and-research-agent.md"],
+      "expected_route": "deep_research",
+      "difficulty": "semantic_mismatch"
+    },
+    {
+      "id": "ohmyself-why-and-distribution",
+      "question": "why does ohmyself exist and how do I plan to get it in front of people through Claude and ChatGPT?",
+      "expected_paths": [
+        "projects/ohmyself/_index.md",
+        "projects/ohmyself/specs/official-app-distribution-for-claude-chatgpt-and-agent-platforms.md"
+      ],
+      "expected_route": "deep_research",
+      "difficulty": "multi_hop",
+      "note": "Combines the origin (project overview) with the distribution spec — two hops in one question."
     }
   ]
 }

@@ -85,6 +85,22 @@ export interface ListOptions {
 
 export interface SearchOptions extends ListOptions {}
 
+/** Options for a chronological listing of notes. */
+export interface TimelineOptions {
+  allowed: Visibility[];
+  types?: string[];
+  tags?: string[];
+  /** Restrict to notes whose path starts with this prefix. */
+  prefix?: string;
+  /** Which date field to order/window by. */
+  by?: "created" | "updated";
+  /** Inclusive ISO date lower/upper bounds (YYYY-MM-DD). */
+  from?: string;
+  to?: string;
+  order?: "asc" | "desc";
+  limit?: number;
+}
+
 /** A top-level pillar (first path segment) and how many notes it holds. */
 export interface FolderCount {
   folder: string;

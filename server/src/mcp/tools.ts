@@ -14,6 +14,7 @@ import {
   listSpacesForUser,
   profilePerson,
   profileStalePeople,
+  researchBrain,
   serializeNote,
   setCommitmentStatus,
   setUserConfig,
@@ -22,6 +23,7 @@ import {
   todayISO,
   upsertPerson,
   upsertProject,
+  writeBrain,
   type AuthContext,
   type CommitmentOwner,
   type CommitmentStatus,
@@ -70,7 +72,22 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   const core = buildCore();
   const { brain } = core;
   const allowed = allowedVisibilities(auth.scope);
-  const server = new McpServer({ name: "ohmyself", version: "0.2.0" });
+  const server = new McpServer(
+    { name: "ohmyself", version: "0.2.0" },
+    {
+      instructions: [
+        "This is the person's second brain (private notes: identity, people, projects, goals, decisions, journal).",
+        "",
+        "RETRIEVAL ROUTING — pick the lightest tool that answers the need:",
+        "- search_brain: ranked notes for a keyword/topic lookup (fastest).",
+        "- recall: one hybrid retrieval + aggregated context to ground an answer about a topic. Use before answering questions about the person. If `coverage` is low, treat context as incomplete.",
+        "- research_brain: DEEP path for hard, multi-hop, or synthesis questions ('why did I decide X', 'how do A and B connect', 'the story of Z over time'). It plans sub-queries, searches repeatedly, follows links, reads notes, and returns a cited `answer`. Slower/costlier — don't use it for a single fact.",
+        "- get_neighbors / get_backlinks / search_by_entity / timeline: navigate the graph around a note or entity, or scan a time window.",
+        "",
+        "WRITING: prefer the specific tools (remember, add_person, upsert_project, add_to_project, set_goal, log_journal, update_identity) when you know the destination. Use write_brain to auto-route + dedupe when you don't. Never invent facts; capture durable info in the moment.",
+      ].join("\n"),
+    },
+  );
 
   function requireWrite() {
     if (auth.readonly || !canWrite(auth.scope)) {
@@ -164,6 +181,116 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     async ({ topic, limit }) => {
       const ctx = await brain.getContext(auth.spaceId, topic, allowed, limit ?? 6);
       return text(ctx);
+    },
+  );
+
+  server.registerTool(
+    "research_brain",
+    {
+      title: "Research a question (deep)",
+      description:
+        "DEEP retrieval for hard, multi-hop, or synthesis questions ('why did I decide X?', 'how do my goals connect to project Y?', 'what's the story of Z across time?'). Runs a bounded loop: plans sub-queries, does multiple hybrid searches, follows links/backlinks, reads the top notes, and returns a synthesized `answer` with `sources` (cited paths), `coverage` (high|medium|low), `suggested_followups`, and a `trace`. Slower/costlier than recall — for a single fact or a quick topic lookup, use `recall` or `search_brain` instead. Respects privacy.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        question: z.string().describe("the question to research over the brain"),
+        max_searches: z.number().int().positive().max(8).optional().describe("cap on hybrid searches (default 5)"),
+        max_reads: z.number().int().positive().max(15).optional().describe("cap on notes read in full (default 8)"),
+      },
+    },
+    async ({ question, max_searches, max_reads }) => {
+      const res = await researchBrain(brain, auth.spaceId, question, allowed, {
+        maxSearches: max_searches,
+        maxReads: max_reads,
+      });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "get_backlinks",
+    {
+      title: "Get backlinks",
+      description:
+        "List notes that link TO a given note (incoming links). Use to see what references a person, project, or concept page. Respects privacy.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().describe("the note whose backlinks you want, e.g. people/ana.md"),
+        limit: z.number().int().positive().max(100).optional(),
+      },
+    },
+    async ({ path, limit }) => {
+      const res = await brain.getBacklinks(auth.spaceId, path, allowed, limit ?? 50);
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "get_neighbors",
+    {
+      title: "Get neighboring notes",
+      description:
+        "Explore a note's neighborhood in the knowledge graph: `outgoing` (explicit links), `backlinks` (incoming links), and `semantic` (topically similar notes by embedding). Use to navigate related context around a note. Respects privacy.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().describe("the note to explore, e.g. projects/bonds/_index.md"),
+        semantic_limit: z.number().int().positive().max(15).optional().describe("how many semantic neighbors (default 6)"),
+      },
+    },
+    async ({ path, semantic_limit }) => {
+      const res = await brain.getNeighbors(auth.spaceId, path, allowed, { semanticLimit: semantic_limit });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "search_by_entity",
+    {
+      title: "Search by entity",
+      description:
+        "Find everything the brain knows about a named person, project, or concept: its canonical page (`entity`) plus the notes that mention or link to it (`mentions`). Use when the question centers on a specific named thing. Respects privacy.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        name: z.string().describe("the person, project, or concept name"),
+        limit: z.number().int().positive().max(50).optional(),
+      },
+    },
+    async ({ name, limit }) => {
+      const res = await brain.searchByEntity(auth.spaceId, name, allowed, { limit });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "timeline",
+    {
+      title: "Timeline of notes",
+      description:
+        "List notes chronologically within an optional date window — great for 'what happened / what did I work on' over a period. Order by `created` (default) or `updated`, filter by type/tag/path prefix. Respects privacy.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        from: z.string().optional().describe("inclusive start date YYYY-MM-DD"),
+        to: z.string().optional().describe("inclusive end date YYYY-MM-DD"),
+        by: z.enum(["created", "updated"]).optional(),
+        order: z.enum(["asc", "desc"]).optional(),
+        type: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        prefix: z.string().optional().describe("path prefix filter, e.g. journal/"),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ from, to, by, order, type, tags, prefix, limit }) => {
+      const res = await brain.timeline(auth.spaceId, {
+        allowed,
+        from,
+        to,
+        by,
+        order,
+        types: type ? [type] : undefined,
+        tags,
+        prefix,
+        limit,
+      });
+      return text(res);
     },
   );
 
@@ -1278,6 +1405,31 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       requireWrite();
       await brain.linkNotes(auth.spaceId, a, b, allowed);
       return text({ linked: [a, b] });
+    },
+  );
+
+  server.registerTool(
+    "write_brain",
+    {
+      title: "Save to brain (auto-routed)",
+      description:
+        "Capture a piece of durable info without deciding WHERE it goes — the router classifies it (memory, identity, a person, a project, a goal period, a journal day, or a note), dedupes against existing notes, and writes it to the right place. Returns the resolved `path`, `category`, `operation`, and `related` (possible duplicates). Prefer the specific tools (remember/add_person/upsert_project/set_goal/log_journal/update_identity) when you already know the destination; use this when you don't. Pass `apply=false` to preview the routing without writing.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        content: z.string().describe("the info to save, phrased as a standalone statement"),
+        hint: z.string().optional().describe("optional nudge about where it belongs"),
+        apply: z.boolean().optional().describe("default true; false = preview routing only"),
+        visibility: VisibilityEnum.optional().describe("override; defaults to the router's choice"),
+      },
+    },
+    async ({ content, hint, apply, visibility }) => {
+      requireWrite();
+      const res = await writeBrain(brain, auth.spaceId, content, await config(), allowed, {
+        hint,
+        apply,
+        visibility,
+      });
+      return text(res);
     },
   );
 

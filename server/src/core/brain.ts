@@ -17,6 +17,7 @@ import type {
   Note,
   NoteMeta,
   SearchOptions,
+  TimelineOptions,
   Visibility,
 } from "./types.js";
 import type { Vault } from "./vault/types.js";
@@ -348,6 +349,152 @@ export class Brain {
     } catch {
       return null;
     }
+  }
+
+  // ── Graph / navigation primitives ──────────────────────────────────────────
+
+  /** Notes that link TO `path` (incoming links). Empty if unsupported. */
+  async getBacklinks(
+    userId: string,
+    path: string,
+    allowed: Visibility[],
+    limit = 50,
+  ): Promise<IndexedNote[]> {
+    if (!this.index.backlinks) return [];
+    return this.index.backlinks(userId, path, allowed, limit);
+  }
+
+  /** Neighbours of a note across three relations: explicit outgoing links,
+   *  incoming backlinks, and semantic near-duplicates (by chunk embedding).
+   *  Each list respects visibility and excludes the note itself. */
+  async getNeighbors(
+    userId: string,
+    path: string,
+    allowed: Visibility[],
+    opts?: { semanticLimit?: number },
+  ): Promise<{
+    note: { path: string; title: string; type: string };
+    outgoing: IndexedNote[];
+    backlinks: IndexedNote[];
+    semantic: HybridHit[];
+  }> {
+    const note = await this.readNote(userId, path, allowed); // existence + visibility
+
+    const outgoing: IndexedNote[] = [];
+    for (const link of note.meta.links) {
+      const n = await this.index.get(userId, link);
+      if (n && allowed.includes(n.visibility)) outgoing.push(n);
+    }
+
+    const backlinks = await this.getBacklinks(userId, path, allowed);
+
+    let semantic: HybridHit[] = [];
+    if (this.index.vectorSearch && embeddingsEnabled()) {
+      try {
+        const seed = `${note.meta.title}. ${excerptOf(note.body)}`.trim();
+        const vec = await embedQuery(seed);
+        if (vec) {
+          const hits = await this.index.vectorSearch(userId, vec, {
+            allowed,
+            limit: (opts?.semanticLimit ?? 6) + 1,
+          });
+          semantic = hits.filter((h) => h.path !== path).slice(0, opts?.semanticLimit ?? 6);
+        }
+      } catch {
+        /* semantic neighbours are best-effort */
+      }
+    }
+
+    return {
+      note: { path: note.path, title: note.meta.title, type: note.meta.type },
+      outgoing,
+      backlinks,
+      semantic,
+    };
+  }
+
+  /** Chronological listing of notes within an optional date window. Falls back
+   *  to a date-sorted `list` when the backend has no dedicated timeline. */
+  async timeline(userId: string, opts: TimelineOptions): Promise<IndexedNote[]> {
+    if (this.index.timeline) return this.index.timeline(userId, opts);
+    const rows = await this.index.list(userId, {
+      allowed: opts.allowed,
+      types: opts.types,
+      tags: opts.tags,
+      prefix: opts.prefix,
+      limit: opts.limit ?? 50,
+    });
+    const by = opts.by ?? "created";
+    const asc = opts.order === "asc";
+    return rows
+      .filter((r) => {
+        const d = (by === "created" ? r.created : r.updated) ?? "";
+        if (opts.from && d < opts.from) return false;
+        if (opts.to && d > opts.to) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const da = (by === "created" ? a.created : a.updated) ?? "";
+        const db = (by === "created" ? b.created : b.updated) ?? "";
+        return asc ? da.localeCompare(db) : db.localeCompare(da);
+      });
+  }
+
+  /** Everything the brain knows about a named entity (person/project/concept):
+   *  its canonical page (if any) plus the notes that mention or link to it. */
+  async searchByEntity(
+    userId: string,
+    name: string,
+    allowed: Visibility[],
+    opts?: { limit?: number },
+  ): Promise<{
+    entity: { path: string; title: string; type: string } | null;
+    mentions: IndexedNote[];
+  }> {
+    const slug = slugify(name);
+    const candidates = [
+      `people/${slug}.md`,
+      `projects/${slug}/_index.md`,
+      `concepts/${slug}.md`,
+      `glossary/${slug}.md`,
+    ];
+    let entity: { path: string; title: string; type: string } | null = null;
+    for (const p of candidates) {
+      const n = await this.index.get(userId, p);
+      if (n && allowed.includes(n.visibility)) {
+        entity = { path: n.path, title: n.title, type: n.type };
+        break;
+      }
+    }
+
+    const limit = opts?.limit ?? 20;
+    const byName = await this.search(userId, name, { allowed, limit });
+    const links = entity ? await this.getBacklinks(userId, entity.path, allowed, limit) : [];
+
+    const seen = new Set<string>(entity ? [entity.path] : []);
+    const mentions: IndexedNote[] = [];
+    for (const n of [...links, ...byName]) {
+      if (seen.has(n.path)) continue;
+      seen.add(n.path);
+      mentions.push(n);
+      if (mentions.length >= limit) break;
+    }
+    return { entity, mentions };
+  }
+
+  /** Safety-net reconcile: (re)embed up to `cap` notes that still have no
+   *  embedded chunk. Idempotent; used by the scheduler so a best-effort embed
+   *  that failed at write time self-heals within minutes. Returns how many
+   *  notes were processed. */
+  async embedMissing(userId: string, cap = 50): Promise<number> {
+    if (!this.index.notesMissingChunks || !this.index.upsertChunks) return 0;
+    const missing = await this.index.notesMissingChunks(userId, cap);
+    let processed = 0;
+    for (const rec of missing) {
+      await this.syncChunks(userId, rec, rec.content);
+      processed++;
+    }
+    return processed;
   }
 
   async linkNotes(userId: string, a: string, b: string, allowed: Visibility[]): Promise<void> {

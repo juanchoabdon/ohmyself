@@ -109,6 +109,11 @@ export type {
   UpsertConnectionInput,
   ConnectionStatePatch,
 } from "./connections.js";
+export { researchBrain } from "./research.js";
+export type { ResearchResult, ResearchOptions, ResearchSource } from "./research.js";
+export { writeBrain } from "./writer.js";
+export type { WriteResult, WriteCategory } from "./writer.js";
+export { modelForTier, llmEnabled } from "./llm.js";
 export { distill } from "./distill.js";
 export type {
   DistillResult,
