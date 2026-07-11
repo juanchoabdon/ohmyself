@@ -1,12 +1,17 @@
+import { chunkNote, embedTextForChunk } from "./chunker.js";
 import {
   defaultVisibilityForType,
   folderForType,
   type UserConfig,
 } from "./config.js";
+import { embedQuery, embedTexts, embeddingsEnabled } from "./embeddings.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "./errors.js";
 import { excerptOf, parseNote, serializeNote, todayISO } from "./frontmatter.js";
 import type { BrainIndex } from "./indexer/types.js";
 import type {
+  ChunkRecord,
+  HybridHit,
+  IndexRecord,
   IndexedNote,
   ListOptions,
   Note,
@@ -70,7 +75,7 @@ export class Brain {
     private index: BrainIndex,
   ) {}
 
-  private async indexRecord(path: string, meta: NoteMeta, body: string) {
+  private indexRecord(path: string, meta: NoteMeta, body: string): IndexRecord {
     return {
       path,
       id: meta.id,
@@ -84,6 +89,44 @@ export class Brain {
       excerpt: excerptOf(body),
       content: body,
     };
+  }
+
+  /** Persist a note to the derived index: the note_index row (always) and its
+   *  chunk embeddings (when the backend supports them). Chunk sync is best-effort
+   *  — it never blocks or fails a write, since chunks are rebuildable via backfill. */
+  private async writeIndex(spaceId: string, path: string, meta: NoteMeta, body: string) {
+    const rec = this.indexRecord(path, meta, body);
+    await this.index.upsert(spaceId, rec);
+    await this.syncChunks(spaceId, rec, body);
+  }
+
+  private async syncChunks(spaceId: string, rec: IndexRecord, body: string) {
+    if (!this.index.upsertChunks) return;
+    try {
+      const chunks = chunkNote(body);
+      let embeddings: (number[] | null)[] = chunks.map(() => null);
+      if (chunks.length && embeddingsEnabled()) {
+        embeddings = await embedTexts(chunks.map((c) => embedTextForChunk(rec.title, c)));
+      }
+      const records: ChunkRecord[] = chunks.map((c, i) => ({
+        section: c.section,
+        pos: c.pos,
+        content: c.content,
+        embedding: embeddings[i] ?? null,
+      }));
+      await this.index.upsertChunks(spaceId, rec, records);
+    } catch {
+      /* derived + rebuildable: a failed embed must never break the write */
+    }
+  }
+
+  private async removeChunks(spaceId: string, path: string) {
+    if (!this.index.removeChunks) return;
+    try {
+      await this.index.removeChunks(spaceId, path);
+    } catch {
+      /* best-effort */
+    }
   }
 
   async createNote(
@@ -121,7 +164,7 @@ export class Brain {
     };
     const body = input.body ?? "";
     await this.vault.write(userId, path, serializeNote(meta, body));
-    await this.index.upsert(userId, await this.indexRecord(path, meta, body));
+    await this.writeIndex(userId, path, meta, body);
     return { path, meta, body };
   }
 
@@ -186,7 +229,7 @@ export class Brain {
   async importRaw(userId: string, path: string, raw: string): Promise<Note> {
     const { meta, body } = parseNote(raw, path);
     await this.vault.write(userId, path, raw);
-    await this.index.upsert(userId, await this.indexRecord(path, meta, body));
+    await this.writeIndex(userId, path, meta, body);
     return { path, meta, body };
   }
 
@@ -223,7 +266,7 @@ export class Brain {
     meta.updated = todayISO();
     const body = patch.body !== undefined ? patch.body : current.body;
     await this.vault.write(userId, path, serializeNote(meta, body));
-    await this.index.upsert(userId, await this.indexRecord(path, meta, body));
+    await this.writeIndex(userId, path, meta, body);
     return { path, meta, body };
   }
 
@@ -242,6 +285,7 @@ export class Brain {
     await this.readNote(userId, path, allowed); // enforce visibility / existence
     await this.vault.remove(userId, path);
     await this.index.remove(userId, path);
+    await this.removeChunks(userId, path);
   }
 
   /** Move/rename a note to a new path, preserving its frontmatter. Used by the
@@ -261,9 +305,10 @@ export class Brain {
     if (collision != null) throw new BadRequestError(`a note already exists at ${dest}`);
 
     await this.vault.write(userId, dest, serializeNote(current.meta, current.body));
-    await this.index.upsert(userId, await this.indexRecord(dest, current.meta, current.body));
+    await this.writeIndex(userId, dest, current.meta, current.body);
     await this.vault.remove(userId, from);
     await this.index.remove(userId, from);
+    await this.removeChunks(userId, from);
     return { path: dest, meta: current.meta, body: current.body };
   }
 
@@ -276,7 +321,33 @@ export class Brain {
   }
 
   async search(userId: string, query: string, opts: SearchOptions): Promise<IndexedNote[]> {
+    const hits = await this.hybridSearch(userId, query, opts);
+    if (hits) return hits;
     return this.index.search(userId, query, opts);
+  }
+
+  /** Lexical-only search (bypasses hybrid). Exposed for A/B evaluation of the
+   *  retrieval layers; normal callers should use `search`. */
+  async lexicalSearch(userId: string, query: string, opts: SearchOptions): Promise<IndexedNote[]> {
+    return this.index.search(userId, query, opts);
+  }
+
+  /** Hybrid (semantic + lexical) search when the backend supports it, else null
+   *  so callers fall back to lexical. Returns null on empty query, missing
+   *  capability, error, or zero hits — anything that should defer to `search`. */
+  private async hybridSearch(
+    userId: string,
+    query: string,
+    opts: SearchOptions,
+  ): Promise<HybridHit[] | null> {
+    if (!this.index.hybridSearch || !query.trim()) return null;
+    try {
+      const embedding = embeddingsEnabled() ? await embedQuery(query) : null;
+      const hits = await this.index.hybridSearch(userId, query, embedding, opts);
+      return hits.length ? hits : null;
+    } catch {
+      return null;
+    }
   }
 
   async linkNotes(userId: string, a: string, b: string, allowed: Visibility[]): Promise<void> {
@@ -290,8 +361,11 @@ export class Brain {
     }
   }
 
-  /** Aggregate the most relevant notes for a topic into a single context blob
-   *  an agent can reason over. Respects visibility. */
+  /** Aggregate the most relevant notes for a topic into structured evidence an
+   *  agent can reason over. Backward-compatible: still returns `notes` + `text`
+   *  (the concatenated context blob), and adds `sources` (per-hit provenance +
+   *  match reasons), `coverage` (retrieval confidence), and `suggested_followups`.
+   *  Respects visibility. */
   async getContext(
     userId: string,
     topic: string,
@@ -301,8 +375,23 @@ export class Brain {
     topic: string;
     notes: { path: string; title: string; body: string; created?: string; updated?: string }[];
     text: string;
+    sources: {
+      path: string;
+      title: string;
+      type: string;
+      visibility: Visibility;
+      section?: string;
+      score?: number;
+      similarity?: number;
+      match_reasons?: string[];
+      excerpt?: string;
+    }[];
+    coverage: "high" | "medium" | "low";
+    suggested_followups: string[];
   }> {
-    const hits = await this.search(userId, topic, { allowed, limit });
+    const hits = (await this.search(userId, topic, { allowed, limit })) as (IndexedNote &
+      Partial<HybridHit>)[];
+
     const notes: { path: string; title: string; body: string; created?: string; updated?: string }[] = [];
     for (const h of hits) {
       try {
@@ -318,9 +407,30 @@ export class Brain {
         /* skip */
       }
     }
+
+    const sources = hits.map((h) => ({
+      path: h.path,
+      title: h.title,
+      type: h.type,
+      visibility: h.visibility,
+      section: h.section,
+      score: h.score,
+      similarity: h.similarity,
+      match_reasons: h.matchReasons,
+      excerpt: h.excerpt,
+    }));
+
+    const bestSim = hits.reduce((m, h) => Math.max(m, h.similarity ?? 0), 0);
+    let coverage: "high" | "medium" | "low";
+    if (hits.length === 0) coverage = "low";
+    else if (hits.length >= 4 && bestSim >= 0.45) coverage = "high";
+    else if (hits.length >= 2 || bestSim >= 0.3) coverage = "medium";
+    else coverage = "low";
+
     const text = notes
       .map((n) => `## ${n.title}\n(${n.path})\n\n${n.body}`)
       .join("\n\n---\n\n");
-    return { topic, notes, text };
+
+    return { topic, notes, text, sources, coverage, suggested_followups: [] };
   }
 }

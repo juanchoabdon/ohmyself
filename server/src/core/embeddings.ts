@@ -15,6 +15,10 @@ import { createHash } from "node:crypto";
 const MODEL = process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small";
 const apiKey = () => process.env.OPENAI_API_KEY ?? "";
 
+/** Vector width of the configured embedding model. Must match the pgvector
+ *  column dimension in the note_chunks migration (text-embedding-3-small: 1536). */
+export const EMBED_DIM = Number(process.env.OPENAI_EMBED_DIM ?? "1536") || 1536;
+
 const EMBED_TIMEOUT_MS = 20000;
 const BATCH = 256;
 const CACHE_MAX = 6000;
@@ -84,6 +88,22 @@ export async function embedTexts(texts: string[]): Promise<(number[] | null)[]> 
   }
 
   return result;
+}
+
+/** Embed a single query string. Returns null if embeddings are disabled or the
+ *  provider call fails (callers fall back to lexical-only retrieval). */
+export async function embedQuery(text: string): Promise<number[] | null> {
+  const q = text.trim();
+  if (!q) return null;
+  const [vec] = await embedTexts([q]);
+  return vec ?? null;
+}
+
+/** Format a vector for pgvector as a text literal ("[0.1,0.2,...]"). We pass the
+ *  query embedding to the hybrid_search RPC as text and cast to `vector` in SQL,
+ *  which is the most portable way through PostgREST. */
+export function toVectorLiteral(vec: number[]): string {
+  return `[${vec.join(",")}]`;
 }
 
 export function cosine(a: number[], b: number[]): number {

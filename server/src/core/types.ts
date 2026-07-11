@@ -43,6 +43,34 @@ export interface IndexRecord extends IndexedNote {
   content: string;
 }
 
+/** One embeddable chunk of a note, ready to persist to note_chunks. */
+export interface ChunkRecord {
+  /** Nearest heading above the chunk ("" for preamble). */
+  section: string;
+  /** 0-based position within the note. */
+  pos: number;
+  /** Raw chunk text (for excerpt/display). */
+  content: string;
+  /** Chunk embedding, or null when embeddings are unavailable at write time. */
+  embedding: number[] | null;
+}
+
+/** A hybrid-retrieval hit: an indexed note plus why/how it matched. */
+export interface HybridHit extends IndexedNote {
+  /** Heading of the best-matching chunk. */
+  section?: string;
+  /** Fused + reranked relevance score (higher is better). */
+  score: number;
+  /** 1-based rank in the semantic candidate list (absent if not a vector hit). */
+  semRank?: number;
+  /** 1-based rank in the lexical candidate list (absent if not an fts hit). */
+  lexRank?: number;
+  /** Cosine similarity of the best chunk to the query (semantic hits only). */
+  similarity?: number;
+  /** Human-readable reasons: "semantic" | "lexical" | "title" | "recent". */
+  matchReasons: string[];
+}
+
 export interface ListOptions {
   types?: string[];
   /** Exclude these note types (e.g. ["commitment"] to keep task-debt out of the map). */

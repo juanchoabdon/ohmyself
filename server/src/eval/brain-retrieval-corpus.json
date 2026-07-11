@@ -1,0 +1,53 @@
+{
+  "about": "Seed evaluation corpus for Brain hybrid retrieval (Layer 1). Real questions JD would ask his brain, each with the note path(s) that SHOULD be retrieved. Expand this to 100-200 cases before removing the old lexical-only path (see spec: Evaluation corpus and quality gates). recall@k = fraction of cases where at least one expected path appears in the top-k hits. Deliberately includes semantic-mismatch cases (question wording differs from the note).",
+  "cases": [
+    {
+      "id": "ohmyself-origin",
+      "question": "why did I decide to build ohmyself?",
+      "expected_paths": ["projects/ohmyself/_index.md"],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "note": "Origin lives in the project overview (Obsidian required paid cloud sync, not AI-native)."
+    },
+    {
+      "id": "retrieval-architecture",
+      "question": "how should the brain's search and retrieval actually work?",
+      "expected_paths": ["projects/ohmyself/specs/brain-retrieval-and-research-agent.md"],
+      "expected_route": "fast_recall",
+      "difficulty": "direct"
+    },
+    {
+      "id": "ohmyself-flowya-strategy",
+      "question": "what's the plan to bring ohmyself and Flowya together?",
+      "expected_paths": ["projects/ohmyself/specs/unified-ohmyself-and-flowya-product-strategy.md"],
+      "expected_route": "deep_research",
+      "difficulty": "semantic_mismatch"
+    },
+    {
+      "id": "flowya-monetization",
+      "question": "how am I going to charge money for Flowya?",
+      "expected_paths": [
+        "projects/flowya/specs/flowya-pro-monetization.md",
+        "projects/flowya/specs/cobrar-por-flowya-stripe.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch"
+    },
+    {
+      "id": "app-distribution",
+      "question": "how do we distribute ohmyself as an official app for Claude and ChatGPT?",
+      "expected_paths": [
+        "projects/ohmyself/specs/official-app-distribution-for-claude-chatgpt-and-agent-platforms.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "direct"
+    },
+    {
+      "id": "consumer-h2-roadmap",
+      "question": "what are the side specs for Consumer H2 that we run aside from the roadmap?",
+      "expected_paths": ["notes/roadmap-aside-consumer-h2-specs-on-the-side.md"],
+      "expected_route": "fast_recall",
+      "difficulty": "direct"
+    }
+  ]
+}

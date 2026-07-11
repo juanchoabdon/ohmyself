@@ -97,7 +97,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Search",
       description:
-        "Full-text search across the person's notes. Returns matching notes (path, title, type, visibility, tags, excerpt). Respects privacy.",
+        "Hybrid (semantic + keyword) search across the person's notes. Returns ranked notes (path, title, type, visibility, tags, excerpt) with a relevance `score`, `matchReasons` (semantic/lexical/title/recent) and the matched `section`. Finds notes even when wording differs from the query. Respects privacy.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         query: z.string().describe("search terms"),
@@ -154,7 +154,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Recall about a topic",
       description:
-        "Recall everything relevant about a topic or question. Aggregates the most relevant notes into one context blob to ground an answer. Use this before answering questions about the person.",
+        "Recall everything relevant about a topic or question using hybrid retrieval. Returns `text` (aggregated context to ground an answer), `notes`, `sources` (per-hit path/section/score/match_reasons), and `coverage` (high|medium|low retrieval confidence). Use before answering questions about the person; if `coverage` is low, treat the context as incomplete rather than authoritative.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         topic: z.string().describe("the topic or question to recall context for"),
