@@ -400,11 +400,12 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
   );
 
-  // ── Company spaces (read-only access to wikis you belong to) ──────────────
+  // ── Company spaces ────────────────────────────────────────────────────────
   // The personal MCP inherits read access to every company wiki the user is a
   // member of, addressable by a stable `space` slug (see list_spaces). Reads are
   // capped by role: members see public+private; owners/admins see everything up
-  // to their own scope. Never writes — to write, connect the company's own MCP.
+  // to their own scope. Explicit *_space write tools let owners/admins operate a
+  // company wiki from OAuth clients that cannot set X-Brain-Space headers.
 
   interface SpaceEntry {
     slug: string;
@@ -441,13 +442,19 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     }
     return found;
   }
+  function requireCompanyWrite(space: SpaceEntry): void {
+    requireWrite();
+    if (space.role !== "owner" && space.role !== "admin") {
+      throw new ForbiddenError(`role '${space.role}' cannot write to company space '${space.slug}'`);
+    }
+  }
 
   server.registerTool(
     "list_spaces",
     {
       title: "List company wikis",
       description:
-        "List the company wikis (shared team brains) you're a member of. Returns each space's slug (use it as the `space` argument for recall_space, search_space, list_space_notes, read_space_note), its name, and your role. These are separate from your personal brain and from friends' brains.",
+        "List the company wikis (shared team brains) you're a member of. Returns each space's slug (use it as the `space` argument for the *_space read/write tools), its name, and your role. These are separate from your personal brain and from friends' brains.",
       annotations: { readOnlyHint: true },
       inputSchema: {},
     },
@@ -533,6 +540,151 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       const s = findSpace(await companySpaces(), space);
       const note = await brain.readNote(s.id, path, s.allowed);
       return text(serializeNote(note.meta, note.body));
+    },
+  );
+
+  server.registerTool(
+    "create_space_note",
+    {
+      title: "Create a company wiki note",
+      description:
+        "Create a note inside a company wiki selected by its stable space slug. Requires owner/admin role and a writable connection. Never writes to the personal brain.",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        type: z.string().describe("note type from the company taxonomy"),
+        title: z.string(),
+        body: z.string().optional(),
+        visibility: VisibilityEnum.optional(),
+        tags: z.array(z.string()).optional(),
+        links: z.array(z.string()).optional(),
+        path: z.string().optional(),
+      },
+    },
+    async ({ space, ...args }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      if (args.visibility && !s.allowed.includes(args.visibility)) {
+        throw new ForbiddenError("cannot create a company note above your scope");
+      }
+      const note = await brain.createNote(s.id, args, await getUserConfig(s.id), s.allowed);
+      return text({ space: s.slug, created: note.path, meta: note.meta });
+    },
+  );
+
+  server.registerTool(
+    "update_space_note",
+    {
+      title: "Update a company wiki note",
+      description:
+        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string(),
+        body: z.string().optional(),
+        title: z.string().optional(),
+        visibility: VisibilityEnum.optional(),
+        tags: z.array(z.string()).optional(),
+        links: z.array(z.string()).optional(),
+      },
+    },
+    async ({ space, path, ...patch }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      if (patch.visibility && !s.allowed.includes(patch.visibility)) {
+        throw new ForbiddenError("cannot update a company note above your scope");
+      }
+      const note = await brain.updateNote(s.id, path, patch, s.allowed);
+      return text({ space: s.slug, updated: note.path, meta: note.meta });
+    },
+  );
+
+  server.registerTool(
+    "append_space_note",
+    {
+      title: "Append to a company wiki note",
+      description:
+        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection.",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string(),
+        text: z.string(),
+      },
+    },
+    async ({ space, path, text: content }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      const note = await brain.appendToNote(s.id, path, content, s.allowed);
+      return text({ space: s.slug, appended: note.path });
+    },
+  );
+
+  server.registerTool(
+    "link_space_notes",
+    {
+      title: "Link two company wiki notes",
+      description:
+        "Create a bidirectional link between two notes in the same company wiki. Requires owner/admin role and a writable connection.",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        a: z.string(),
+        b: z.string(),
+      },
+    },
+    async ({ space, a, b }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      await brain.linkNotes(s.id, a, b, s.allowed);
+      return text({ space: s.slug, linked: [a, b] });
+    },
+  );
+
+  server.registerTool(
+    "save_space_skill",
+    {
+      title: "Save a company skill",
+      description:
+        "Save or update a reusable skill inside a company wiki's Skills category. Requires owner/admin role and a writable connection. The skill is never stored in the personal brain.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        name: z.string().describe("short skill name, e.g. 'Bonds weekly'"),
+        description: z.string().describe("when to use this skill (one sentence)"),
+        instructions: z.string().describe("the full instructions / steps in markdown"),
+        tags: z.array(z.string()).optional(),
+        visibility: VisibilityEnum.optional(),
+      },
+    },
+    async ({ space, name, description, instructions, tags, visibility }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      if (visibility && !s.allowed.includes(visibility)) {
+        throw new ForbiddenError("cannot save a company skill above your scope");
+      }
+      const body = `> ${description.trim()}\n\n${instructions.trim()}`;
+      const { note, created } = await brain.upsertNote(
+        s.id,
+        skillPath(name),
+        {
+          type: "skill",
+          title: name,
+          body,
+          visibility,
+          tags: ["skill", ...(tags ?? [])],
+        },
+        await getUserConfig(s.id),
+        s.allowed,
+      );
+      return text({
+        ok: true,
+        space: s.slug,
+        path: note.path,
+        created,
+        visibility: note.meta.visibility,
+      });
     },
   );
 
