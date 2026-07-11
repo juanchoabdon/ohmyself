@@ -186,13 +186,28 @@ key only; the service role key is server-side.
 
 ## Deploy
 
-Live deployment (Vercel):
+> Full topology, runbook, and the "why" behind it live in
+> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — **read it before deploying server/MCP
+> changes.** Short version below.
 
-- **Web app:** https://ohmyself.vercel.app
-- **API + MCP:** https://ohmyself-api.vercel.app (`/health`, REST `/v1/*`, MCP `POST /mcp`)
+**`www.ohmyself.ai` is the single public origin for all clients** (web, iOS,
+agents, OAuth). It is a Vercel `web` (Next.js) project that **proxies** `/mcp`,
+`/v1/*`, `/oauth/*`, `/connectors/*`, and `/.well-known/*` to the real backend on
+**Railway** (`ohmyself-api-production.up.railway.app`), which runs the `server/`
+code (REST + MCP + OAuth + crons).
 
-Both are deployed as two Vercel projects that share the same Supabase project, so the brain
-is reachable from web, iOS, and your agents.
+Deploy server changes to Railway (this is the backend behind `www` that every MCP
+client hits):
+
+```bash
+git push origin main
+cd server && railway up --service ohmyself-api
+```
+
+A **second, legacy copy** of the server also exists on Vercel
+(`ohmyself-api.vercel.app`). No MCP client points at it anymore; it is only the
+default REST base for the `juandisanchez/` site until that is repointed to `www`.
+Don't assume deploying one updates the other — see `docs/DEPLOYMENT.md`.
 
 ### Vercel layout
 
@@ -209,18 +224,23 @@ is reachable from web, iOS, and your agents.
   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_API_URL` (in single-domain prod this is
   your own web origin, since `/mcp` + `/oauth/*` are rewritten to the API project).
 
-Deploy from each package directory:
+Deploy:
 
 ```bash
-cd server && vercel deploy --prod
+# server (the backend behind www.ohmyself.ai) → Railway
+cd server && railway up --service ohmyself-api
+
+# web frontend → Vercel
 cd ../web && vercel deploy --prod
 ```
 
+The server is a single Node HTTP process (REST + MCP) and runs on **Railway** in
+production. It can run on any Node host (Fly.io / Render) with the env vars above.
+A serverless copy can also run on Vercel (`server/vercel.json`), but that copy is
+legacy — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 > If a Vercel build hits pnpm's `ERR_INVALID_THIS` on the build image, the configs here
 > force `npm install` for the standalone packages, which sidesteps it.
-
-The server is also a single Node HTTP process (REST + MCP), so `server/` can alternatively
-run on any Node host (Fly.io / Railway / Render) with the env vars above.
 
 ## License
 
