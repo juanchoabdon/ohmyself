@@ -8,7 +8,7 @@
  *   tsx src/scripts/eval-retrieval.ts --space <spaceId> --lexical  # force old path
  */
 import "../env.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { allowedVisibilities, buildCore } from "../core/index.js";
@@ -35,9 +35,17 @@ async function main(): Promise<void> {
   const k = Number(argFor("--k") ?? "6") || 6;
   const lexicalOnly = hasFlag("--lexical");
 
+  const noGenerated = hasFlag("--no-generated");
   const here = path.dirname(fileURLToPath(import.meta.url));
   const corpusPath = path.resolve(here, "..", "eval", "brain-retrieval-corpus.json");
   const corpus = JSON.parse(readFileSync(corpusPath, "utf8")) as { cases: Case[] };
+  // Merge in the auto-generated cases (grounded in real notes) unless disabled.
+  const generatedPath = path.resolve(here, "..", "eval", "brain-retrieval-corpus.generated.json");
+  if (!noGenerated && existsSync(generatedPath)) {
+    const gen = JSON.parse(readFileSync(generatedPath, "utf8")) as { cases: Case[] };
+    const seen = new Set(corpus.cases.map((c) => c.id));
+    for (const c of gen.cases) if (!seen.has(c.id)) corpus.cases.push(c);
+  }
 
   const { brain } = buildCore();
   const allowed = allowedVisibilities("secret");

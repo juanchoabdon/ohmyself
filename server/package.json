@@ -17,6 +17,8 @@
     "seed": "tsx src/scripts/seed.ts",
     "backfill": "tsx src/scripts/backfill.ts",
     "backfill:embeddings": "tsx src/scripts/backfill-embeddings.ts",
+    "eval:retrieval": "tsx src/scripts/eval-retrieval.ts",
+    "eval:gen-corpus": "tsx src/scripts/gen-eval-corpus.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },

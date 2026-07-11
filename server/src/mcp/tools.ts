@@ -37,8 +37,24 @@ import {
 } from "../core/index.js";
 import { ForbiddenError, NotFoundError } from "../core/errors.js";
 import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
+import { instrumentToolUsage } from "./telemetry.js";
 
 const VisibilityEnum = z.enum(["public", "private", "secret"]);
+
+/** The public MCP tool contract version. Bumped for the retrieval architecture
+ *  (research_brain + graph primitives + write_brain + routing policy). Kept
+ *  stable even as the embedding model / reranker / planner change underneath. */
+const CONTRACT_VERSION = "2.0";
+
+/** Tools marked deprecated by contract v2. Empty until telemetry confirms an
+ *  active tool has a stable replacement and no live callers — then it moves
+ *  here (its description should also gain a "(deprecated → use X)" hint). The
+ *  telemetry layer flags every call to a name in this set so we can watch it
+ *  drain to zero before removal. */
+const DEPRECATED_TOOLS: ReadonlySet<string> = new Set<string>([
+  // Tasks belong in Flowya, not the brain (matches the owner's operating rules).
+  "add_todo",
+]);
 
 function text(value: unknown) {
   return {
@@ -73,7 +89,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   const { brain } = core;
   const allowed = allowedVisibilities(auth.scope);
   const server = new McpServer(
-    { name: "ohmyself", version: "0.2.0" },
+    { name: "ohmyself", version: "0.3.0" },
     {
       instructions: [
         "This is the person's second brain (private notes: identity, people, projects, goals, decisions, journal).",
@@ -88,6 +104,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       ].join("\n"),
     },
   );
+
+  // Wrap tool handlers with usage telemetry (must run before any registerTool).
+  instrumentToolUsage(server, auth, DEPRECATED_TOOLS);
 
   function requireWrite() {
     if (auth.readonly || !canWrite(auth.scope)) {
@@ -354,8 +373,15 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     async () => {
       const cfg = await config();
       return text({
+        contract_version: CONTRACT_VERSION,
         scope: auth.scope,
         canWrite: !auth.readonly && canWrite(auth.scope),
+        retrieval_routing: {
+          fast_recall: "recall / search_brain — narrow, explicit questions; 1-2 notes suffice",
+          deep_research: "research_brain — ambiguous, multi-hop, history/synthesis, or low coverage",
+          navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
+          write: "specific write tools when destination is known; write_brain to auto-route + dedupe",
+        },
         categories: cfg.noteTypes,
         conventions: {
           identity: "identity/about-me.md (use update_identity)",
@@ -1125,7 +1151,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Add a to-do",
       description:
-        "Add an unchecked to-do item to a list at todos/<list>.md (default list: 'life'). Optionally attach it to a project list.",
+        "DEPRECATED (contract v2): tasks do not belong in the brain. Capture tasks in the user's task manager (Flowya) instead — the brain is durable context only (identity, people, projects, decisions). Kept as a compatibility shim; still appends a checkbox to todos/<list>.md, but new integrations must not use it.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: {
         item: z.string(),

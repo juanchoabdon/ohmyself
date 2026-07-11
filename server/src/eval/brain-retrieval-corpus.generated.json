@@ -1,0 +1,736 @@
+{
+  "about": "AUTO-GENERATED eval cases (gen-eval-corpus.ts): one LLM-authored question per real note, phrased to avoid keyword overlap. Merged with the curated seed by eval-retrieval.ts. Regenerate anytime; review/prune before treating as a release gate.",
+  "generated_at": "2026-07-11T21:26:54.301Z",
+  "cases": [
+    {
+      "id": "gen-people-jeison-darwin-ramirez-md",
+      "question": "Who was the person I met through the weekly meeting about improving search efficiency and evaluating the SEMC approach, and what was their role in that effort?",
+      "expected_paths": [
+        "people/jeison-darwin-ramirez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Jeison Darwin Ramirez"
+    },
+    {
+      "id": "gen-projects-ohmyself-specs-mcp-contract-v2-migration-audit-md",
+      "question": "What’s the rule for when you’re finally allowed to delete an existing tool during the v2 consolidation, and what telemetry check has to pass first?",
+      "expected_paths": [
+        "projects/ohmyself/specs/mcp-contract-v2-migration-audit.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "MCP contract v2 migration audit"
+    },
+    {
+      "id": "gen-notes-roadmap-aside-consumer-h2-specs-on-the-side-md",
+      "question": "¿Qué tiene que pasar para que una iniciativa que están trabajando en esos workshops paralelos termine entrando al seguimiento semanal de lo comprometido?",
+      "expected_paths": [
+        "notes/roadmap-aside-consumer-h2-specs-on-the-side.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Roadmap aside — Consumer H2 (specs on the side)"
+    },
+    {
+      "id": "gen-concepts-wayfinder-md",
+      "question": "¿En qué vertical ya está funcionando esta capa de personalización del Home y a cuáles se planea extenderla (incluyendo la experiencia rápida)?",
+      "expected_paths": [
+        "concepts/wayfinder.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Wayfinder"
+    },
+    {
+      "id": "gen-people-daniel-gallo-md",
+      "question": "Cuando quiero que esta persona me ayude a destrabar un tema de cancelaciones, ¿qué debería llevarle para que diagnostique rápido y decida si cae del lado del sistema central o del equipo de soporte?",
+      "expected_paths": [
+        "people/daniel-gallo.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Daniel Gallo"
+    },
+    {
+      "id": "gen-projects-flowya-specs-flowya-pro-monetization-md",
+      "question": "Si alguien ya tiene dos espacios creados y toca “New Space” en la app de Mac, ¿qué pantalla le aparece y a dónde lo lleva para pagar?",
+      "expected_paths": [
+        "projects/flowya/specs/flowya-pro-monetization.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Flowya Pro — Monetization"
+    },
+    {
+      "id": "gen-people-angela-maria-osuna-md",
+      "question": "¿Cuántos accesos quedan por dar de baja antes de apagar la plataforma de atención al cliente, según lo que me contó a inicios de junio de 2026?",
+      "expected_paths": [
+        "people/angela-maria-osuna.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Angela Maria Osuna"
+    },
+    {
+      "id": "gen-projects-ohmyself-specs-unified-ohmyself-and-flowya-product-",
+      "question": "Are we treating the action-focused piece as its own separate app, or is it supposed to live inside the main platform—and what’s the recommended naming/branding approach for that?",
+      "expected_paths": [
+        "projects/ohmyself/specs/unified-ohmyself-and-flowya-product-strategy.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Unified Ohmyself and Flowya Product Strategy"
+    },
+    {
+      "id": "gen-people-cesar-duque-md",
+      "question": "¿En qué equipo y rol está trabajando Cesar, y cómo lo describirías en relación contigo (tipo par/colaborador)?",
+      "expected_paths": [
+        "people/cesar-duque.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "direct",
+      "source_title": "Cesar Duque"
+    },
+    {
+      "id": "gen-projects-rappi-index-md",
+      "question": "¿A quién le reporto directamente en la empresa donde trabajo y qué rol tengo hoy ahí?",
+      "expected_paths": [
+        "projects/rappi/_index.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Rappi"
+    },
+    {
+      "id": "gen-people-john-stiven-valeriano-md",
+      "question": "Who was the person I met through the weekly meeting about improving our search system’s cost/scalability and evaluating SEMC search?",
+      "expected_paths": [
+        "people/john-stiven-valeriano.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "John Stiven Valeriano"
+    },
+    {
+      "id": "gen-projects-rappi-subprojects-atlas-index-md",
+      "question": "¿Cuál es la herramienta interna que propuse y armé desde cero para que en Rappi haya una sola fuente de verdad del portafolio (de brief a lanzamiento), conectando métricas, iniciativas, equipos, entregables y fechas?",
+      "expected_paths": [
+        "projects/rappi/subprojects/atlas/_index.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Atlas"
+    },
+    {
+      "id": "gen-people-sebastian-ayala-md",
+      "question": "Si quiero destrabar un “sí” contigo para un cambio grande, ¿qué debería llevar preparado desde el inicio (métricas y plan de rollout) para que no parezca que estoy improvisando?",
+      "expected_paths": [
+        "people/sebastian-ayala.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Sebastian Ayala"
+    },
+    {
+      "id": "gen-projects-ohmyself-specs-brain-retrieval-and-research-agent-m",
+      "question": "What’s the new approach you want instead of doing one search, dumping the top note bodies together, and handing that straight to the outside model?",
+      "expected_paths": [
+        "projects/ohmyself/specs/brain-retrieval-and-research-agent.md"
+      ],
+      "expected_route": "deep_research",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Brain Retrieval and Research Agent"
+    },
+    {
+      "id": "gen-people-francisco-gomez-md",
+      "question": "¿Cómo debería prepararle una propuesta para que la pueda decidir rápido (qué cosas no pueden faltar en la definición, métricas/guardrails y plan de experimento)?",
+      "expected_paths": [
+        "people/francisco-gomez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Francisco Gomez"
+    },
+    {
+      "id": "gen-projects-ohmyself-specs-official-app-distribution-for-claude",
+      "question": "What’s the intended frictionless flow for a regular person to start using their brain inside an AI client without setting up any local server—like from finding it in a directory through getting access granted?",
+      "expected_paths": [
+        "projects/ohmyself/specs/official-app-distribution-for-claude-chatgpt-and-agent-platforms.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Official app distribution for Claude, ChatGPT and agent platforms"
+    },
+    {
+      "id": "gen-people-edison-gudino-md",
+      "question": "¿Quién fue la persona que me mostró cómo funciona por dentro el controller (desde la recepción de eventos hasta la trazabilidad y la metadata para buscar reemplazo) a fines de junio de 2026?",
+      "expected_paths": [
+        "people/edison-gudino.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Edison Gudino"
+    },
+    {
+      "id": "gen-projects-atlas-notes-pov-de-simon-sobre-h2-consumer-backlog-",
+      "question": "Según lo que dijo Simón en esa revisión, ¿cuál es el predictor más importante para estimar cuánto podría gastar al mes un usuario y cómo quería empaquetarlo para que lo usen todas las áreas?",
+      "expected_paths": [
+        "projects/atlas/notes/pov-de-simon-sobre-h2-consumer-backlog-q3-jul-2-2026.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "POV de Simon sobre H2 Consumer (backlog Q3, jul 2 2026)"
+    },
+    {
+      "id": "gen-people-recep-abaci-md",
+      "question": "¿Quién era el ingeniero que mencionaron como parte del desarrollo del chat de cancelaciones que quieren reutilizar para aceptar o rechazar reemplazos?",
+      "expected_paths": [
+        "people/recep-abaci.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Recep Abaci"
+    },
+    {
+      "id": "gen-projects-atlas-index-md",
+      "question": "¿Qué señal específica en el sistema usamos para decidir si ya se puede hacer el scope lock del plan de la compañía (ver por pods si están listos los pasos antes de arrancar ejecución)?",
+      "expected_paths": [
+        "projects/atlas/_index.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Atlas"
+    },
+    {
+      "id": "gen-people-andres-diez-md",
+      "question": "Cuando estoy armando una propuesta para destrabar algo con Andrés, ¿qué formato le funciona mejor llevarle (qué métricas incluir y qué dejar definido desde el inicio)?",
+      "expected_paths": [
+        "people/andres-diez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Andres Diez"
+    },
+    {
+      "id": "gen-projects-cockpit-de-publicacion-en-x-notes-idea-vault-format",
+      "question": "Cuando quiero contar un salto de métricas con un mini antes/después en checkpoints (tipo MRR o usuarios), ¿qué estructura de 4 pasos debería seguir y con qué tipo de arranque conviene empezar la historia para que el reveal pegue más fuerte?",
+      "expected_paths": [
+        "projects/cockpit-de-publicacion-en-x/notes/idea-vault-formatos-y-referencias-de-tweets.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Idea vault — formatos y referencias de tweets"
+    },
+    {
+      "id": "gen-people-hugo-mauricio-jimenez-md",
+      "question": "Cuando estoy trabajando con Hugo, ¿qué recomiendan hacer para dejar claro el “contrato” semanal de qué se planifica y cómo se mide, para evitar fricción con producto?",
+      "expected_paths": [
+        "people/hugo-mauricio-jimenez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Hugo Mauricio Jimenez"
+    },
+    {
+      "id": "gen-projects-ohmyself-index-md",
+      "question": "¿Por qué empecé a construir mi propio “segundo yo” en vez de seguir usando la app de notas que probé primero?",
+      "expected_paths": [
+        "projects/ohmyself/_index.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "ohmyself"
+    },
+    {
+      "id": "gen-people-eliana-carolina-esquivel-villamil-md",
+      "question": "Cuando estoy trabajando con ella, ¿qué formato me conviene llevarle para destrabar decisiones sin quedarnos atorados en el nivel de detalle?",
+      "expected_paths": [
+        "people/eliana-carolina-esquivel-villamil.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Eliana Carolina Esquivel Villamil"
+    },
+    {
+      "id": "gen-projects-flowya-specs-cobrar-por-flowya-stripe-md",
+      "question": "¿Cómo queda el plan de precios y qué cosas se bloquean en la versión gratis versus la de pago (incluyendo prueba y beneficio para usuarios actuales)?",
+      "expected_paths": [
+        "projects/flowya/specs/cobrar-por-flowya-stripe.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Cobrar por Flowya (conectar Stripe)"
+    },
+    {
+      "id": "gen-people-camila-contreras-valbuena-md",
+      "question": "¿Qué me dijo Camila sobre las trabas del sistema para armar cupones (segmentación, descuentos por producto y qué cosas sí se pueden editar) y qué número de referencia mencionó para el total de CRM en mayo?",
+      "expected_paths": [
+        "people/camila-contreras-valbuena.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "multi_hop",
+      "source_title": "Camila Contreras Valbuena"
+    },
+    {
+      "id": "gen-projects-flowya-index-md",
+      "question": "¿Cuál es el plan actual para posicionar esta app dentro de Ohmyself: sigue como producto independiente o pasa a ser un módulo, y qué implica eso a nivel de apps/repos y para los usuarios existentes?",
+      "expected_paths": [
+        "projects/flowya/_index.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "multi_hop",
+      "source_title": "flowya"
+    },
+    {
+      "id": "gen-people-miguel-alegria-md",
+      "question": "¿En qué tipo de rol está trabajando Miguel ahora y en qué área del producto se enfoca dentro de la app?",
+      "expected_paths": [
+        "people/miguel-alegria.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Miguel Alegria"
+    },
+    {
+      "id": "gen-people-hector-luis-castro-granados-md",
+      "question": "Si tengo un lanzamiento con fecha fija y necesito coordinarme contigo, ¿qué tipo de plan te debería llevar para que puedas destrabar dependencias y asegurar que llegamos a tiempo?",
+      "expected_paths": [
+        "people/hector-luis-castro-granados.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Héctor Luis Castro Granados"
+    },
+    {
+      "id": "gen-people-angel-oropeza-md",
+      "question": "Why did you say Turbo is showing up in the top spot right now, and what change did you suggest to test so it has to win on relevance instead of getting a boost?",
+      "expected_paths": [
+        "people/angel-oropeza.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Angel Oropeza"
+    },
+    {
+      "id": "gen-people-caro-rodriguez-md",
+      "question": "Cuando estoy armando un experimento en la app y la medición no cuadra, ¿cuál es la herramienta que ella suele tratar como fuente de verdad y con quién empuja las validaciones de eventos/datos?",
+      "expected_paths": [
+        "people/caro-rodriguez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Caro Rodriguez"
+    },
+    {
+      "id": "gen-people-nora-saidman-md",
+      "question": "¿Qué tipo de cosas debería llevarte cuando te pido feedback para que puedas responder con algo más concreto (por ejemplo, un bug y qué más)?",
+      "expected_paths": [
+        "people/nora-saidman.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Nora Saidman"
+    },
+    {
+      "id": "gen-people-khalil-salomon-md",
+      "question": "Cuando estás armando una promo con un banco, ¿qué formato de beneficio suele preferir esta persona porque se implementa más rápido y se puede medir como incremental dentro de la app?",
+      "expected_paths": [
+        "people/khalil-salomon.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Khalil Salomón"
+    },
+    {
+      "id": "gen-people-juan-pablo-restrepo-md",
+      "question": "En la reunión del 2 de julio de 2026, ¿esta persona solo estuvo presente o también quedó alguna intervención suya en la transcripción?",
+      "expected_paths": [
+        "people/juan-pablo-restrepo.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Juan Pablo Restrepo"
+    },
+    {
+      "id": "gen-people-andres-palacio-rappi-com-md",
+      "question": "¿Quién era la persona de Rappi que mencionaron como apoyo para conectar/gestionar la info de la integración con Statsig, a quien Caro pensaba escribirle y sumar a Eliana al hilo?",
+      "expected_paths": [
+        "people/andres-palacio-rappi-com.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "andres.palacio@rappi.com"
+    },
+    {
+      "id": "gen-people-sergio-noriega-serch-md",
+      "question": "En la reunión del 2026-06-30, ¿qué quedó registrado sobre su participación: aportó algo técnico o solo estuvo presente y la charla final fue de otro tema?",
+      "expected_paths": [
+        "people/sergio-noriega-serch.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Sergio Noriega (Serch)"
+    },
+    {
+      "id": "gen-people-oscar-david-perez-md",
+      "question": "¿En qué verticales del negocio suele moverse esta persona cuando colabora de forma transversal dentro de la empresa?",
+      "expected_paths": [
+        "people/oscar-david-perez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Oscar David Perez"
+    },
+    {
+      "id": "gen-people-laura-vanessa-palacios-md",
+      "question": "En el incidente de la campaña en Puebla, ¿qué segmento de usuarios definió para la activación (el criterio de tier y días sin abrir la app)?",
+      "expected_paths": [
+        "people/laura-vanessa-palacios.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Laura Vanessa Palacios"
+    },
+    {
+      "id": "gen-people-javier-glezer-md",
+      "question": "Si quiero pedirte un cambio en una pantalla y evitar retrabajo, ¿qué cosas debería traerte ya definidas (estados/variantes, datos/navegación, consistencia y tracking) para que puedas avanzar rápido?",
+      "expected_paths": [
+        "people/javier-glezer.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "multi_hop",
+      "source_title": "Javier Glezer"
+    },
+    {
+      "id": "gen-people-tatiana-gonzalez-runza-md",
+      "question": "Cuando estás diseñando el flujo completo (desde el canal de chat hasta que cae en el backlog), ¿qué cadena de herramientas/proceso sueles tener en mente de punta a punta?",
+      "expected_paths": [
+        "people/tatiana-gonzalez-runza.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Tatiana González Runza"
+    },
+    {
+      "id": "gen-people-esteban-quintero-md",
+      "question": "¿Qué sugería hacer antes de escalar el tracking a más países para detectar problemas de crashes/lentitud en distintos dispositivos, y en qué tipo de mercado proponía probar primero?",
+      "expected_paths": [
+        "people/esteban-quintero.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "multi_hop",
+      "source_title": "Esteban Quintero"
+    },
+    {
+      "id": "gen-people-eduardo-daniel-chain-md",
+      "question": "¿En qué producto/área está llevando los experimentos de growth y con quién colabora de forma cross-funcional?",
+      "expected_paths": [
+        "people/eduardo-daniel-chain.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Eduardo Daniel Chain"
+    },
+    {
+      "id": "gen-people-roger-alexander-arroyo-md",
+      "question": "¿Quién era el ingeniero de iOS en Rappi que dijo que iba a ajustar el espaciado/bordes y además trabajar en que los enlaces abran bien la ficha de producto, incluso haciendo que acciones como agregar al carrito funcionen cuando entras desde ese enlace?",
+      "expected_paths": [
+        "people/roger-alexander-arroyo.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Roger Alexander Arroyo"
+    },
+    {
+      "id": "gen-people-daniel-camilo-moreno-md",
+      "question": "¿Quién fue la persona que propuso ampliar el flujo para incluir iniciativas incrementales y que el MCP tome datos desde Sheets para evitar la carga manual 1:1?",
+      "expected_paths": [
+        "people/daniel-camilo-moreno.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Daniel Camilo Moreno"
+    },
+    {
+      "id": "gen-people-diego-oviedo-md",
+      "question": "¿A quién dejamos encargado de revisar los logs en Charles del RT para decidir si el problema de una liberación viene del equipo local o de Fulfillment?",
+      "expected_paths": [
+        "people/diego-oviedo.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Diego Oviedo"
+    },
+    {
+      "id": "gen-people-alejandro-morales-md",
+      "question": "¿Quién fue la persona que me ayudó a aclarar la diferencia entre dos formas de contar sesiones (por ejemplo, entrar a un mundo vs elegir un mundo) durante un análisis comparativo, y en qué fecha fue?",
+      "expected_paths": [
+        "people/alejandro-morales.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Alejandro Morales"
+    },
+    {
+      "id": "gen-people-jorge-paternina-md",
+      "question": "¿En qué área exacta de la app está este Jorge trabajando como líder técnico y con qué tema de foundations/personalización hace de contraparte del owner?",
+      "expected_paths": [
+        "people/jorge-paternina.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Jorge Paternina"
+    },
+    {
+      "id": "gen-people-carolina-esquivel-md",
+      "question": "¿Cuál es el nombre completo de la PM de Purchase/Checkout que en Atlas aparece con un nombre y en Slack con otro?",
+      "expected_paths": [
+        "people/carolina-esquivel.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Carolina Esquivel"
+    },
+    {
+      "id": "gen-people-alexa-escarraga-md",
+      "question": "Si mañana ves que de golpe sube muchísimo lo “orgánico” y hay campañas con gasto pero sin conversiones asignadas, ¿qué tipo de cosas sueles revisar primero para encontrar la causa y empujar el fix hasta cerrar la brecha?",
+      "expected_paths": [
+        "people/alexa-escarraga.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Alexa Escarraga"
+    },
+    {
+      "id": "gen-people-fabricio-israel-layedra-md",
+      "question": "¿Qué cosas debería llevarte en un update para que compres rápido la narrativa y no nos quedemos discutiendo definiciones?",
+      "expected_paths": [
+        "people/fabricio-israel-layedra.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Fabricio Israel Layedra"
+    },
+    {
+      "id": "gen-people-paula-gomez-roldan-md",
+      "question": "¿Quién fue la persona que sugirió analizar solo los pedidos con demora para que el experimento de propinas tenga más significancia y no se diluya con el total de órdenes?",
+      "expected_paths": [
+        "people/paula-gomez-roldan.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Paula Gómez Roldán"
+    },
+    {
+      "id": "gen-people-carol-carreno-md",
+      "question": "En Rappi, ¿qué área llevaba esta persona y qué tipo de relación tenía con el dueño (era más bien alguien interno o la contraparte/stakeholder)?",
+      "expected_paths": [
+        "people/carol-carreno.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Carol Carreño"
+    },
+    {
+      "id": "gen-people-ilse-salinas-md",
+      "question": "Cuando estoy coordinando con ella un tema de medición, ¿qué conviene dejar definido desde el inicio para que no se trabe el avance si la herramienta no muestra algo en tiempo real?",
+      "expected_paths": [
+        "people/ilse-salinas.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Ilse Salinas"
+    },
+    {
+      "id": "gen-people-danilo-cepeda-perez-md",
+      "question": "¿Qué propuesta hizo sobre cómo organizar las cuentas en la nube para centralizar costos y facilitar auditorías/certificaciones, y qué enfoque sugirió para decidir qué trabajo mover?",
+      "expected_paths": [
+        "people/danilo-cepeda-perez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Danilo Cepeda Perez"
+    },
+    {
+      "id": "gen-people-mauricio-pacheco-md",
+      "question": "¿Con quién estaba coordinando para meter cashback en la suite de marketing y dónde dijo que iba a compartir los specs cuando los dejara listos?",
+      "expected_paths": [
+        "people/mauricio-pacheco.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Mauricio Pacheco"
+    },
+    {
+      "id": "gen-people-laura-rico-daunas-md",
+      "question": "Cuando trabajas con Laura, ¿qué dos cosas conviene acordar y dejar por escrito desde el inicio para evitar confusiones y destrabes después?",
+      "expected_paths": [
+        "people/laura-rico-daunas.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Laura Rico Daunas"
+    },
+    {
+      "id": "gen-people-sidnei-panegassi-md",
+      "question": "Cuando quiero pedirte una excepción a una regla de inversión, ¿cómo debería planteártela para que no se sienta como gasto sin control?",
+      "expected_paths": [
+        "people/sidnei-panegassi.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Sidnei Panegassi"
+    },
+    {
+      "id": "gen-people-santiago-de-la-concha-md",
+      "question": "¿Qué te conviene llevarle a Santiago para que decida rápido: un debate abierto o un set de pocas opciones ya armadas con sus trade-offs entre impacto y relevancia?",
+      "expected_paths": [
+        "people/santiago-de-la-concha.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Santiago De la Concha"
+    },
+    {
+      "id": "gen-people-juan-eduardo-laso-md",
+      "question": "¿Qué tan grande era el desfase de órdenes vs la meta que me comentó este contacto en junio de 2026, y qué tarea se llevó para estimar el impacto a futuro?",
+      "expected_paths": [
+        "people/juan-eduardo-laso.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Juan Eduardo Laso"
+    },
+    {
+      "id": "gen-people-joaquin-maya-md",
+      "question": "¿Cómo describirías mi forma de trabajar cuando agarro un problema grande: qué cosas pido para aterrizarlo y cómo suelo tomar decisiones antes de meterme a construir algo pesado?",
+      "expected_paths": [
+        "people/joaquin-maya.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Joaquin Maya"
+    },
+    {
+      "id": "gen-people-luis-fernando-dominguez-md",
+      "question": "¿Quién fue la persona que, en abril de 2026, propuso el orden inicial de categorías por prioridad usando ventas y además levantó dudas operativas sobre el mínimo de tarjetas por categoría?",
+      "expected_paths": [
+        "people/luis-fernando-dominguez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Luis Fernando Dominguez"
+    },
+    {
+      "id": "gen-people-fabio-cesar-alvarez-md",
+      "question": "In the July 1st Search Revamp discussions, who was the person pushing to first run a cost/latency diagnosis before we try exact-match searches on attributes/brands in the quick iterations?",
+      "expected_paths": [
+        "people/fabio-cesar-alvarez.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Fabio Cesar Alvarez"
+    },
+    {
+      "id": "gen-people-jose-greco-md",
+      "question": "Cuando hay una caída rara en métricas, ¿cómo suele separar rápido si el problema viene de cambios de inversión/operación versus algo de tracking o del modelo?",
+      "expected_paths": [
+        "people/jose-greco.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Jose Greco"
+    },
+    {
+      "id": "gen-people-laura-katalina-valderrama-md",
+      "question": "¿Qué solución práctica implementó Laura para poder grabar videos de regresión cuando tuvo el problema de proyección en Android, y qué idea salió después para aprovechar eso en automatización?",
+      "expected_paths": [
+        "people/laura-katalina-valderrama.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "multi_hop",
+      "source_title": "Laura Katalina Valderrama"
+    },
+    {
+      "id": "gen-people-amalia-arango-cardenas-md",
+      "question": "Cuando estoy trabajando contigo, ¿en qué formato te conviene que te lleve las propuestas para que podamos avanzar rápido y sin ambigüedad?",
+      "expected_paths": [
+        "people/amalia-arango-cardenas.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Amalia Arango Cardenas"
+    },
+    {
+      "id": "gen-people-juan-andres-franceschini-garcia-juanfra-md",
+      "question": "Cuando trabajo con JuanFra y me trae un framework enorme de métricas, ¿qué le debería pedir para que lo aterrice en un ranking corto y una secuencia clara de intervención por tienda?",
+      "expected_paths": [
+        "people/juan-andres-franceschini-garcia-juanfra.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Juan Andres Franceschini Garcia (JuanFra)"
+    },
+    {
+      "id": "gen-people-pablo-andres-saavedra-md",
+      "question": "Si quiero pedirle algo a Pablo, ¿qué debería llevar preparado para que la conversación sea productiva y no se vuelva un debate abstracto?",
+      "expected_paths": [
+        "people/pablo-andres-saavedra.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Pablo Andres Saavedra"
+    },
+    {
+      "id": "gen-people-luciano-gaspar-md",
+      "question": "Si voy a reunirme con Luciano para destrabar un experimento, ¿qué tres cosas debería llevar ya preparadas para que él pueda decidir rápido?",
+      "expected_paths": [
+        "people/luciano-gaspar.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Luciano Gaspar"
+    },
+    {
+      "id": "gen-people-william-ivan-castillo-corona-md",
+      "question": "¿Cómo describirías su estilo de trabajo cuando hay que hacer cambios en producción: qué cosas evita y qué prácticas pide para reducir riesgo?",
+      "expected_paths": [
+        "people/william-ivan-castillo-corona.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "William Ivan Castillo Corona"
+    },
+    {
+      "id": "gen-people-laura-sofia-cruz-md",
+      "question": "¿Cómo me conviene llevarle una decisión para que avance rápido: en qué formato le presento opciones y qué debería incluir?",
+      "expected_paths": [
+        "people/laura-sofia-cruz.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Laura Sofia Cruz"
+    },
+    {
+      "id": "gen-people-santiago-masseroni-md",
+      "question": "Cuando estoy armando una propuesta para ella, ¿qué tres cosas conviene llevarle sí o sí para que la tome en serio y no quede en una charla general?",
+      "expected_paths": [
+        "people/santiago-masseroni.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Santiago Masseroni"
+    },
+    {
+      "id": "gen-people-carlos-saavedra-charlie-md",
+      "question": "¿Cuál es el rol exacto de Charlie dentro de Pro en Rappi y con qué tipo de temas suele ser la contraparte del dueño (por ejemplo, beneficios y programas con aliados)?",
+      "expected_paths": [
+        "people/carlos-saavedra-charlie.md"
+      ],
+      "expected_route": "fast_recall",
+      "difficulty": "semantic_mismatch",
+      "source_title": "Carlos Saavedra (Charlie)"
+    }
+  ]
+}

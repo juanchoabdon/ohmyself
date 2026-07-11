@@ -567,11 +567,18 @@ export class Brain {
       excerpt: h.excerpt,
     }));
 
-    const bestSim = hits.reduce((m, h) => Math.max(m, h.similarity ?? 0), 0);
+    // Coverage = honest confidence that we actually retrieved the answer, not
+    // just "some topically-similar notes came back". Calibrated on the real-note
+    // eval: a flat spread of medium-similar notes (common on ambiguous/semantic-
+    // mismatch queries) is NOT high confidence. "high" requires either a strong
+    // absolute match or a clear winner (margin over the runner-up).
+    const sims = hits.map((h) => h.similarity ?? 0).sort((a, b) => b - a);
+    const top1 = sims[0] ?? 0;
+    const margin = top1 - (sims[1] ?? 0);
     let coverage: "high" | "medium" | "low";
     if (hits.length === 0) coverage = "low";
-    else if (hits.length >= 4 && bestSim >= 0.45) coverage = "high";
-    else if (hits.length >= 2 || bestSim >= 0.3) coverage = "medium";
+    else if (top1 >= 0.6 || (top1 >= 0.5 && margin >= 0.08)) coverage = "high";
+    else if (top1 >= 0.4 || hits.length >= 3) coverage = "medium";
     else coverage = "low";
 
     const text = notes

@@ -244,13 +244,17 @@ export async function researchBrain(
       ].slice(0, opts.maxReads)
     : sourcesRanked.slice(0, opts.maxReads);
 
-  // Coverage: trust the model's self-assessment, else infer from retrieval.
-  const bestSim = ranked.reduce((m, h) => Math.max(m, h.similarity ?? 0), 0);
+  // Coverage: trust the model's self-assessment, else infer from retrieval
+  // (calibrated like getContext: strong top-1 or a clear winner, not just a
+  // spread of medium-similar notes).
+  const sims = ranked.map((h) => h.similarity ?? 0).sort((a, b) => b - a);
+  const top1 = sims[0] ?? 0;
+  const margin = top1 - (sims[1] ?? 0);
   let coverage: "high" | "medium" | "low";
   if (synth) coverage = synth.coverage;
   else if (ranked.length === 0) coverage = "low";
-  else if (ranked.length >= 4 && bestSim >= 0.45) coverage = "high";
-  else if (ranked.length >= 2 || bestSim >= 0.3) coverage = "medium";
+  else if (top1 >= 0.6 || (top1 >= 0.5 && margin >= 0.08)) coverage = "high";
+  else if (top1 >= 0.4 || ranked.length >= 3) coverage = "medium";
   else coverage = "low";
 
   const answer =
