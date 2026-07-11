@@ -127,8 +127,11 @@ real user id, or `VAULT_BACKEND=fs` for a purely local markdown folder.
 }
 ```
 
-Tools exposed: `search_brain`, `list_notes`, `read_note`, `create_note`,
-`update_note`, `append_to_note`, `link_notes`, `get_context`.
+Tools include personal-brain reads/writes plus company-space routing. Company reads use
+`list_spaces`, `recall_space`, `search_space`, `list_space_notes`, and
+`read_space_note`. Company owners/admins can write without changing the connection's
+default tenant via `create_space_note`, `update_space_note`, `append_space_note`,
+`link_space_notes`, and `save_space_skill`.
 
 ### Remote, over Streamable HTTP
 Point an MCP client at `POST https://<your-host>/mcp` with an `Authorization: Bearer
