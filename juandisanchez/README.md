@@ -84,7 +84,7 @@ npm run dev                  # http://localhost:3001
 | --- | --- |
 | `OPENAI_API_KEY` | Your OpenAI key (server-side only). |
 | `OPENAI_MODEL` | Optional; defaults to `gpt-4o-mini`. |
-| `OHMYSELF_API_URL` | ohmyself API base (default `https://ohmyself-api.vercel.app`). |
+| `OHMYSELF_API_URL` | ohmyself API base (default `https://www.ohmyself.ai`). |
 | `OHMYSELF_PUBLIC_TOKEN` | A **public**, read-only `oms_…` token. |
 | `PERSON_NAME` / `PERSON_SHORT_NAME` | Who the site is about. |
 | `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_PER_DAY` | Per-IP limits. |

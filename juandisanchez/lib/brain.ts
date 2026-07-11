@@ -15,7 +15,7 @@
  */
 import { unstable_cache } from "next/cache";
 
-const API_URL = (process.env.OHMYSELF_API_URL ?? "https://ohmyself-api.vercel.app").replace(/\/+$/, "");
+const API_URL = (process.env.OHMYSELF_API_URL ?? "https://www.ohmyself.ai").replace(/\/+$/, "");
 const TOKEN = process.env.OHMYSELF_PUBLIC_TOKEN ?? "";
 
 // Budget for the EXTRA topic-relevant notes only (see `build()`'s
