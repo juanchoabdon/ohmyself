@@ -31,10 +31,11 @@ Cursor / ChatGPT / Claude  ──►  https://www.ohmyself.ai/mcp
 - **`ohmyself-api-production.up.railway.app`** → **Railway**, running the
   `server/` code. This is the production backend and also runs the periodic jobs
   (embedding reconcile, meeting sync). **This is the one that serves the tools.**
-- **`ohmyself-api.vercel.app`** → a **second, serverless copy** of the same
-  `server/` code on Vercel. Legacy. No MCP client points here anymore. Still used
-  as the default REST base by the `juandisanchez/` site until it is repointed to
-  `www`. If you keep it alive, it must be deployed too or it drifts.
+- **`ohmyself-api.vercel.app`** → **decommissioned (2026-07-11).** This used to be
+  a second, serverless copy of `server/` on Vercel, and it was the cause of the
+  version-skew scares (some clients hit it, some hit Railway). The Vercel project
+  was deleted; every client and the `juandisanchez/` site now go through `www` →
+  Railway. **Do not recreate it.** There is exactly one backend now: Railway.
 
 ## How to deploy
 
@@ -55,15 +56,11 @@ automatically — recommended).
 cd web && vercel deploy --prod
 ```
 
-### Legacy Vercel server copy (only if still needed by juandisanchez.com)
+### ~~Legacy Vercel server copy~~ — removed
 
-```bash
-cd server && vercel deploy --prod   # aliases to ohmyself-api.vercel.app
-```
-
-Prefer retiring this instead: repoint `juandisanchez/` (`OHMYSELF_API_URL`) to
-`https://www.ohmyself.ai`, then delete the Vercel `server` project so there is
-only one backend.
+The Vercel `ohmyself-api` project was deleted on 2026-07-11. There is only one
+backend (Railway). `juandisanchez.com` and every MCP client now use `www`. Do not
+run `vercel deploy --prod` from `server/` — deploy the server to Railway only.
 
 ## When you change the MCP tool contract
 

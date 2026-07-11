@@ -204,10 +204,10 @@ git push origin main
 cd server && railway up --service ohmyself-api
 ```
 
-A **second, legacy copy** of the server also exists on Vercel
-(`ohmyself-api.vercel.app`). No MCP client points at it anymore; it is only the
-default REST base for the `juandisanchez/` site until that is repointed to `www`.
-Don't assume deploying one updates the other — see `docs/DEPLOYMENT.md`.
+There used to be a second, legacy copy of the server on Vercel
+(`ohmyself-api.vercel.app`); it was **decommissioned on 2026-07-11**. There is now
+exactly one backend (Railway), and every client and the `juandisanchez/` site go
+through `www`. Don't recreate the Vercel server copy — see `docs/DEPLOYMENT.md`.
 
 ### Vercel layout
 

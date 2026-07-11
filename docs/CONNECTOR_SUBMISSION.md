@@ -28,8 +28,9 @@ curl -si -X POST $BASE/mcp -H 'content-type: application/json' -d '{}' | grep -i
 
 - Confirm the `/mcp` POST returns `401` with `WWW-Authenticate: Bearer resource_metadata=...`.
 - IMPORTANT: confirm `/mcp` streams `text/event-stream` correctly through the Vercel rewrite.
-  If it buffers/breaks, point the connector URL at the API origin
-  (`https://ohmyself-api.vercel.app/mcp`) instead; OAuth + discovery can stay on `www`.
+  If it buffers/breaks, point the connector URL directly at the Railway backend
+  (`https://ohmyself-api-production.up.railway.app/mcp`) instead; OAuth + discovery can stay
+  on `www`. (The old `ohmyself-api.vercel.app` copy was decommissioned 2026-07-11.)
 - Validate the whole flow with MCP Inspector and as a **custom connector** in Claude and in
   ChatGPT developer mode first. Only submit once the custom-connector path works.
 

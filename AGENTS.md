@@ -7,9 +7,9 @@ ChatGPT, Claude, OAuth). It is a proxy — the real backend is **Railway**.
 
 - Deploy server changes to Railway: `cd server && railway up --service ohmyself-api`
   (Railway does not auto-deploy from GitHub today).
-- There is a **second, legacy copy** of the server on Vercel
-  (`ohmyself-api.vercel.app`). Do not assume deploying one updates the other. MCP
-  clients use `www` → Railway, so **Railway is what matters** for tools showing up.
+- **One backend only: Railway.** The old Vercel server copy
+  (`ohmyself-api.vercel.app`) was decommissioned 2026-07-11 — don't recreate it and
+  never `vercel deploy --prod` from `server/`. Everything goes `www` → Railway.
 - When changing the MCP tool contract, bump `CONTRACT_VERSION` in
   `server/src/mcp/tools.ts`, then verify live via `get_structure` against
   `https://www.ohmyself.ai/mcp`.
