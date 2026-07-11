@@ -44,7 +44,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
 /** The public MCP tool contract version. Bumped for the retrieval architecture
  *  (research_brain + graph primitives + write_brain + routing policy). Kept
  *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.0";
+const CONTRACT_VERSION = "2.1";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -100,7 +100,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         "- research_brain: DEEP path for hard, multi-hop, or synthesis questions ('why did I decide X', 'how do A and B connect', 'the story of Z over time'). It plans sub-queries, searches repeatedly, follows links, reads notes, and returns a cited `answer`. Slower/costlier — don't use it for a single fact.",
         "- get_neighbors / get_backlinks / search_by_entity / timeline: navigate the graph around a note or entity, or scan a time window.",
         "",
-        "WRITING: prefer the specific tools (remember, add_person, upsert_project, add_to_project, set_goal, log_journal, update_identity) when you know the destination. Use write_brain to auto-route + dedupe when you don't. Never invent facts; capture durable info in the moment.",
+        "SPACES: the same retrieval routing applies to company wikis you belong to (list_spaces). Use the *_space variants (recall_space, search_space, research_space, get_space_neighbors, get_space_backlinks, search_space_by_entity, space_timeline) instead of the personal tools when the question is about a company (e.g. Bonds). Never answer about a company from the personal brain.",
+        "",
+        "WRITING: prefer the specific tools (remember, add_person, upsert_project, add_to_project, set_goal, log_journal, update_identity) when you know the destination. Use write_brain to auto-route + dedupe when you don't. For a company wiki use the *_space write tools (create_space_note / update_space_note / append_space_note, or write_space to auto-route). Never invent facts; capture durable info in the moment.",
       ].join("\n"),
     },
   );
@@ -381,6 +383,8 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           deep_research: "research_brain — ambiguous, multi-hop, history/synthesis, or low coverage",
           navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
           write: "specific write tools when destination is known; write_brain to auto-route + dedupe",
+          spaces:
+            "company wikis (list_spaces) mirror the same routing via *_space variants: recall_space / search_space (fast), research_space (deep), get_space_neighbors / get_space_backlinks / search_space_by_entity / space_timeline (navigate), create_space_note / update_space_note / append_space_note / write_space (write, owner/admin)",
         },
         categories: cfg.noteTypes,
         conventions: {
@@ -697,6 +701,124 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   );
 
   server.registerTool(
+    "research_space",
+    {
+      title: "Research a company wiki (deep)",
+      description:
+        "DEEP retrieval over a company wiki you belong to — same as research_brain, but scoped to that space. For hard, multi-hop, or synthesis questions about the company ('why did we bet on X?', 'how does the strategy connect to the roadmap?', 'what's the story of Z over time?'). Plans sub-queries, does multiple hybrid searches, follows links, reads the top notes, and returns a synthesized `answer` with cited `sources`, `coverage`, `suggested_followups`, and a `trace`. Slower/costlier — for a single fact use recall_space or search_space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        question: z.string().describe("the question to research over the company wiki"),
+        max_searches: z.number().int().positive().max(8).optional().describe("cap on hybrid searches (default 5)"),
+        max_reads: z.number().int().positive().max(15).optional().describe("cap on notes read in full (default 8)"),
+      },
+    },
+    async ({ space, question, max_searches, max_reads }) => {
+      const s = findSpace(await companySpaces(), space);
+      const res = await researchBrain(brain, s.id, question, s.allowed, {
+        maxSearches: max_searches,
+        maxReads: max_reads,
+      });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "get_space_backlinks",
+    {
+      title: "Get backlinks in a company wiki",
+      description:
+        "List notes that link TO a given note inside a company wiki — same as get_backlinks, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string().describe("the note whose backlinks you want, e.g. strategy/thesis.md"),
+        limit: z.number().int().positive().max(100).optional(),
+      },
+    },
+    async ({ space, path, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(await brain.getBacklinks(s.id, path, s.allowed, limit ?? 50));
+    },
+  );
+
+  server.registerTool(
+    "get_space_neighbors",
+    {
+      title: "Get neighboring notes in a company wiki",
+      description:
+        "Explore a note's neighborhood in a company wiki's knowledge graph: `outgoing` links, `backlinks`, and `semantic` (topically similar) notes — same as get_neighbors, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string().describe("the note to explore, e.g. product/spec.md"),
+        semantic_limit: z.number().int().positive().max(15).optional().describe("how many semantic neighbors (default 6)"),
+      },
+    },
+    async ({ space, path, semantic_limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(await brain.getNeighbors(s.id, path, s.allowed, { semanticLimit: semantic_limit }));
+    },
+  );
+
+  server.registerTool(
+    "search_space_by_entity",
+    {
+      title: "Search a company wiki by entity",
+      description:
+        "Find everything a company wiki knows about a named person, project, or concept: its canonical page plus the notes that mention or link to it — same as search_by_entity, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        name: z.string().describe("the person, project, or concept name"),
+        limit: z.number().int().positive().max(50).optional(),
+      },
+    },
+    async ({ space, name, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(await brain.searchByEntity(s.id, name, s.allowed, { limit }));
+    },
+  );
+
+  server.registerTool(
+    "space_timeline",
+    {
+      title: "Timeline of a company wiki's notes",
+      description:
+        "List a company wiki's notes chronologically within an optional date window — same as timeline, but scoped to that space. Order by `created` (default) or `updated`, filter by type/tag/path prefix. Read-only. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        from: z.string().optional().describe("inclusive start date YYYY-MM-DD"),
+        to: z.string().optional().describe("inclusive end date YYYY-MM-DD"),
+        by: z.enum(["created", "updated"]).optional(),
+        order: z.enum(["asc", "desc"]).optional(),
+        type: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        prefix: z.string().optional().describe("path prefix filter, e.g. meetings/"),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ space, from, to, by, order, type, tags, prefix, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      return text(
+        await brain.timeline(s.id, {
+          allowed: s.allowed,
+          from,
+          to,
+          by,
+          order,
+          types: type ? [type] : undefined,
+          tags,
+          prefix,
+          limit,
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
     "create_space_note",
     {
       title: "Create a company wiki note",
@@ -838,6 +960,36 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         created,
         visibility: note.meta.visibility,
       });
+    },
+  );
+
+  server.registerTool(
+    "write_space",
+    {
+      title: "Save to a company wiki (auto-routed)",
+      description:
+        "Capture durable info into a company wiki without deciding WHERE it goes — same as write_brain, but scoped to that space. The router classifies it, dedupes against existing notes, and writes it to the right place. Returns the resolved `path`, `category`, `operation`, and `related` (possible duplicates). Prefer the specific space tools (create_space_note / update_space_note / append_space_note) when you know the destination. Requires owner/admin role and a writable connection. Pass `apply=false` to preview the routing without writing. Never writes to the personal brain.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        content: z.string().describe("the info to save, phrased as a standalone statement"),
+        hint: z.string().optional().describe("optional nudge about where it belongs"),
+        apply: z.boolean().optional().describe("default true; false = preview routing only"),
+        visibility: VisibilityEnum.optional().describe("override; defaults to the router's choice"),
+      },
+    },
+    async ({ space, content, hint, apply, visibility }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      if (visibility && !s.allowed.includes(visibility)) {
+        throw new ForbiddenError("cannot write to a company space above your scope");
+      }
+      const res = await writeBrain(brain, s.id, content, await getUserConfig(s.id), s.allowed, {
+        hint,
+        apply,
+        visibility,
+      });
+      return text(res);
     },
   );
 
