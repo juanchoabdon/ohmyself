@@ -85,7 +85,7 @@ export function SiteHeader({
 }) {
   const t = strings(lang);
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 py-4">
+    <header className="site-header flex flex-wrap items-center justify-between gap-3 py-4">
       <div className="flex items-center gap-3">
         <span className="relative">
           <Avatar size={44} initials={INITIALS} glow />

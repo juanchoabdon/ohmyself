@@ -30,7 +30,7 @@ export function MessageBubble({
   if (isUser) {
     return (
       <div className="msg-in flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-brand px-4 py-2.5 text-[0.95rem] leading-relaxed text-white shadow-sm">
+        <div className="bubble-user max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-[0.95rem] font-medium leading-relaxed">
           {message.content}
         </div>
       </div>
