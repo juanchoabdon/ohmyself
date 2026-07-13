@@ -324,7 +324,7 @@ export function Sidebar({
     <aside
       ref={asideRef}
       style={{ width }}
-      className="relative flex h-full shrink-0 flex-col border-r border-border bg-surface"
+      className="relative flex h-full min-h-0 shrink-0 flex-col border-r border-border bg-surface"
     >
       <div className="border-b border-border p-3">
         {canEdit && onCreateInside && (

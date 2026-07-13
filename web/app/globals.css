@@ -109,23 +109,24 @@ main {
   color: var(--brand-ink);
 }
 
-/* Themed scrollbars so panels don't show a bright track in dark mode. */
+/* Themed scrollbars so panels don't show a bright track in dark mode.
+ * Thumb uses --muted so it's actually visible (border was nearly invisible). */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: color-mix(in oklch, var(--muted) 55%, transparent) transparent;
 }
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: color-mix(in oklch, var(--muted) 50%, transparent);
   border-radius: 9999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
+  background: color-mix(in oklch, var(--muted) 75%, transparent);
   background-clip: padding-box;
 }
 

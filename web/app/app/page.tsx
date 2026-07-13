@@ -560,7 +560,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-dvh max-h-dvh flex-col overflow-hidden">
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-surface px-4 py-2.5">
         <div className="flex items-center gap-2">
           <SpaceSwitcher
@@ -615,7 +615,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar
           notes={displayed}
           categories={categories}
@@ -644,8 +644,8 @@ export default function Dashboard() {
           }}
         />
         <main
-          className={`min-w-0 flex-1 ${
-            view === "map" ? "relative overflow-hidden" : "overflow-y-auto bg-bg"
+          className={`min-h-0 min-w-0 flex-1 ${
+            view === "map" ? "relative overflow-hidden" : "overflow-y-auto overscroll-y-contain bg-bg"
           }`}
         >
           {view === "map" ? (
@@ -849,7 +849,7 @@ function DashboardSkeleton() {
   const para = ["100%", "94%", "88%", "97%", "72%"];
 
   return (
-    <div className="flex h-screen flex-col" aria-busy="true" aria-label="Loading your second self">
+    <div className="flex h-dvh max-h-dvh flex-col overflow-hidden" aria-busy="true" aria-label="Loading your second self">
       <header className="flex shrink-0 items-center justify-between border-b border-border bg-surface px-4 py-2.5">
         <div className="flex items-center gap-3">
           <span className="skeleton h-5 w-28 rounded-md" />
@@ -862,8 +862,8 @@ function DashboardSkeleton() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-surface">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside className="flex h-full min-h-0 w-72 shrink-0 flex-col border-r border-border bg-surface">
           <div className="border-b border-border p-3">
             <span className="skeleton block h-9 w-full rounded-lg" />
             <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -894,7 +894,7 @@ function DashboardSkeleton() {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-hidden bg-bg">
+        <main className="min-h-0 min-w-0 flex-1 overflow-hidden bg-bg">
           <div className="mx-auto max-w-3xl px-8 py-10">
             <span className="skeleton block h-7 w-1/2 rounded-md" />
             <div className="mt-3 flex gap-2">
