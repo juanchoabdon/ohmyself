@@ -4,11 +4,12 @@ import { BadRequestError, NotFoundError } from "./errors.js";
 import { nameOf, resolveIdentifier, usersById } from "./users.js";
 import type { Visibility } from "./types.js";
 
-/** The ceiling a brain owner can share with a friend. Never `secret`. */
-export type FriendVisibility = Extract<Visibility, "public" | "private">;
+/** The ceiling a brain owner can share with a friend — any visibility,
+ *  including `secret` (full bucket, still read-only for the viewer). */
+export type FriendVisibility = Visibility;
 
 export function isFriendVisibility(v: unknown): v is FriendVisibility {
-  return v === "public" || v === "private";
+  return v === "public" || v === "private" || v === "secret";
 }
 
 export interface FriendShare {

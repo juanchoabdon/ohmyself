@@ -29,7 +29,12 @@ const SCOPES: { value: Visibility; label: string; help: string }[] = [
 
 const FRIEND_SCOPES: { value: FriendVisibility; label: string; help: string }[] = [
   { value: "public", label: "Public", help: "Only your public notes." },
-  { value: "private", label: "Private", help: "Public + private notes. Never your secret notes." },
+  { value: "private", label: "Private", help: "Public + private notes. Hides your secret notes." },
+  {
+    value: "secret",
+    label: "Secret",
+    help: "Everything — including finances and secret notes. Still read-only for them.",
+  },
 ];
 
 export function Settings({ token, open, onClose, initialTab, activeSpace, onSpaceUpdated, onChanged }: Props) {

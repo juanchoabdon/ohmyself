@@ -2,7 +2,8 @@
 -- One row per (owner, viewer): the owner shares their brain, read-only, up to
 -- `max_visibility`, with the viewer. This is a one-way grant the OWNER
 -- controls entirely — like sharing a doc, no acceptance needed from the
--- viewer. `secret` can never be shared. Revoking = deleting the row.
+-- viewer. Ceiling can be public, private, or secret (full bucket; still
+-- read-only for the viewer). Revoking = deleting the row.
 
 do $$ begin
   create type friend_visibility as enum ('public', 'private');

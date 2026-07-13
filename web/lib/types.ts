@@ -57,8 +57,9 @@ export interface ContextResult {
   text: string;
 }
 
-/** The ceiling a brain owner can share with a friend. Never `secret`. */
-export type FriendVisibility = Extract<Visibility, "public" | "private">;
+/** The ceiling a brain owner can share with a friend — any visibility,
+ *  including `secret` (full bucket, still read-only for the viewer). */
+export type FriendVisibility = Visibility;
 
 /** A share the current user has GIVEN — who can read their brain, and how much. */
 export interface SharedByMe {
