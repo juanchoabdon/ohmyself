@@ -84,11 +84,7 @@ const translateTextsCached = unstable_cache(
         { role: "system", content: sys },
         { role: "user", content: JSON.stringify(texts) },
       ],
-      // A big batch (dozens of titles/excerpts) generating a large,
-      // carefully-escaped JSON array reliably takes longer than the
-      // default completion timeout — give it real headroom. Only the
-      // (rare, then-cached) cold path ever waits on this.
-      { temperature: 0, maxTokens: 6000, timeoutMs: 45000 },
+      { temperature: 0, maxTokens: 1600, timeoutMs: 25000 },
     );
     if (!out) throw new Error("translateTexts: empty output");
     const start = out.indexOf("[");
@@ -104,16 +100,34 @@ const translateTextsCached = unstable_cache(
   { revalidate: TRANSLATE_REVALIDATE_S },
 );
 
-/** Translate a batch of short strings (note titles, excerpts) in ONE call —
- *  far cheaper than a request per note, and keeps ordering trivial. Falls
- *  back to the original strings wholesale on any failure, so a flaky model
- *  response degrades to "untranslated", never to broken data — and never
- *  gets stuck that way, since only genuine successes are cached. */
+/** How many strings go into one model call. One giant call for the whole
+ *  site (60+ titles/excerpts as escaped JSON) reliably blew past any sane
+ *  timeout — it made /brain hang ~45s and, worse, the failure meant NOTHING
+ *  got cached, so it hung again for every next visitor. Small chunks finish
+ *  in a few seconds each, run in parallel, and each chunk caches
+ *  independently — one slow/failed chunk degrades only its own slice to
+ *  untranslated instead of sinking the whole list. */
+const BATCH_CHUNK = 8;
+
+/** Translate a batch of short strings (note titles, excerpts), chunked into
+ *  small parallel calls (see BATCH_CHUNK). Falls back per-chunk to the
+ *  original strings on failure, so a flaky model response degrades to
+ *  "untranslated", never to broken data — and never gets stuck that way,
+ *  since only genuine successes are cached. */
 export async function translateTexts(lang: NoteLang, texts: string[]): Promise<string[]> {
   if (texts.length === 0) return texts;
-  try {
-    return await translateTextsCached(lang, texts);
-  } catch {
-    return texts;
+  const chunks: string[][] = [];
+  for (let i = 0; i < texts.length; i += BATCH_CHUNK) {
+    chunks.push(texts.slice(i, i + BATCH_CHUNK));
   }
+  const results = await Promise.all(
+    chunks.map(async (chunk) => {
+      try {
+        return await translateTextsCached(lang, chunk);
+      } catch {
+        return chunk;
+      }
+    }),
+  );
+  return results.flat();
 }
