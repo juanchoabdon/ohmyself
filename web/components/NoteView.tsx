@@ -74,6 +74,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("private");
   const [tags, setTags] = useState("");
+  const [editorLive, setEditorLive] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
@@ -92,6 +93,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   tagsRefVal.current = tags;
 
   useEffect(() => {
+    setEditorLive(false);
     setError(null);
     setSaveStatus("idle");
     if (note) {
@@ -370,28 +372,41 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
       </header>
 
       {editable ? (
-        <MarkdownEditor
-          key={note.path}
-          noteKey={note.path}
-          value={body}
-          onChange={(md) => {
-            setBody(md);
-            onBodyChange?.(md);
-          }}
-          onBlur={() => void flush()}
-          onOpenLink={onOpenLink}
-          scrollToHeading={scrollToHeading}
-          collab={
-            collab?.enabled && collab.token && collab.spaceId
-              ? {
-                  token: collab.token,
-                  spaceId: collab.spaceId,
-                  path: note.path,
-                  initialBody: note.body,
-                }
-              : null
-          }
-        />
+        <div className="relative min-h-[8rem]">
+          {!editorLive &&
+            (body.trim() ? (
+              <div className="prose min-h-[8rem]" aria-busy="true">
+                <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
+              </div>
+            ) : (
+              <EditorBodySkeleton />
+            ))}
+          <div className={editorLive ? undefined : "pointer-events-none invisible absolute inset-0"}>
+            <MarkdownEditor
+              key={note.path}
+              noteKey={note.path}
+              value={body}
+              onChange={(md) => {
+                setBody(md);
+                onBodyChange?.(md);
+              }}
+              onBlur={() => void flush()}
+              onOpenLink={onOpenLink}
+              scrollToHeading={scrollToHeading}
+              onReady={() => setEditorLive(true)}
+              collab={
+                collab?.enabled && collab.token && collab.spaceId
+                  ? {
+                      token: collab.token,
+                      spaceId: collab.spaceId,
+                      path: note.path,
+                      initialBody: note.body,
+                    }
+                  : null
+              }
+            />
+          </div>
+        </div>
       ) : (
         <div className="prose min-h-[8rem]">
           {note.body.trim() ? (
@@ -404,7 +419,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
 
       {error && <p className="mt-3 rounded-md bg-vis-secret/10 px-3 py-2 text-sm text-vis-secret">{error}</p>}
 
-      {note.meta.links.length > 0 && (
+      {editorLive && note.meta.links.length > 0 && (
         <footer className="mt-8 border-t border-border pt-4">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Linked</h3>
           <div className="flex flex-wrap gap-2">
