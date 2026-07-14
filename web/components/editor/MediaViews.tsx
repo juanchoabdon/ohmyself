@@ -5,16 +5,26 @@ import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { X, ZoomIn } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BlockDeleteButton } from "./BlockDeleteButton";
+import { deleteRichBlockAt } from "./markdownRichContent";
 
-export function OmsImageView({ node, selected, updateAttributes }: NodeViewProps) {
+export function OmsImageView({ node, selected, updateAttributes, editor, getPos }: NodeViewProps) {
   const src = (node.attrs.src as string) || "";
   const alt = (node.attrs.alt as string) || "";
   const caption = (node.attrs.caption as string) || "";
   const [zoomed, setZoomed] = useState(false);
 
+  const removeBlock = () => {
+    const pos = getPos();
+    if (typeof pos === "number") deleteRichBlockAt(editor, pos);
+  };
+
   return (
     <NodeViewWrapper className={cn("oms-image my-4", selected && "oms-image--selected")}>
       <figure className="oms-image__figure">
+        <div className="mb-1 flex justify-end">
+          <BlockDeleteButton label="Remove image" onClick={removeBlock} />
+        </div>
         {src ? (
           <button
             type="button"

@@ -14,6 +14,7 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Markdown, MarkdownManager } from "@tiptap/markdown";
+import { richMarkdownExtensions } from "./richMarkdownExtensions.js";
 
 const COLLAB_FIELD = "default";
 
@@ -24,6 +25,7 @@ const extensions: Extensions = [
     codeBlock: false,
     undoRedo: false,
   }),
+  ...richMarkdownExtensions,
   Link.configure({ openOnClick: false, autolink: true }),
   Table.configure({ resizable: false }),
   TableRow,

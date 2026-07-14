@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { parseFencedSections, renderFencedSections } from "./fencedBlock";
+import { parseNestedFencedContainer, renderFencedSections } from "./fencedBlock";
 import { TabView, TabsView } from "./TabsView";
 
 export const Tab = Node.create({
@@ -43,6 +43,7 @@ export const Tabs = Node.create({
   group: "block",
   content: "tab+",
   defining: true,
+  selectable: true,
 
   parseHTML() {
     return [{ tag: 'div[data-oms-tabs=""]' }];
@@ -61,14 +62,12 @@ export const Tabs = Node.create({
     level: "block",
     start: (src) => src.indexOf(":::tabs"),
     tokenize(src, _tokens, lexer) {
-      const match = /^:::tabs\n([\s\S]*?)\n:::\n?/.exec(src);
-      if (!match) return undefined;
-      const sections = parseFencedSections(match[1]!, "tab", lexer);
-      if (sections.length === 0) return undefined;
+      const parsed = parseNestedFencedContainer(src, "tabs", "tab", lexer);
+      if (!parsed) return undefined;
       return {
         type: "tabs",
-        raw: match[0],
-        sections,
+        raw: parsed.raw,
+        sections: parsed.sections,
       };
     },
   },

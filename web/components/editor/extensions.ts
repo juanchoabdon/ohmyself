@@ -20,6 +20,9 @@ import { Tabs, Tab } from "./Tabs";
 import { Accordion, AccordionItem } from "./Accordion";
 import { OmsImage, OmsVideo, OmsEmbed } from "./MediaBlocks";
 import { SlashCommand } from "./slashCommand";
+import { MarkdownPaste } from "./MarkdownPaste";
+import { RichBlockDelete } from "./RichBlockDelete";
+import { EditorEssentials } from "./EditorEssentials";
 
 export function buildEditorExtensions(
   onOpenLink?: (path: string) => void,
@@ -57,9 +60,16 @@ export function buildEditorExtensions(
     TaskList,
     TaskItem.configure({ nested: true }),
     SlashCommand,
+    MarkdownPaste,
+    RichBlockDelete,
+    EditorEssentials,
     Markdown,
     ...(collaborationDocument
-      ? [Collaboration.configure({ document: collaborationDocument })]
+      ? [
+          Collaboration.configure({
+            document: collaborationDocument,
+          }),
+        ]
       : []),
     ...(collaborationProvider?.awareness && collaborationUser
       ? [

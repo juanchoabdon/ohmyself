@@ -425,7 +425,11 @@ main {
   color: var(--brand);
 }
 
-.oms-source-editor .cm-editor {
+.oms-source-editor.cm-theme,
+.oms-source-editor.cm-theme-none,
+.oms-source-editor .cm-editor,
+.oms-source-editor .cm-scroller,
+.oms-source-editor .cm-content {
   outline: none;
 }
 .oms-source-editor .cm-scroller {
@@ -434,6 +438,11 @@ main {
 
 .oms-editor-body {
   max-width: 70ch;
+}
+.oms-editor-body,
+.oms-editor-body .ProseMirror {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Collaboration carets (TipTap 3.27+ / @tiptap/y-tiptap) */

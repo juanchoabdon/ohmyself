@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import { parseFencedSections, renderFencedSections } from "./fencedBlock";
+import { parseNestedFencedContainer, renderFencedSections } from "./fencedBlock";
 import { AccordionItemView, AccordionView } from "./AccordionView";
 
 export const AccordionItem = Node.create({
@@ -43,6 +43,7 @@ export const Accordion = Node.create({
   group: "block",
   content: "accordionItem+",
   defining: true,
+  selectable: true,
 
   parseHTML() {
     return [{ tag: 'div[data-oms-accordion=""]' }];
@@ -61,11 +62,9 @@ export const Accordion = Node.create({
     level: "block",
     start: (src) => src.indexOf(":::accordion"),
     tokenize(src, _tokens, lexer) {
-      const match = /^:::accordion\n([\s\S]*?)\n:::\n?/.exec(src);
-      if (!match) return undefined;
-      const sections = parseFencedSections(match[1]!, "accordion-item", lexer);
-      if (sections.length === 0) return undefined;
-      return { type: "accordion", raw: match[0], sections };
+      const parsed = parseNestedFencedContainer(src, "accordion", "accordion-item", lexer);
+      if (!parsed) return undefined;
+      return { type: "accordion", raw: parsed.raw, sections: parsed.sections };
     },
   },
 

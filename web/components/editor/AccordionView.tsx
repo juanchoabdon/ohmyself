@@ -5,6 +5,8 @@ import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BlockDeleteButton } from "./BlockDeleteButton";
+import { deleteRichBlockAt } from "./markdownRichContent";
 
 type AccordionCtx = {
   open: Set<number>;
@@ -13,7 +15,7 @@ type AccordionCtx = {
 
 export const AccordionContext = createContext<AccordionCtx | null>(null);
 
-export function AccordionView({ node }: NodeViewProps) {
+export function AccordionView({ node, selected, editor, getPos }: NodeViewProps) {
   const [open, setOpen] = useState<Set<number>>(() => new Set([0]));
 
   const toggle = (n: number) => {
@@ -25,9 +27,17 @@ export function AccordionView({ node }: NodeViewProps) {
     });
   };
 
+  const removeBlock = () => {
+    const pos = getPos();
+    if (typeof pos === "number") deleteRichBlockAt(editor, pos);
+  };
+
   return (
     <AccordionContext.Provider value={{ open, toggle }}>
-      <NodeViewWrapper className="oms-accordion my-4">
+      <NodeViewWrapper className={cn("oms-accordion my-4", selected && "oms-accordion--selected")}>
+        <div className="flex justify-end border-b border-border px-2 py-1">
+          <BlockDeleteButton label="Remove accordion" onClick={removeBlock} />
+        </div>
         <NodeViewContent />
       </NodeViewWrapper>
     </AccordionContext.Provider>

@@ -10,6 +10,7 @@ export const Callout = Node.create({
   group: "block",
   content: "block+",
   defining: true,
+  selectable: true,
 
   addAttributes() {
     return {

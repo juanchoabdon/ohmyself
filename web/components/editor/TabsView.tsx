@@ -4,12 +4,14 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { cn } from "@/lib/utils";
+import { BlockDeleteButton } from "./BlockDeleteButton";
+import { deleteRichBlockAt } from "./markdownRichContent";
 
 type TabsCtx = { active: number; setActive: (n: number) => void };
 
 export const TabsActiveContext = createContext<TabsCtx | null>(null);
 
-export function TabsView({ node }: NodeViewProps) {
+export function TabsView({ node, selected, editor, getPos }: NodeViewProps) {
   const [active, setActive] = useState(0);
   const titles = useMemo(() => {
     const list: string[] = [];
@@ -19,9 +21,14 @@ export function TabsView({ node }: NodeViewProps) {
     return list;
   }, [node]);
 
+  const removeBlock = () => {
+    const pos = getPos();
+    if (typeof pos === "number") deleteRichBlockAt(editor, pos);
+  };
+
   return (
     <TabsActiveContext.Provider value={{ active, setActive }}>
-      <NodeViewWrapper className="oms-tabs my-4">
+      <NodeViewWrapper className={cn("oms-tabs my-4", selected && "oms-tabs--selected")}>
         <div className="oms-tabs__header" role="tablist">
           {titles.map((title, i) => (
             <button
@@ -38,6 +45,9 @@ export function TabsView({ node }: NodeViewProps) {
               {title}
             </button>
           ))}
+          <div className="ml-auto flex items-center pr-1">
+            <BlockDeleteButton label="Remove tabs" onClick={removeBlock} />
+          </div>
         </div>
         <div className="oms-tabs__body">
           <NodeViewContent />

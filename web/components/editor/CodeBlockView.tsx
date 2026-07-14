@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
-import { Copy, Eye, EyeOff, Code2, GitBranch } from "lucide-react";
+import { Copy, Eye, EyeOff, Code2, GitBranch, Trash2 } from "lucide-react";
 import {
   buildHtmlPreviewSrcDoc,
   isHtmlPreviewLanguage,
@@ -11,8 +11,9 @@ import {
 } from "./htmlPreview";
 import { isMermaidLanguage, renderMermaidSvg } from "./mermaidPreview";
 import { cn } from "@/lib/utils";
+import { deleteRichBlockAt } from "./markdownRichContent";
 
-export function CodeBlockView({ node }: NodeViewProps) {
+export function CodeBlockView({ node, editor, getPos }: NodeViewProps) {
   const lang = (node.attrs.language as string) || "";
   const isPreview = isHtmlPreviewLanguage(lang);
   const isMermaid = isMermaidLanguage(lang);
@@ -76,6 +77,11 @@ export function CodeBlockView({ node }: NodeViewProps) {
     }
   }
 
+  function removeBlock() {
+    const pos = getPos();
+    if (typeof pos === "number") deleteRichBlockAt(editor, pos);
+  }
+
   const previewFrameStyle = previewHeight
     ? { height: `${previewHeight}px` }
     : { height: "min(420px, 50vh)" };
@@ -98,6 +104,9 @@ export function CodeBlockView({ node }: NodeViewProps) {
         )}
         <ToolbarButton label="Copy" onClick={copyCode}>
           <Copy className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton label="Remove block" onClick={removeBlock}>
+          <Trash2 className="h-3.5 w-3.5" />
         </ToolbarButton>
         <span className="px-1 text-[10px] font-medium uppercase tracking-wide text-muted">
           {isMermaid ? (

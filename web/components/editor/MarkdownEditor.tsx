@@ -22,6 +22,7 @@ import {
   type CollabSyncStatus,
   type PresencePeer,
 } from "./PresenceBar";
+import { repairRichMarkdown } from "./markdownRichContent";
 
 export type ScrollToHeadingTarget = {
   text: string;
@@ -132,6 +133,40 @@ export function MarkdownEditor({
     [noteKey, collabActive, ydoc, provider, collabUser],
   );
 
+  const repairAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    repairAttemptedRef.current = false;
+  }, [noteKey]);
+
+  const repairFromVault = useCallback(
+    (ed: Editor) => {
+      const vaultMd = collabInitialBodyRef.current ?? value;
+      if (repairRichMarkdown(ed, vaultMd)) {
+        repairAttemptedRef.current = true;
+        const fixed = ed.getMarkdown();
+        setSourceMd(fixed);
+        sourceMdRef.current = fixed;
+        if (modeRef.current !== "source") onChangeRef.current(fixed);
+      }
+    },
+    [value],
+  );
+
+  const scheduleRepair = useCallback(
+    (ed: Editor) => {
+      const tryRepair = () => {
+        if (ed.isDestroyed) return;
+        repairFromVault(ed);
+      };
+      tryRepair();
+      if (repairAttemptedRef.current) return;
+      requestAnimationFrame(tryRepair);
+      window.setTimeout(tryRepair, 80);
+    },
+    [repairFromVault],
+  );
+
   const seedIfEmpty = useCallback((ed: Editor) => {
     if (ed.isDestroyed || seededRef.current) return;
     const seed = collabInitialBodyRef.current ?? value;
@@ -165,12 +200,14 @@ export function MarkdownEditor({
       content: collabActive ? "" : value,
       contentType: "markdown",
       onCreate: ({ editor: ed }) => {
+        scheduleRepair(ed);
         if (collabActive) return;
         requestAnimationFrame(() => signalReady(ed));
       },
       editorProps: {
         attributes: {
           class: "prose oms-editor-body min-h-[8rem] focus:outline-none",
+          spellcheck: "true",
         },
         handleDOMEvents: {
           blur: () => {
@@ -197,10 +234,8 @@ export function MarkdownEditor({
       sourceMdRef.current = md;
     } else if (next === "visual" && ed && !ed.isDestroyed) {
       const md = sourceMdRef.current;
-      if (md !== ed.getMarkdown()) {
-        ed.commands.setContent(md, { contentType: "markdown" });
-      }
-      onChangeRef.current(md);
+      ed.commands.setContent(md, { contentType: "markdown" });
+      onChangeRef.current(ed.getMarkdown());
     }
     modeRef.current = next;
     setMode(next);
@@ -292,6 +327,7 @@ export function MarkdownEditor({
       collabSyncedRef.current = true;
       setSyncStatus("synced");
       seedIfEmpty(editor);
+      scheduleRepair(editor);
       signalReady(editor);
     };
     provider.on("synced", onSynced);
@@ -303,6 +339,7 @@ export function MarkdownEditor({
       if (editor.isDestroyed || readyFiredRef.current) return;
       collabSyncedRef.current = true;
       seedIfEmpty(editor);
+      scheduleRepair(editor);
       signalReady(editor);
     }, 1500);
 
@@ -310,7 +347,7 @@ export function MarkdownEditor({
       window.clearTimeout(fallback);
       provider.off("synced", onSynced);
     };
-  }, [provider, editor, seedIfEmpty, signalReady]);
+  }, [provider, editor, seedIfEmpty, signalReady, scheduleRepair]);
 
   // Parent reset (Cancel) without remounting the note — skip when Yjs owns the doc.
   useEffect(() => {
@@ -345,6 +382,19 @@ export function MarkdownEditor({
         />
       )}
       <EditorModeToggle mode={mode} onChange={handleModeChange} />
+      {mode === "source" ? (
+        <p className="px-2 pb-2 pt-0.5 text-[11px] text-muted">
+          Source mode — callouts, Mermaid, and embeds render in{" "}
+          <button
+            type="button"
+            className="font-medium text-brand underline underline-offset-2"
+            onClick={() => handleModeChange("visual")}
+          >
+            Visual
+          </button>
+          .
+        </p>
+      ) : null}
       {mode === "source" ? (
         <SourceEditor
           value={sourceMd}

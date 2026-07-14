@@ -1,6 +1,5 @@
 export type FencedField = Record<string, string>;
 
-/** Parse `key: value` lines inside a ::: fence body. */
 export function parseFieldLines(body: string): FencedField {
   const fields: FencedField = {};
   for (const line of body.split("\n")) {
@@ -28,7 +27,6 @@ export interface FencedChildSection {
 
 type BlockLexer = { blockTokens: (src: string) => unknown[] };
 
-/** First line in `body` that is exactly `:::` (optional trailing spaces). */
 export function findStandaloneFenceLine(body: string): number {
   let at = 0;
   while (at < body.length) {
@@ -41,10 +39,6 @@ export function findStandaloneFenceLine(body: string): number {
   return -1;
 }
 
-/**
- * Parse nested fences: `:::container` → `:::child Title` … `:::` (×N) → `:::`.
- * Unlike a naive non-greedy regex, this does not stop at the first inner `:::`.
- */
 export function parseNestedFencedContainer(
   src: string,
   container: string,
@@ -82,28 +76,6 @@ export function parseNestedFencedContainer(
 
   const raw = src.slice(0, src.length - rest.length + tail[0]!.length);
   return { raw, sections };
-}
-
-/** Split `:::marker Title` … `:::` sections inside a parent fence body. */
-export function parseFencedSections(
-  inner: string,
-  marker: string,
-  lexer: BlockLexer,
-): FencedChildSection[] {
-  const sections: FencedChildSection[] = [];
-  const open = `:::${marker}`;
-  const re = new RegExp(`^${open}\\s+([^\\n]+)\\n([\\s\\S]*?)\\n:::\\n?`, "gm");
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(inner))) {
-    const title = m[1]!.trim();
-    const body = m[2]!.trim();
-    sections.push({
-      title,
-      body,
-      tokens: body ? lexer.blockTokens(body) : [],
-    });
-  }
-  return sections;
 }
 
 export function renderFencedSections(
