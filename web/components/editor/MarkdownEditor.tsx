@@ -9,6 +9,12 @@ import "tippy.js/dist/tippy.css";
 import { buildEditorExtensions } from "./extensions";
 import { scrollEditorToHeading } from "./scrollToHeading";
 import { collabRoomName, collabWsUrl } from "@/lib/collab";
+import type { CollabUser } from "@/lib/collabUser";
+import {
+  PresenceBar,
+  type CollabSyncStatus,
+  type PresencePeer,
+} from "./PresenceBar";
 
 export type ScrollToHeadingTarget = {
   text: string;
@@ -45,6 +51,9 @@ export function MarkdownEditor({
   noteKey,
   scrollToHeading,
   collab,
+  collabUser,
+  agentPresence = [],
+  onSelectPresencePeer,
   onReady,
 }: {
   value: string;
@@ -55,6 +64,10 @@ export function MarkdownEditor({
   noteKey: string;
   scrollToHeading?: ScrollToHeadingTarget | null;
   collab?: CollabConfig | null;
+  collabUser?: CollabUser | null;
+  /** Recent agent editors (until MCP writes join the Y doc). */
+  agentPresence?: PresencePeer[];
+  onSelectPresencePeer?: (peer: PresencePeer) => void;
   /** Fires when the editor has content ready to display. */
   onReady?: () => void;
 }) {
@@ -67,6 +80,7 @@ export function MarkdownEditor({
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
   const readyFiredRef = useRef(false);
+  const collabSyncedRef = useRef(false);
 
   const collabToken = collab?.token;
   const collabSpaceId = collab?.spaceId;
@@ -78,24 +92,19 @@ export function MarkdownEditor({
   collabInitialBodyRef.current = collabInitialBody;
 
   const ydoc = useMemo(() => (collabActive ? new Y.Doc() : null), [noteKey, collabActive]);
-  const providerRef = useRef<HocuspocusProvider | null>(null);
+  const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
+  const [syncStatus, setSyncStatus] = useState<CollabSyncStatus>("connecting");
   const seededRef = useRef(false);
-  const [peers, setPeers] = useState(0);
 
   const extensions = useMemo(
-    () => buildEditorExtensions((path) => onOpenLinkRef.current?.(path), ydoc ?? undefined),
-    [noteKey, collabActive, ydoc],
-  );
-
-  const signalReady = useCallback(
-    (ed: Editor) => {
-      if (readyFiredRef.current || ed.isDestroyed) return;
-      const seed = collabInitialBodyRef.current ?? value;
-      if (ed.isEmpty && seed.trim()) return;
-      readyFiredRef.current = true;
-      onReadyRef.current?.();
-    },
-    [value],
+    () =>
+      buildEditorExtensions(
+        (path) => onOpenLinkRef.current?.(path),
+        ydoc ?? undefined,
+        provider,
+        collabUser ?? null,
+      ),
+    [noteKey, collabActive, ydoc, provider, collabUser],
   );
 
   const seedIfEmpty = useCallback((ed: Editor) => {
@@ -107,11 +116,28 @@ export function MarkdownEditor({
     }
   }, [value]);
 
+  const signalReady = useCallback(
+    (ed: Editor) => {
+      if (readyFiredRef.current || ed.isDestroyed) return;
+      if (collabActive && !collabSyncedRef.current) return;
+      seedIfEmpty(ed);
+      const seed = collabInitialBodyRef.current ?? value;
+      if (ed.isEmpty && seed.trim()) return;
+      readyFiredRef.current = true;
+      onReadyRef.current?.();
+    },
+    [value, collabActive, seedIfEmpty],
+  );
+
+  const canMountEditor = !collabActive || provider?.awareness != null;
+
   const editor = useEditor(
     {
       immediatelyRender: false,
       extensions,
-      content: collabActive ? collabInitialBody ?? value : value,
+      // In collab mode Yjs owns the document — seeding `content` here races with
+      // the initial sync and can wipe the body. Seed via `seedIfEmpty` post-sync.
+      content: collabActive ? "" : value,
       contentType: "markdown",
       onCreate: ({ editor: ed }) => {
         if (collabActive) return;
@@ -131,63 +157,86 @@ export function MarkdownEditor({
       onUpdate: ({ editor: ed }) => {
         if (ed.isDestroyed) return;
         onChangeRef.current(ed.getMarkdown());
-        if (collabActive && !readyFiredRef.current && !ed.isEmpty) signalReady(ed);
       },
     },
-    [noteKey, collabActive],
+    [noteKey, collabActive, canMountEditor, provider, collabUser?.id],
   );
 
   useEffect(() => {
     readyFiredRef.current = false;
     seededRef.current = false;
+    collabSyncedRef.current = false;
+    setProvider(null);
+    setSyncStatus("connecting");
   }, [noteKey]);
 
-  // Reconnect provider only when the note changes — never on parent re-renders.
   useEffect(() => {
-    if (!collabActive || !ydoc || !collabToken || !collabSpaceId || !collabPath || !editor) {
-      providerRef.current?.destroy();
-      providerRef.current = null;
-      setPeers(0);
+    if (!collabActive || !ydoc || !collabToken || !collabSpaceId || !collabPath) {
+      setProvider(null);
+      setSyncStatus("offline");
       return;
     }
 
-    const provider = new HocuspocusProvider({
+    const nextProvider = new HocuspocusProvider({
       url: collabWsUrl(),
       name: collabRoomName(collabSpaceId, collabPath),
       document: ydoc,
       token: collabToken,
     });
-    providerRef.current = provider;
 
-    const bumpPeers = () => {
-      const awareness = provider.awareness;
-      if (!awareness) return;
-      setPeers(Math.max(0, awareness.getStates().size - 1));
+    if (collabUser) {
+      nextProvider.awareness?.setLocalStateField("user", {
+        id: collabUser.id,
+        name: collabUser.name,
+        color: collabUser.color,
+        avatarUrl: collabUser.avatarUrl,
+        kind: collabUser.kind,
+      });
+    }
+
+    const onStatus = ({ status }: { status: string }) => {
+      if (status === "connected") setSyncStatus("synced");
+      else if (status === "disconnected") setSyncStatus("offline");
+      else setSyncStatus("connecting");
     };
-    provider.awareness?.on("change", bumpPeers);
-    bumpPeers();
+    nextProvider.on("status", onStatus);
+    setProvider(nextProvider);
+
+    return () => {
+      nextProvider.off("status", onStatus);
+      nextProvider.destroy();
+      setProvider(null);
+      setSyncStatus("offline");
+    };
+  }, [collabActive, collabToken, collabSpaceId, collabPath, ydoc, noteKey, collabUser?.id]);
+
+  useEffect(() => {
+    if (!provider || !editor || editor.isDestroyed) return;
 
     const onSynced = () => {
       if (editor.isDestroyed) return;
+      collabSyncedRef.current = true;
+      setSyncStatus("synced");
       seedIfEmpty(editor);
       signalReady(editor);
     };
     provider.on("synced", onSynced);
+    // The editor is recreated when the provider lands, so `synced` may have
+    // fired before this effect subscribed — check the flag directly.
+    if (provider.isSynced) onSynced();
 
     const fallback = window.setTimeout(() => {
       if (editor.isDestroyed || readyFiredRef.current) return;
+      collabSyncedRef.current = true;
       seedIfEmpty(editor);
       signalReady(editor);
-    }, 4000);
+    }, 1500);
 
     return () => {
       window.clearTimeout(fallback);
-      provider.awareness?.off("change", bumpPeers);
-      provider.destroy();
-      providerRef.current = null;
-      setPeers(0);
+      provider.off("synced", onSynced);
     };
-  }, [collabActive, collabToken, collabSpaceId, collabPath, ydoc, editor, noteKey, seedIfEmpty, signalReady]);
+  }, [provider, editor, seedIfEmpty, signalReady]);
 
   // Parent reset (Cancel) without remounting the note — skip when Yjs owns the doc.
   useEffect(() => {
@@ -208,17 +257,18 @@ export function MarkdownEditor({
     );
   }, [editor, scrollToHeading]);
 
-  if (!editor || editor.isDestroyed) return null;
+  if (!canMountEditor || !editor || editor.isDestroyed) return null;
 
   return (
     <div className="relative">
-      {peers > 0 && (
-        <div
-          className="pointer-events-none absolute -top-6 right-0 text-xs text-vis-public"
-          title="Others editing this note"
-        >
-          ● {peers + 1} here
-        </div>
+      {collabActive && provider && collabUser && (
+        <PresenceBar
+          provider={provider}
+          localUser={collabUser}
+          syncStatus={syncStatus}
+          extraPeers={agentPresence}
+          onSelectPeer={onSelectPresencePeer}
+        />
       )}
       <EditorContent editor={editor} />
     </div>

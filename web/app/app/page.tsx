@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, setActiveSpace } from "@/lib/api";
 import { supabase } from "@/lib/supabaseClient";
-import type { Category, FolderCount, FullNote, IndexedNote, Space, Visibility } from "@/lib/types";
+import type { Category, FolderCount, FullNote, HistoryEntry, IndexedNote, Space, Visibility } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteView, type NoteViewHandle } from "@/components/NoteView";
 import { ActivityPanel } from "@/components/ActivityPanel";
@@ -30,6 +30,8 @@ import {
 import { Clock, PanelRight, Search } from "lucide-react";
 import { connectBrainEvents } from "@/lib/brainEvents";
 import { fetchCollabEnabled } from "@/lib/collab";
+import { collabUserFromSupabase, agentCollabUser, type CollabUser } from "@/lib/collabUser";
+import type { PresencePeer } from "@/components/editor/PresenceBar";
 import type { OutlineItem } from "@/lib/outline";
 import type { ScrollToHeadingTarget } from "@/components/editor/MarkdownEditor";
 
@@ -100,6 +102,46 @@ export default function Dashboard() {
   const [editorBody, setEditorBody] = useState<string | undefined>(undefined);
   const [scrollToHeading, setScrollToHeading] = useState<ScrollToHeadingTarget | null>(null);
   const [collabEnabled, setCollabEnabled] = useState(false);
+  const [collabUser, setCollabUser] = useState<CollabUser | null>(null);
+  const [activityAuthorFilter, setActivityAuthorFilter] = useState<string | null>(null);
+  const [recentActivity, setRecentActivity] = useState<HistoryEntry[]>([]);
+
+  const agentPresence = useMemo((): PresencePeer[] => {
+    if (!selected) return [];
+    const cutoff = Date.now() / 1000 - 15 * 60;
+    const agents = new Map<string, PresencePeer>();
+    for (const entry of recentActivity) {
+      if (!entry?.path || entry.path !== selected) continue;
+      const author = entry.author ?? "";
+      const agent = author.startsWith("agent:") || author === "ohmyself";
+      if (!agent || entry.timestamp < cutoff) continue;
+      if (!author || agents.has(author)) continue;
+      const user = agentCollabUser(author);
+      agents.set(author, {
+        clientId: -agents.size,
+        id: user.id,
+        name: user.name,
+        color: user.color,
+        kind: "agent",
+      });
+    }
+    return [...agents.values()];
+  }, [recentActivity, selected]);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void api.spaceActivity(token, { limit: 40 })
+      .then((res) => {
+        if (active) setRecentActivity(res.entries ?? []);
+      })
+      .catch(() => {
+        if (active) setRecentActivity([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token, activityRefreshKey]);
 
   // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
   // hydration mismatch; persisted on every change.
@@ -204,9 +246,16 @@ export default function Dashboard() {
       }
       setToken(t);
     });
+    supabase.auth.getUser().then(({ data }) => {
+      if (!active || !data.user) return;
+      setCollabUser(collabUserFromSupabase(data.user));
+    });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       if (!session) router.replace("/login");
-      else setToken(session.access_token);
+      else {
+        setToken(session.access_token);
+        if (session.user) setCollabUser(collabUserFromSupabase(session.user));
+      }
     });
     return () => {
       active = false;
@@ -303,6 +352,15 @@ export default function Dashboard() {
           /* storage unavailable — fine */
         }
         if (saved) {
+          const tabTitle =
+            loadEditorTabs(activeSpaceId).find((t) => t.path === saved)?.title ??
+            saved.split("/").pop()?.replace(/\.md$/, "") ??
+            saved;
+          // Prime selection + loading shell before ensureFolder so refresh never
+          // flashes "Pick an entry" while the saved note is being restored.
+          setSelected(saved);
+          setNoteLoading(true);
+          setNotePreviewTitle(tabTitle);
           await ensureFolder(saved.split("/")[0]!);
           if (active) await openNote(saved);
         }
@@ -427,9 +485,11 @@ export default function Dashboard() {
     if (selected && selected !== path) {
       await noteViewRef.current?.flush();
     }
+    const seq = ++openNoteSeqRef.current;
     setView("notes");
     setSelected(path);
     setNoteLoading(true);
+    setFullNote((prev) => (prev?.path === path ? prev : null));
     const indexed = (searchResults ?? baseNotes).find((n) => n.path === path);
     setNotePreviewTitle(
       indexed?.title ?? path.split("/").pop()?.replace(/\.md$/, "") ?? path,
@@ -444,8 +504,11 @@ export default function Dashboard() {
       }
     }
     try {
-      setFullNote(await api.readNote(token, path));
+      const note = await api.readNote(token, path);
+      if (seq !== openNoteSeqRef.current) return;
+      setFullNote(note);
     } catch {
+      if (seq !== openNoteSeqRef.current) return;
       setFullNote(null);
       // A note that no longer reads (deleted elsewhere) shouldn't keep
       // reopening on every refresh.
@@ -457,6 +520,7 @@ export default function Dashboard() {
         }
       }
     } finally {
+      if (seq !== openNoteSeqRef.current) return;
       setNoteLoading(false);
       setNotePreviewTitle(null);
     }
@@ -538,6 +602,7 @@ export default function Dashboard() {
   const noteDirtyRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
   const noteViewRef = useRef<NoteViewHandle>(null);
+  const openNoteSeqRef = useRef(0);
   selectedRef.current = selected;
 
   async function refresh(open?: string | null) {
@@ -918,6 +983,14 @@ export default function Dashboard() {
                         ? { enabled: collabEnabled, token, spaceId: activeSpaceId }
                         : null
                     }
+                    collabUser={collabUser}
+                    agentPresence={agentPresence}
+                    onSelectPresencePeer={(peer) => {
+                      if (peer.kind !== "agent" || !peer.id) return;
+                      setActivityAuthorFilter(peer.id);
+                      setActivityOpen(true);
+                      setDocPanelOpen(false);
+                    }}
                     onDelete={async () => {
                       if (selected) setConfirm({ kind: "note", path: selected });
                     }}
@@ -962,6 +1035,9 @@ export default function Dashboard() {
                   onClose={() => setActivityOpen(false)}
                   onOpenNote={openNote}
                   refreshKey={activityRefreshKey}
+                  authorFilter={activityAuthorFilter}
+                  notePath={selected}
+                  onClearAuthorFilter={() => setActivityAuthorFilter(null)}
                 />
               </div>
             </>

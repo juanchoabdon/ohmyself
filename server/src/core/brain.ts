@@ -352,6 +352,10 @@ export class Brain {
     await this.writeIndex(userId, path, meta, body);
     await this.recordVersion(userId, path, meta, raw, "update", attr);
     emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
+    if (patch.body !== undefined) {
+      const { pushAgentBodyToCollab } = await import("../collab/sync.js");
+      void pushAgentBodyToCollab(userId, path, body, attr?.author);
+    }
     return { path, meta, body };
   }
 

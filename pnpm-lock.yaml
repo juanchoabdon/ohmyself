@@ -16,7 +16,7 @@ importers:
     dependencies:
       '@hocuspocus/server':
         specifier: ^2.15.2
-        version: 2.15.3(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
+        version: 2.15.3(y-protocols@1.0.6(yjs@13.6.31))(yjs@13.6.31)
       '@hono/node-server':
         specifier: ^1.13.0
         version: 1.19.14(hono@4.12.27)
@@ -92,6 +92,9 @@ importers:
       '@tiptap/extension-collaboration':
         specifier: 3.27.4
         version: 3.27.4(@tiptap/core@3.27.4(@tiptap/pm@3.27.4))(@tiptap/pm@3.27.4)(@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.10)(prosemirror-state@1.4.4)(prosemirror-view@1.42.0)(y-protocols@1.0.6(yjs@13.6.27))(yjs@13.6.27))(yjs@13.6.27)
+      '@tiptap/extension-collaboration-caret':
+        specifier: 3.27.4
+        version: 3.27.4(@tiptap/core@3.27.4(@tiptap/pm@3.27.4))(@tiptap/pm@3.27.4)(@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.10)(prosemirror-state@1.4.4)(prosemirror-view@1.42.0)(y-protocols@1.0.6(yjs@13.6.27))(yjs@13.6.27))
       '@tiptap/extension-link':
         specifier: ^3.27.4
         version: 3.27.4(@tiptap/core@3.27.4(@tiptap/pm@3.27.4))(@tiptap/pm@3.27.4)
@@ -946,6 +949,13 @@ packages:
     resolution: {integrity: sha512-aPc7opCR1ylK4m4c2lsjLsGpEBD1fLQQKWd5PbZiJvrTF8gkdGZlYLt9A6VukpxeJyHhb22Jaj4fxgKmGMeTtw==}
     peerDependencies:
       '@tiptap/core': 3.27.4
+
+  '@tiptap/extension-collaboration-caret@3.27.4':
+    resolution: {integrity: sha512-ePlge76CGY35G/ptTol1MGHwyBMrpFUjpaL9W6+6RI2aPDXlg0QRSGHkAfIGtl24My2/sFNAhKpCjRxKwmH7tw==}
+    peerDependencies:
+      '@tiptap/core': 3.27.4
+      '@tiptap/pm': 3.27.4
+      '@tiptap/y-tiptap': ^3.0.6
 
   '@tiptap/extension-collaboration@3.27.4':
     resolution: {integrity: sha512-l3jmzFhuzCgE1upc2GeO/jDueijeE/RIdSWfnWr8uVyB+chzfeaZjz/aDl25i43UC5Q0XBkYYh5QlVH+5rVXcw==}
@@ -2481,12 +2491,6 @@ packages:
     peerDependencies:
       yjs: ^13.0.0
 
-  y-protocols@1.0.7:
-    resolution: {integrity: sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==}
-    engines: {node: '>=16.0.0', npm: '>=8.0.0'}
-    peerDependencies:
-      yjs: ^13.0.0
-
   yjs@13.6.27:
     resolution: {integrity: sha512-OIDwaflOaq4wC6YlPBy2L6ceKeKuF7DeTxx+jPzv1FHn9tCZ0ZwSRnUBxD05E3yed46fv/FWJbvR+Ud7x0L7zw==}
     engines: {node: '>=16.0.0', npm: '>=8.0.0'}
@@ -2668,7 +2672,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@hocuspocus/server@2.15.3(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)':
+  '@hocuspocus/server@2.15.3(y-protocols@1.0.6(yjs@13.6.31))(yjs@13.6.31)':
     dependencies:
       '@hocuspocus/common': 2.15.3
       async-lock: 1.4.1
@@ -2676,7 +2680,7 @@ snapshots:
       lib0: 0.2.117
       uuid: 11.1.1
       ws: 8.21.0
-      y-protocols: 1.0.7(yjs@13.6.31)
+      y-protocols: 1.0.6(yjs@13.6.31)
       yjs: 13.6.31
     transitivePeerDependencies:
       - bufferutil
@@ -3130,6 +3134,12 @@ snapshots:
   '@tiptap/extension-code@3.27.4(@tiptap/core@3.27.4(@tiptap/pm@3.27.4))':
     dependencies:
       '@tiptap/core': 3.27.4(@tiptap/pm@3.27.4)
+
+  '@tiptap/extension-collaboration-caret@3.27.4(@tiptap/core@3.27.4(@tiptap/pm@3.27.4))(@tiptap/pm@3.27.4)(@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.10)(prosemirror-state@1.4.4)(prosemirror-view@1.42.0)(y-protocols@1.0.6(yjs@13.6.27))(yjs@13.6.27))':
+    dependencies:
+      '@tiptap/core': 3.27.4(@tiptap/pm@3.27.4)
+      '@tiptap/pm': 3.27.4
+      '@tiptap/y-tiptap': 3.0.6(prosemirror-model@1.25.10)(prosemirror-state@1.4.4)(prosemirror-view@1.42.0)(y-protocols@1.0.6(yjs@13.6.27))(yjs@13.6.27)
 
   '@tiptap/extension-collaboration@3.27.4(@tiptap/core@3.27.4(@tiptap/pm@3.27.4))(@tiptap/pm@3.27.4)(@tiptap/y-tiptap@3.0.6(prosemirror-model@1.25.10)(prosemirror-state@1.4.4)(prosemirror-view@1.42.0)(y-protocols@1.0.6(yjs@13.6.27))(yjs@13.6.27))(yjs@13.6.27)':
     dependencies:
@@ -4973,7 +4983,7 @@ snapshots:
       lib0: 0.2.117
       yjs: 13.6.27
 
-  y-protocols@1.0.7(yjs@13.6.31):
+  y-protocols@1.0.6(yjs@13.6.31):
     dependencies:
       lib0: 0.2.117
       yjs: 13.6.31

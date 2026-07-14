@@ -295,6 +295,33 @@ main {
   max-width: 70ch;
 }
 
+/* Collaboration carets (TipTap 3.27+ / @tiptap/y-tiptap) */
+.tiptap .collaboration-carets__caret,
+.collaboration-carets__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  border-right: none;
+  word-break: normal;
+  pointer-events: none;
+}
+.tiptap .collaboration-carets__label,
+.collaboration-carets__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px 4px 4px 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #fff;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
 /* ---------- Landing: brand wordmark + animations ---------- */
 
 .font-display {

@@ -14,6 +14,8 @@ import remarkGfm from "remark-gfm";
 import type { FullNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
 import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
+import type { PresencePeer } from "./editor/PresenceBar";
+import type { CollabUser } from "@/lib/collabUser";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +53,9 @@ type NoteViewProps = {
     token: string;
     spaceId: string;
   } | null;
+  collabUser?: CollabUser | null;
+  agentPresence?: PresencePeer[];
+  onSelectPresencePeer?: (peer: PresencePeer) => void;
 };
 
 export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteView(
@@ -66,6 +71,9 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     onDirtyChange,
     scrollToHeading,
     collab,
+    collabUser,
+    agentPresence,
+    onSelectPresencePeer,
   },
   ref,
 ) {
@@ -85,13 +93,20 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const bodyRefVal = useRef("");
   const visibilityRefVal = useRef<Visibility>("private");
   const tagsRefVal = useRef("");
+  /** Last successfully persisted snapshot — avoids collab/Yjs markdown drift re-triggering autosave. */
+  const lastPersistedRef = useRef({
+    title: "",
+    body: "",
+    visibility: "private" as Visibility,
+    tags: "",
+  });
 
   titleRefVal.current = title;
   bodyRefVal.current = body;
   visibilityRefVal.current = visibility;
   tagsRefVal.current = tags;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setEditorLive(false);
     setError(null);
     setSaveStatus("idle");
@@ -100,16 +115,22 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
       setBody(note.body);
       setVisibility(note.meta.visibility);
       setTags(note.meta.tags.join(", "));
+      lastPersistedRef.current = {
+        title: note.meta.title,
+        body: note.body,
+        visibility: note.meta.visibility,
+        tags: note.meta.tags.join(", "),
+      };
     }
   }, [note?.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dirty =
     Boolean(note) &&
     editable &&
-    (title.trim() !== note!.meta.title ||
-      body !== note!.body ||
-      visibility !== note!.meta.visibility ||
-      tags !== note!.meta.tags.join(", "));
+    (title.trim() !== lastPersistedRef.current.title ||
+      body !== lastPersistedRef.current.body ||
+      visibility !== lastPersistedRef.current.visibility ||
+      tags !== lastPersistedRef.current.tags);
 
   dirtyRef.current = dirty;
 
@@ -121,7 +142,6 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     if (!onSave || !note || savingRef.current || !titleRefVal.current.trim()) return;
     savingRef.current = true;
     clearTimeout(saveTimerRef.current);
-    setSaveStatus("saving");
     setError(null);
     const patch = {
       title: titleRefVal.current.trim(),
@@ -136,6 +156,12 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
         setBody(saved.body);
         setVisibility(saved.meta.visibility);
         setTags(saved.meta.tags.join(", "));
+        lastPersistedRef.current = {
+          title: saved.meta.title,
+          body: saved.body,
+          visibility: saved.meta.visibility,
+          tags: saved.meta.tags.join(", "),
+        };
       }
       setSaveStatus("idle");
       setError(null);
@@ -207,10 +233,19 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     [],
   );
 
-  const fetching = Boolean(activePath) && loading && (!note || note.path !== activePath);
-  const ready = Boolean(note) && !fetching;
+  const pendingNote =
+    Boolean(activePath) && (!note || note.path !== activePath);
+  const fetching = pendingNote || (Boolean(activePath) && loading);
+  const ready = Boolean(note && note.path === activePath && !fetching);
+  /** One stable title control — preview while fetching, then editable state (no h1↔textarea swap). */
+  const titleDisplay = fetching ? (previewTitle ?? title) : title;
+  const titleClassName =
+    "oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50";
+  const vaultBody = note?.body ?? "";
+  const hasEditorBody = Boolean(body.trim());
+  const hasVaultBody = Boolean(vaultBody.trim());
 
-  if (!ready && !fetching) {
+  if (!activePath && !ready && !fetching) {
     return (
       <Centered>
         <div className="max-w-sm text-center">
@@ -261,58 +296,56 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               </>
             )}
           </div>
-          {ready && (onSave || onDelete) && (
-            <div className="flex items-center gap-1.5">
-              {onDelete && (
-                <button
-                  onClick={async () => {
-                    try {
-                      await onDelete();
-                    } catch {
-                      /* parent handles */
-                    }
-                  }}
-                  disabled={saveStatus === "saving"}
-                  className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret disabled:opacity-60"
-                >
-                  Delete
-                </button>
-              )}
+          {note && onDelete && (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await onDelete();
+                  } catch {
+                    /* parent handles */
+                  }
+                }}
+                className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret"
+              >
+                Delete
+              </button>
             </div>
           )}
         </div>
 
-        {fetching ? (
-          <>
-            {previewTitle ? (
-              <h1 className="text-[1.7rem] font-bold leading-tight tracking-tight text-balance">
-                {previewTitle}
-              </h1>
-            ) : (
-              <span className="skeleton block h-8 w-2/3 rounded-md" />
-            )}
-            <span className="skeleton mt-3 block h-3 w-1/2 rounded" />
-          </>
-        ) : editable ? (
+        {editable ? (
           <>
             <AutoTextarea
               ref={titleRef}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              value={titleDisplay}
+              readOnly={fetching}
+              onChange={(e) => {
+                if (fetching) return;
+                setTitle(e.target.value);
+              }}
               onBlur={() => void flush()}
               placeholder="Title"
               spellCheck={false}
-              className="oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
+              aria-busy={fetching}
+              className={cn(titleClassName, fetching && "cursor-default")}
             />
             <input
-              value={tags}
+              value={fetching ? "" : tags}
+              readOnly={fetching}
               onChange={(e) => setTags(e.target.value)}
               onBlur={() => void flush()}
               placeholder="tags, comma, separated"
-              className="oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50"
+              tabIndex={fetching ? -1 : 0}
+              aria-hidden={fetching}
+              className={cn(
+                "oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50",
+                fetching && "invisible",
+              )}
             />
           </>
-        ) : (
+        ) : ready ? (
           <>
             <h1 className="text-[1.7rem] font-bold tracking-tight text-balance">{note!.meta.title}</h1>
             {note!.meta.tags.length > 0 && (
@@ -325,6 +358,17 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               </div>
             )}
           </>
+        ) : (
+          <>
+            <AutoTextarea
+              value={previewTitle ?? ""}
+              readOnly
+              placeholder="Title"
+              aria-busy
+              className={cn(titleClassName, "cursor-default")}
+            />
+            <div className="mt-3 h-4" aria-hidden />
+          </>
         )}
       </header>
 
@@ -333,10 +377,12 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
           <EditorBodySkeleton />
         ) : ready && editable ? (
           <div className="relative min-h-[8rem]">
+            {/* Show the vault markdown until the live editor is ready, so the body
+                is never blank (Yjs can take a moment to sync). */}
             {!editorLive &&
-              (body.trim() ? (
+              (hasVaultBody || hasEditorBody ? (
                 <div className="prose min-h-[8rem]">
-                  <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
+                  <ReadOnlyBody body={body || vaultBody} onOpenLink={onOpenLink} />
                 </div>
               ) : (
                 <EditorBodySkeleton />
@@ -352,8 +398,11 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               <MarkdownEditor
                 key={note!.path}
                 noteKey={note!.path}
-                value={body}
+                value={body || vaultBody}
                 onChange={(md) => {
+                  // Yjs sync can transiently empty the doc before the seed lands.
+                  // Never let that propagate into state/autosave and wipe the vault.
+                  if (!md.trim() && !editorLive) return;
                   setBody(md);
                   onBodyChange?.(md);
                 }}
@@ -371,6 +420,9 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                       }
                     : null
                 }
+                collabUser={collabUser}
+                agentPresence={agentPresence}
+                onSelectPresencePeer={onSelectPresencePeer}
               />
             </div>
           </div>

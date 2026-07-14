@@ -3,6 +3,7 @@
  *
  * Room name: `{spaceId}:{notePath}` (path URL-encoded).
  * TipTap Collaboration syncs a Y.XmlFragment; vault persistence stays on REST autosave.
+ * Empty rooms are hydrated from the vault on first open (`onLoadDocument`).
  *
  * Enable: COLLAB_ENABLED=true on Railway.
  */
@@ -11,6 +12,9 @@ import type { Duplex } from "node:stream";
 import { Hocuspocus } from "@hocuspocus/server";
 import { WebSocketServer } from "ws";
 import { resolveAuth } from "../auth.js";
+import { buildCore, parseNote } from "../core/index.js";
+import { seedYDocFromMarkdownIfEmpty } from "./hydrate.js";
+import { collabFieldName } from "./schema.js";
 
 function parseRoom(name: string): { spaceId: string; path: string } | null {
   const i = name.indexOf(":");
@@ -27,6 +31,10 @@ export function roomName(spaceId: string, path: string): string {
 
 let hocuspocus: Hocuspocus | null = null;
 let wss: WebSocketServer | null = null;
+
+export function getCollabServer(): Hocuspocus | null {
+  return hocuspocus;
+}
 
 export function collabEnabled(): boolean {
   return process.env.COLLAB_ENABLED === "true";
@@ -51,6 +59,22 @@ export function startCollabServer(): Hocuspocus | null {
       if (auth.readonly) throw new Error("collab: read-only token");
       return { userId: auth.userId, spaceId: auth.spaceId };
     },
+
+    async onLoadDocument({ document, documentName }) {
+      const room = parseRoom(documentName);
+      if (!room) return;
+
+      // In-memory doc already has live edits — vault must not overwrite.
+      if (!document.isEmpty(collabFieldName())) return;
+
+      const { vault } = buildCore();
+      const raw = await vault.read(room.spaceId, room.path);
+      const body = raw ? parseNote(raw, room.path).body : "";
+      const seeded = seedYDocFromMarkdownIfEmpty(document, body);
+      if (seeded) {
+        console.log(`[collab] hydrated ${documentName} from vault (${body.trim().length} chars)`);
+      }
+    },
   });
 
   wss = new WebSocketServer({ noServer: true });
@@ -58,7 +82,7 @@ export function startCollabServer(): Hocuspocus | null {
     hocuspocus!.handleConnection(ws, req);
   });
 
-  console.log("[collab] Hocuspocus enabled — WebSocket path /collab");
+  console.log("[collab] Hocuspocus enabled — WebSocket path /collab (vault hydration on room open)");
   return hocuspocus;
 }
 

@@ -43,8 +43,13 @@ Cursor / ChatGPT / Claude  ──►  https://www.ohmyself.ai/mcp
 
 ```bash
 git push origin main
-cd server && railway up --service ohmyself-api
+cd server && railway up --service ohmyself-api --no-gitignore
 ```
+
+**Always pass `--no-gitignore`.** Root `.gitignore` ignores `/versions/` and
+`server/versions/` (runtime version-store data). Railway's default upload respects
+`.gitignore` and can accidentally drop `server/src/core/versions/` (the TypeScript
+source), breaking `tsc` with `Cannot find module './versions/types.js'`.
 
 Railway does **not** auto-deploy from GitHub today, so `railway up` is required
 (or enable GitHub auto-deploy in the Railway dashboard so a push to `main` ships

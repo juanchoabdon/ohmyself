@@ -19,6 +19,7 @@
     "@tiptap/core": "^3.27.4",
     "@tiptap/extension-code-block": "^3.27.4",
     "@tiptap/extension-collaboration": "3.27.4",
+    "@tiptap/extension-collaboration-caret": "3.27.4",
     "@tiptap/extension-link": "^3.27.4",
     "@tiptap/extension-list": "^3.27.4",
     "@tiptap/extension-table": "^3.27.4",
