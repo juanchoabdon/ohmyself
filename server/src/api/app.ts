@@ -514,8 +514,15 @@ export function createApp(): Hono<Env> {
   app.get("/v1/palette", async (c) => {
     const q = c.req.query("q");
     const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 50);
-    const { searchPalette } = await import("../core/palette.js");
-    return c.json({ items: searchPalette(q, limit) });
+    const componentsParam = c.req.query("components");
+    let components: boolean | string[] | false = false;
+    if (componentsParam === "true" || componentsParam === "1") {
+      components = true;
+    } else if (componentsParam) {
+      components = componentsParam.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    const { buildPaletteResponse } = await import("../core/palette.js");
+    return c.json(buildPaletteResponse({ query: q, limit, components: components || undefined }));
   });
 
   app.post("/v1/restore", async (c) => {

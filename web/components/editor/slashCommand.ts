@@ -76,11 +76,12 @@ export const slashCommandItems: SlashCommandItem[] = [
         .focus()
         .deleteRange(range)
         .insertContent({
-          type: "blockquote",
+          type: "callout",
+          attrs: { type: "info", title: "Title" },
           content: [
             {
               type: "paragraph",
-              content: [{ type: "text", text: "[!info] Title\nBody text here." }],
+              content: [{ type: "text", text: "Body text here." }],
             },
           ],
         })

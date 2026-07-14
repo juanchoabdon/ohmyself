@@ -41,6 +41,22 @@ function openNoteKey(spaceId: string): string {
   return `oms-note:${spaceId}`;
 }
 
+/** One-shot deep link from preview_url (?note= & ?space=). */
+type DeepLinkTarget = { note?: string; space?: string };
+
+function readDeepLinkFromUrl(): DeepLinkTarget | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const note = params.get("note")?.trim();
+  const space = params.get("space")?.trim();
+  if (!note && !space) return null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("note");
+  url.searchParams.delete("space");
+  window.history.replaceState({}, "", url.toString());
+  return { note: note || undefined, space: space || undefined };
+}
+
 function slugify(s: string): string {
   return (
     s
@@ -105,6 +121,7 @@ export default function Dashboard() {
   const [collabUser, setCollabUser] = useState<CollabUser | null>(null);
   const [activityAuthorFilter, setActivityAuthorFilter] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<HistoryEntry[]>([]);
+  const deepLinkRef = useRef<DeepLinkTarget | null>(readDeepLinkFromUrl());
 
   const agentPresence = useMemo((): PresencePeer[] => {
     if (!selected) return [];
@@ -280,8 +297,13 @@ export default function Dashboard() {
             return null;
           }
         })();
+        const deep = deepLinkRef.current;
         const pick =
-          list.find((s) => s.id === saved) ?? list.find((s) => s.kind === "self") ?? list[0] ?? null;
+          (deep?.space && list.find((s) => s.id === deep.space)) ||
+          list.find((s) => s.id === saved) ||
+          list.find((s) => s.kind === "self") ||
+          list[0] ||
+          null;
         setActiveSpaceId(pick?.id ?? null);
       } catch {
         /* non-fatal — fall back to the implicit self space */
@@ -345,11 +367,16 @@ export default function Dashboard() {
       // Reopen the note that was open in this space before the refresh, and
       // expand its pillar so the sidebar highlights it.
       if (active && activeSpaceId) {
-        let saved: string | null = null;
-        try {
-          saved = localStorage.getItem(openNoteKey(activeSpaceId));
-        } catch {
-          /* storage unavailable — fine */
+        const deep = deepLinkRef.current;
+        let saved: string | null = deep?.note ?? null;
+        if (!saved) {
+          try {
+            saved = localStorage.getItem(openNoteKey(activeSpaceId));
+          } catch {
+            /* storage unavailable — fine */
+          }
+        } else {
+          deepLinkRef.current = null;
         }
         if (saved) {
           const tabTitle =

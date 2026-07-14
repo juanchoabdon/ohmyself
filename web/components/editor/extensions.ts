@@ -15,6 +15,7 @@ import type * as Y from "yjs";
 import type { CollabUser } from "@/lib/collabUser";
 import { WikiLink } from "./WikiLink";
 import { OmsCodeBlock } from "./OmsCodeBlock";
+import { Callout } from "./Callout";
 import { SlashCommand } from "./slashCommand";
 
 export function buildEditorExtensions(
@@ -32,6 +33,7 @@ export function buildEditorExtensions(
       undoRedo: collaborationDocument ? false : undefined,
     }),
     OmsCodeBlock,
+    Callout,
     Link.configure({
       openOnClick: false,
       autolink: true,

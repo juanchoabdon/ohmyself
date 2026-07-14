@@ -37,7 +37,8 @@ import {
   type Visibility,
 } from "../core/index.js";
 import { ForbiddenError, NotFoundError } from "../core/errors.js";
-import { searchPalette } from "../core/palette.js";
+import { buildPaletteResponse } from "../core/palette.js";
+import { buildPreviewUrl } from "../core/preview-url.js";
 import { getLinkContext } from "../core/link-intelligence.js";
 import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
 import { instrumentToolUsage } from "./telemetry.js";
@@ -47,7 +48,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
 /** The public MCP tool contract version. Bumped for the retrieval architecture
  *  (research_brain + graph primitives + write_brain + routing policy). Kept
  *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.6";
+const CONTRACT_VERSION = "2.7";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -387,7 +388,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           fast_recall: "recall / search_brain — narrow, explicit questions; 1-2 notes suffice",
           deep_research: "research_brain — ambiguous, multi-hop, history/synthesis, or low coverage",
           navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
-          write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version + activity for version timeline; palette for embed starters; link_context for graph hints",
+          write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version + activity for version timeline; palette (starters + component schemas) for rich embeds; preview_url for live web preview; link_context for graph hints",
           spaces:
             "company wikis (list_spaces) mirror the same routing via *_space variants: recall_space / search_space (fast), research_space (deep), get_space_neighbors / get_space_backlinks / search_space_by_entity / space_timeline (navigate), create_space_note / update_space_note / append_space_note / write_space (write, owner/admin)",
           friends:
@@ -1698,15 +1699,45 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Embed & block palette",
       description:
-        "Markdown starters for rich blocks (callout, mermaid, html preview, table, tasks). Pass snippets to edit tools or append_to_note.",
+        "Markdown starters and component schemas for rich blocks (callout, mermaid, html preview). Use `components: true` for prop schemas + theme tokens; pass snippets to append_to_note / update_note.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         query: z.string().optional().describe("filter by name/tag"),
         limit: z.number().int().min(1).max(50).optional(),
+        components: z
+          .union([z.boolean(), z.array(z.string())])
+          .optional()
+          .describe("true = all component schemas + theme; or filter by component ids"),
       },
     },
-    async ({ query, limit }) => {
-      return text({ items: searchPalette(query, limit ?? 20) });
+    async ({ query, limit, components }) => {
+      return text(
+        buildPaletteResponse({
+          query,
+          limit: limit ?? 20,
+          components: components === undefined ? false : components,
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    "preview_url",
+    {
+      title: "Web preview URL",
+      description:
+        "Return a deep link to open a note in www.ohmyself.ai after writing — useful to verify callout/mermaid/html embed renders.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().describe("note path in the active space"),
+      },
+    },
+    async ({ path }) => {
+      return text({
+        url: buildPreviewUrl(path, auth.spaceId),
+        path,
+        space_id: auth.spaceId,
+      });
     },
   );
 

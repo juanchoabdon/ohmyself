@@ -228,6 +228,74 @@ main {
   color: var(--muted);
   margin: 0.9em 0;
 }
+
+/* Callout blocks (GitHub-style > [!info]) */
+.oms-callout {
+  display: flex;
+  gap: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface);
+}
+.oms-callout__icon {
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+.oms-callout__content {
+  flex: 1;
+  min-width: 0;
+}
+.oms-callout__title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  margin-bottom: 0.25rem;
+}
+.oms-callout__body > :first-child {
+  margin-top: 0;
+}
+.oms-callout__body > :last-child {
+  margin-bottom: 0;
+}
+.oms-callout--info {
+  border-color: color-mix(in oklch, var(--brand) 35%, var(--border));
+  background: color-mix(in oklch, var(--brand) 8%, var(--surface));
+}
+.oms-callout--info .oms-callout__icon {
+  color: var(--brand);
+}
+.oms-callout--note {
+  border-color: color-mix(in oklch, var(--muted) 40%, var(--border));
+}
+.oms-callout--note .oms-callout__icon {
+  color: var(--muted);
+}
+.oms-callout--tip {
+  border-color: color-mix(in oklch, oklch(0.72 0.16 145) 40%, var(--border));
+  background: color-mix(in oklch, oklch(0.72 0.16 145) 8%, var(--surface));
+}
+.oms-callout--tip .oms-callout__icon {
+  color: oklch(0.55 0.14 145);
+}
+.oms-callout--warning {
+  border-color: color-mix(in oklch, oklch(0.78 0.16 85) 45%, var(--border));
+  background: color-mix(in oklch, oklch(0.78 0.16 85) 10%, var(--surface));
+}
+.oms-callout--warning .oms-callout__icon {
+  color: oklch(0.62 0.15 75);
+}
+.oms-callout--error {
+  border-color: color-mix(in oklch, oklch(0.62 0.2 25) 40%, var(--border));
+  background: color-mix(in oklch, oklch(0.62 0.2 25) 8%, var(--surface));
+}
+.oms-callout--selected {
+  outline: 2px solid color-mix(in oklch, var(--brand) 45%, transparent);
+  outline-offset: 2px;
+}
+.oms-callout__props input {
+  outline: none;
+}
+
 .prose hr {
   border: none;
   border-top: 1px solid var(--border);

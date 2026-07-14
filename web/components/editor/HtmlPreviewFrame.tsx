@@ -7,7 +7,7 @@ export function HtmlPreviewFrame({ html, className }: { html: string; className?
     <div className={`oms-html-preview-read overflow-hidden rounded-lg border border-border ${className ?? ""}`}>
       <iframe
         title="HTML preview"
-        sandbox=""
+        sandbox="allow-scripts"
         srcDoc={buildHtmlPreviewSrcDoc(html)}
         className="block min-h-[120px] w-full border-0 bg-bg"
         style={{ height: "min(420px, 50vh)" }}
