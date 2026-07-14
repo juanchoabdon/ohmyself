@@ -4,6 +4,7 @@ import { createApp } from "./api/app.js";
 import { resolveAuth } from "./auth.js";
 import { BrainError } from "./core/errors.js";
 import { buildMcpServer } from "./mcp/tools.js";
+import { checkRateLimit } from "./middleware/rateLimit.js";
 
 const app = createApp();
 
@@ -116,7 +117,19 @@ function send401Challenge(res: ServerResponse, message: string): void {
 
 /** Stateless MCP over Streamable HTTP. A fresh server+transport per request,
  *  scoped to the caller's resolved auth. */
+/** Client IP for rate limiting (Railway / Vercel forward headers). */
+function clientIp(req: IncomingMessage): string {
+  const fwd = headerStr(req.headers["x-forwarded-for"]);
+  if (fwd) return fwd.split(",")[0]?.trim() || "unknown";
+  return headerStr(req.headers["x-real-ip"]) ?? "unknown";
+}
+
 async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!checkRateLimit("/mcp", clientIp(req), 60_000, 120)) {
+    sendJson(res, 429, { error: "rate limit exceeded" });
+    return;
+  }
+
   if (req.method !== "POST") {
     res.writeHead(405, { "content-type": "application/json", Allow: "POST" });
     res.end(

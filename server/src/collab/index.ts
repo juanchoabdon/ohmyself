@@ -12,6 +12,7 @@ import type { Duplex } from "node:stream";
 import { Hocuspocus } from "@hocuspocus/server";
 import { WebSocketServer } from "ws";
 import { resolveAuth } from "../auth.js";
+import { requireCompanyWrite } from "../core/authz.js";
 import { buildCore, parseNote } from "../core/index.js";
 import { seedYDocFromMarkdownIfEmpty } from "./hydrate.js";
 import { collabFieldName } from "./schema.js";
@@ -56,7 +57,7 @@ export function startCollabServer(): Hocuspocus | null {
         "x-brain-scope": null,
         "x-brain-space": room.spaceId,
       });
-      if (auth.readonly) throw new Error("collab: read-only token");
+      requireCompanyWrite(auth);
       return { userId: auth.userId, spaceId: auth.spaceId };
     },
 

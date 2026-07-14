@@ -3,9 +3,11 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { resolveAuth } from "../auth.js";
 import {
-  allowedVisibilities,
   buildCore,
-  canWrite,
+  effectiveAllowed,
+  requireWrite,
+  requireCompanyWrite,
+  requireSpaceAdmin,
   addMember,
   createCompanySpace,
   createToken,
@@ -60,8 +62,18 @@ import { syncDriveConnection } from "../sync.js";
 import { startBackfill } from "../backfill.js";
 import { runScheduledTick } from "../scheduler.js";
 import { registerOAuth } from "./oauth.js";
+import { rateLimit } from "../middleware/rateLimit.js";
 
 type Env = { Variables: { auth: AuthContext } };
+
+function corsOrigins(): string[] {
+  const origins = new Set<string>([
+    process.env.PUBLIC_WEB_URL || "http://localhost:3000",
+    "http://localhost:3000",
+    "http://localhost:3001",
+  ]);
+  return [...origins].filter(Boolean);
+}
 
 function csv(v: string | undefined): string[] | undefined {
   if (!v) return undefined;
@@ -69,14 +81,6 @@ function csv(v: string | undefined): string[] | undefined {
   return arr.length ? arr : undefined;
 }
 
-function requireWrite(auth: AuthContext) {
-  if (auth.readonly || !canWrite(auth.scope)) {
-    throw new ForbiddenError("read-only (public scope)");
-  }
-}
-
-/** Token management is only allowed from a signed-in web session, never from
- *  an API token itself (so a leaked token can't mint more tokens). */
 function requireJwt(auth: AuthContext) {
   if (auth.via !== "jwt") {
     throw new ForbiddenError("manage tokens from a signed-in session");
@@ -101,7 +105,23 @@ export function createApp(): Hono<Env> {
   const app = new Hono<Env>();
   const { brain } = buildCore();
 
-  app.use("*", cors({ origin: "*", allowHeaders: ["Authorization", "Content-Type", "X-Brain-Scope", "X-Brain-Space"] }));
+  const allowed = corsOrigins();
+  app.use(
+    "*",
+    cors({
+      origin: (origin) => {
+        if (!origin) return allowed[0] ?? "*";
+        return allowed.includes(origin) ? origin : "";
+      },
+      allowHeaders: ["Authorization", "Content-Type", "X-Brain-Scope", "X-Brain-Space"],
+    }),
+  );
+
+  app.use("/oauth/register", rateLimit({ windowMs: 60_000, max: 10 }));
+  app.use("/oauth/token", rateLimit({ windowMs: 60_000, max: 30 }));
+  app.use("/v1/search", rateLimit({ windowMs: 60_000, max: 120 }));
+  app.use("/v1/context", rateLimit({ windowMs: 60_000, max: 60 }));
+  app.use("/v1/graph/semantic", rateLimit({ windowMs: 60_000, max: 30 }));
 
   app.get("/health", (c) =>
     c.json({
@@ -148,6 +168,7 @@ export function createApp(): Hono<Env> {
       spaceId: auth.spaceId,
       role: auth.role,
       scope: auth.scope,
+      allowed: effectiveAllowed(auth),
       readonly: auth.readonly,
       via: auth.via,
       username: profile?.username ?? null,
@@ -379,7 +400,7 @@ export function createApp(): Hono<Env> {
   // brain (used for demos / the owner's own account).
   app.post("/v1/onboard", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
+    requireCompanyWrite(auth);
     const config = await getUserConfig(auth.spaceId);
     const structure = [...new Set(config.noteTypes.map((t) => t.folder))];
 
@@ -389,7 +410,7 @@ export function createApp(): Hono<Env> {
     }
 
     const existing = await brain.listNotes(auth.spaceId, {
-      allowed: allowedVisibilities(auth.scope),
+      allowed: effectiveAllowed(auth),
       limit: 1,
     });
     if (existing.length > 0) {
@@ -415,7 +436,7 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/search", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const q = c.req.query("q") ?? "";
     const limit = Number(c.req.query("limit") ?? "50");
     const res = await brain.search(auth.spaceId, q, {
@@ -429,7 +450,7 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/notes", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const limit = Number(c.req.query("limit") ?? "200");
     const res = await brain.listNotes(auth.spaceId, {
       allowed,
@@ -447,7 +468,7 @@ export function createApp(): Hono<Env> {
   // (?prefix=) only when it's expanded.
   app.get("/v1/folders", async (c) => {
     const auth = c.get("auth");
-    const folders = await brain.folderCounts(auth.spaceId, allowedVisibilities(auth.scope));
+    const folders = await brain.folderCounts(auth.spaceId, effectiveAllowed(auth));
     return c.json({ folders });
   });
 
@@ -473,7 +494,7 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/history", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const path = c.req.query("path") ?? "";
     if (!path.trim()) throw new BadRequestError("path is required");
     const limit = Math.min(Number(c.req.query("limit") ?? 50) || 50, 200);
@@ -484,7 +505,7 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/activity", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const limit = Math.min(Number(c.req.query("limit") ?? 30) || 30, 200);
     const entries = await brain.getRecentActivity(auth.spaceId, allowed, { limit });
     return c.json({ entries });
@@ -492,7 +513,7 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/backlinks", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const path = c.req.query("path") ?? "";
     if (!path.trim()) throw new BadRequestError("path is required");
     const limit = Math.min(Number(c.req.query("limit") ?? 50) || 50, 200);
@@ -502,7 +523,7 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/link-context", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const path = c.req.query("path") ?? "";
     if (!path.trim()) throw new BadRequestError("path is required");
     const semanticLimit = Math.min(Number(c.req.query("semantic_limit") ?? 8) || 8, 20);
@@ -527,8 +548,8 @@ export function createApp(): Hono<Env> {
 
   app.post("/v1/restore", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     const body = await c.req.json<{ path?: string; version?: string; summary?: string }>();
     if (!body.path?.trim()) throw new BadRequestError("path is required");
     if (!body.version?.trim()) throw new BadRequestError("version is required");
@@ -545,8 +566,8 @@ export function createApp(): Hono<Env> {
 
   app.post("/v1/notes", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     const body = await c.req.json<{
       type: string;
       title: string;
@@ -569,15 +590,15 @@ export function createApp(): Hono<Env> {
 
   app.get("/v1/notes/:path{.+}", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const note = await brain.readNote(auth.spaceId, c.req.param("path"), allowed);
     return c.json({ path: note.path, meta: note.meta, body: note.body, raw: serializeNote(note.meta, note.body) });
   });
 
   app.patch("/v1/notes/:path{.+}", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     const patch = await c.req.json<{ summary?: string } & Record<string, unknown>>();
     const { summary, ...notePatch } = patch;
     const attr = attributionFromAuth(auth, summary);
@@ -587,16 +608,16 @@ export function createApp(): Hono<Env> {
 
   app.delete("/v1/notes/:path{.+}", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     await brain.deleteNote(auth.spaceId, c.req.param("path"), allowed, attributionFromAuth(auth));
     return c.json({ deleted: c.req.param("path") });
   });
 
   app.post("/v1/move", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     const { from, to, summary } = await c.req.json<{ from: string; to: string; summary?: string }>();
     const note = await brain.moveNote(auth.spaceId, from, to, allowed, attributionFromAuth(auth, summary));
     return c.json({ path: note.path, meta: note.meta });
@@ -604,8 +625,8 @@ export function createApp(): Hono<Env> {
 
   app.post("/v1/append", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     const { path, text, summary } = await c.req.json<{ path: string; text: string; summary?: string }>();
     const note = await brain.appendToNote(auth.spaceId, path, text, allowed, attributionFromAuth(auth, summary));
     return c.json({ appended: note.path });
@@ -613,8 +634,8 @@ export function createApp(): Hono<Env> {
 
   app.post("/v1/link", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
-    const allowed = allowedVisibilities(auth.scope);
+    requireCompanyWrite(auth);
+    const allowed = effectiveAllowed(auth);
     const { a, b } = await c.req.json<{ a: string; b: string }>();
     await brain.linkNotes(auth.spaceId, a, b, allowed);
     return c.json({ linked: [a, b] });
@@ -626,7 +647,7 @@ export function createApp(): Hono<Env> {
   app.get("/v1/graph/semantic", async (c) => {
     const auth = c.get("auth");
     if (!embeddingsEnabled()) return c.json({ enabled: false, edges: [] });
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const notes = await brain.listNotes(auth.spaceId, { allowed, limit: 400 });
     const items = notes
       .map((n) => ({ path: n.path, text: `${n.title}. ${n.excerpt ?? ""}`.trim() }))
@@ -644,7 +665,7 @@ export function createApp(): Hono<Env> {
 
   app.post("/v1/context", async (c) => {
     const auth = c.get("auth");
-    const allowed = allowedVisibilities(auth.scope);
+    const allowed = effectiveAllowed(auth);
     const { topic, limit } = await c.req.json<{ topic: string; limit?: number }>();
     const ctx = await brain.getContext(auth.spaceId, topic, allowed, limit ?? 6);
     return c.json(ctx);
@@ -663,7 +684,7 @@ export function createApp(): Hono<Env> {
   // ── Connections (per-account connector credentials + settings) ────────────
   app.get("/v1/connections", async (c) => {
     const auth = c.get("auth");
-    requireJwt(auth);
+    requireSpaceAdmin(auth);
     const provider = c.req.query("provider") ?? undefined;
     const conns = await listConnections(auth.spaceId, provider);
     // Never expose the credential to the browser.
@@ -684,7 +705,7 @@ export function createApp(): Hono<Env> {
 
   app.delete("/v1/connections/:id", async (c) => {
     const auth = c.get("auth");
-    requireJwt(auth);
+    requireSpaceAdmin(auth);
     await deleteConnection(auth.spaceId, c.req.param("id"));
     return c.json({ deleted: c.req.param("id") });
   });
@@ -693,7 +714,7 @@ export function createApp(): Hono<Env> {
   // without ingesting; mode=light + lookbackMonths powers historical backfill.
   app.post("/v1/connections/:id/sync", async (c) => {
     const auth = c.get("auth");
-    requireJwt(auth);
+    requireSpaceAdmin(auth);
     const body = (await c.req.json().catch(() => ({}))) as {
       mode?: string;
       dryRun?: boolean;
@@ -716,7 +737,7 @@ export function createApp(): Hono<Env> {
   // GET /v1/connections. Safe to close the browser — it keeps going.
   app.post("/v1/connections/:id/backfill", async (c) => {
     const auth = c.get("auth");
-    requireJwt(auth);
+    requireSpaceAdmin(auth);
     const body = (await c.req.json().catch(() => ({}))) as {
       lookbackMonths?: number;
       mode?: string;
@@ -731,7 +752,7 @@ export function createApp(): Hono<Env> {
   // Start: JWT-guarded, returns the Google consent URL to open.
   app.get("/v1/connectors/google/authorize", async (c) => {
     const auth = c.get("auth");
-    requireJwt(auth);
+    requireSpaceAdmin(auth);
     if (!googleAuthConfigured()) {
       throw new BadRequestError("Google connector is not configured (set GOOGLE_CLIENT_ID/SECRET)");
     }
@@ -783,13 +804,13 @@ export function createApp(): Hono<Env> {
 
   app.post("/v1/connectors/:id/pull", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
+    requireCompanyWrite(auth);
     const connector = getConnector(c.req.param("id"));
     if (!connector) throw new BadRequestError(`unknown connector: ${c.req.param("id")}`);
     const options = await c.req.json().catch(() => ({}));
     const config = await getUserConfig(auth.spaceId);
     const result = await connector.pull(
-      { spaceId: auth.spaceId, brain, allowed: allowedVisibilities(auth.scope), config },
+      { spaceId: auth.spaceId, brain, allowed: effectiveAllowed(auth), config },
       options,
     );
     return c.json(result);
@@ -802,7 +823,7 @@ export function createApp(): Hono<Env> {
 
   app.put("/v1/config", async (c) => {
     const auth = c.get("auth");
-    requireWrite(auth);
+    requireCompanyWrite(auth);
     const raw = await c.req.json();
     return c.json(await setUserConfig(auth.spaceId, raw));
   });

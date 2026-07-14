@@ -13,6 +13,7 @@ import type { VersionStore } from "./versions/types.js";
 
 export * from "./types.js";
 export * from "./scope.js";
+export * from "./authz.js";
 export * from "./config.js";
 export * from "./errors.js";
 export { emitBrainEvent, subscribeBrainEvents, type BrainEvent, type BrainEventType } from "./events.js";

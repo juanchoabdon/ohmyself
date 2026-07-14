@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   addToProject,
   allowedVisibilities,
+  effectiveAllowed,
+  effectiveAllowedForRole,
   buildCore,
   buildFriendDirectory,
   canWrite,
@@ -91,7 +93,7 @@ function skillPath(name: string): string {
 export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   const core = buildCore();
   const { brain } = core;
-  const allowed = allowedVisibilities(auth.scope);
+  const allowed = effectiveAllowed(auth);
   const server = new McpServer(
     { name: "ohmyself", version: "0.3.0" },
     {
@@ -702,9 +704,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     allowed: Visibility[];
   }
   function spaceReadVisibilities(role: SpaceRole): Visibility[] {
-    const cap = allowedVisibilities(auth.scope);
-    // Plain members never see founders-only ("secret") company notes.
-    return role === "owner" || role === "admin" ? cap : cap.filter((v) => v !== "secret");
+    return effectiveAllowedForRole(auth.scope, role, false);
   }
   let _spaces: SpaceEntry[] | null = null;
   async function companySpaces(): Promise<SpaceEntry[]> {
