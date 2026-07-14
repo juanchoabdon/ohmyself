@@ -63,9 +63,7 @@ export function MarkdownEditor({
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const seededRef = useRef(false);
   const [peers, setPeers] = useState(0);
-  const [collabStatus, setCollabStatus] = useState<"off" | "connecting" | "live" | "error">(
-    collabActive ? "connecting" : "off",
-  );
+  const [collabReady, setCollabReady] = useState(!collabActive);
 
   const extensions = useMemo(
     () => buildEditorExtensions((path) => onOpenLinkRef.current?.(path), ydoc ?? undefined),
@@ -104,11 +102,11 @@ export function MarkdownEditor({
       providerRef.current?.destroy();
       providerRef.current = null;
       setPeers(0);
-      setCollabStatus(collabActive ? "connecting" : "off");
+      setCollabReady(!collabActive);
       return;
     }
 
-    setCollabStatus("connecting");
+    setCollabReady(false);
     const provider = new HocuspocusProvider({
       url: collabWsUrl(),
       name: collabRoomName(collab.spaceId, collab.path),
@@ -127,7 +125,7 @@ export function MarkdownEditor({
     bumpPeers();
 
     const onSynced = () => {
-      setCollabStatus("live");
+      setCollabReady(true);
       if (seededRef.current || editor.isDestroyed) return;
       if (editor.isEmpty && collab.initialBody.trim()) {
         editor.commands.setContent(collab.initialBody, { contentType: "markdown" });
@@ -137,13 +135,10 @@ export function MarkdownEditor({
     provider.on("synced", onSynced);
 
     provider.on("status", ({ status }: { status: string }) => {
-      if (status === "disconnected") setCollabStatus("error");
-      else if (status === "connected") setCollabStatus("live");
+      if (status === "connected") setCollabReady(true);
     });
 
-    const connectTimer = window.setTimeout(() => {
-      setCollabStatus((s) => (s === "connecting" ? "error" : s));
-    }, 8000);
+    const connectTimer = window.setTimeout(() => setCollabReady(true), 8000);
 
     return () => {
       window.clearTimeout(connectTimer);
@@ -173,31 +168,39 @@ export function MarkdownEditor({
     );
   }, [editor, scrollToHeading]);
 
-  if (!editor || editor.isDestroyed) return null;
+  const booting = !editor || editor.isDestroyed || (collabActive && !collabReady);
+
+  if (booting) {
+    return <EditorBodySkeleton />;
+  }
 
   return (
     <div className="relative">
-      {collabActive && (
+      {peers > 0 && (
         <div
-          className="pointer-events-none absolute -top-6 right-0 text-xs text-muted"
-          title={
-            collabStatus === "live"
-              ? "Live co-editing"
-              : collabStatus === "connecting"
-                ? "Connecting…"
-                : "Collaboration offline — edits still autosave"
-          }
+          className="pointer-events-none absolute -top-6 right-0 text-xs text-vis-public"
+          title="Others editing this note"
         >
-          {collabStatus === "live" && (
-            <span className="text-vis-public">
-              ● Live{peers > 0 ? ` · ${peers + 1} here` : ""}
-            </span>
-          )}
-          {collabStatus === "connecting" && <span>Connecting…</span>}
-          {collabStatus === "error" && <span className="text-muted">Offline</span>}
+          ● {peers + 1} here
         </div>
       )}
       <EditorContent editor={editor} />
+    </div>
+  );
+}
+
+const SKELETON_LINES = ["92%", "78%", "85%", "64%", "88%", "72%", "55%"];
+
+function EditorBodySkeleton() {
+  return (
+    <div className="min-h-[8rem] space-y-3 py-1" aria-hidden>
+      {SKELETON_LINES.map((w, i) => (
+        <span
+          key={i}
+          className="skeleton block h-3.5 rounded"
+          style={{ width: w, marginLeft: i === 3 ? "1.25rem" : undefined }}
+        />
+      ))}
     </div>
   );
 }
