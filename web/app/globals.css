@@ -234,6 +234,67 @@ main {
   margin: 1.6em 0;
 }
 
+/* GFM tables */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.92em;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.65rem;
+  vertical-align: top;
+}
+.prose th {
+  background: var(--surface);
+  font-weight: 600;
+  text-align: left;
+}
+.prose .tableWrapper {
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+/* Task lists */
+.prose ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.prose li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+}
+.prose li[data-type="taskItem"] > label {
+  margin-top: 0.2em;
+  user-select: none;
+}
+.prose li[data-type="taskItem"] > div {
+  flex: 1;
+}
+
+/* Wiki links + in-editor links */
+.prose .oms-wiki-link,
+.prose a.oms-wiki-link {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+.prose a.oms-md-link {
+  color: var(--brand);
+}
+
+.oms-editor-body {
+  max-width: 70ch;
+}
+
 /* ---------- Landing: brand wordmark + animations ---------- */
 
 .font-display {

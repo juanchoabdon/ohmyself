@@ -273,11 +273,11 @@ export function Sidebar({
                 selected === node.path ? "bg-brand-weak text-ink" : "text-ink/80 hover:bg-bg"
               }`}
             >
-              <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
                 {date && <span className="shrink-0 tabular-nums text-[0.7rem] text-muted/70">{date}</span>}
                 <span className="truncate">{node.note?.title ?? node.name}</span>
               </span>
-              {node.note && <VisibilityBadge visibility={node.note.visibility} />}
+              {node.note && <span className="shrink-0 pl-1"><VisibilityBadge visibility={node.note.visibility} /></span>}
             </button>
           </li>
         );
@@ -288,7 +288,7 @@ export function Sidebar({
         <li key={node.path}>
           <div
             style={{ paddingLeft: pad }}
-            className="group flex w-full items-center gap-1 rounded-md py-1.5 pr-2 text-sm text-ink/90 hover:bg-bg"
+            className="group relative flex w-full items-center gap-1 rounded-md py-1.5 pr-2 text-sm text-ink/90 hover:bg-bg"
           >
             <button
               onClick={() => toggle(node.path)}
@@ -299,20 +299,23 @@ export function Sidebar({
             </button>
             <button
               onClick={() => (node.note ? onSelect(node.note.path) : toggle(node.path))}
-              className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left font-medium capitalize"
+              className="min-w-0 flex-1 overflow-hidden text-left font-medium capitalize"
             >
-              <span className="truncate">{prettyFolder(node.name)}</span>
+              <span className="block truncate">{prettyFolder(node.name)}</span>
             </button>
+            <span className="flex shrink-0 items-center gap-1.5 pl-1">
+              <span className="text-[0.7rem] tabular-nums text-muted/70">{countFiles(node)}</span>
+              {node.note && <VisibilityBadge visibility={node.note.visibility} />}
+            </span>
             {canEdit && !filtering && (
               <FolderActions
                 folder={node.path}
                 onCreateInside={onCreateInside}
                 onRenameFolder={onRenameFolder}
                 onDeleteFolder={onDeleteFolder}
+                className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md border border-border bg-surface px-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100"
               />
             )}
-            <span className="shrink-0 text-[0.7rem] tabular-nums text-muted/70">{countFiles(node)}</span>
-            {node.note && <VisibilityBadge visibility={node.note.visibility} />}
           </div>
           {open && node.children.length > 0 && <ul>{renderNodes(node.children, depth + 1)}</ul>}
         </li>
@@ -450,7 +453,9 @@ export function Sidebar({
                   <span className="grid h-3.5 w-3.5 shrink-0 place-items-center text-muted/70">
                     <Chevron open={open} />
                   </span>
-                  <span className="truncate">{titleCase(rootName)}</span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-left">
+                    <span className="block truncate">{titleCase(rootName)}</span>
+                  </span>
                 </button>
                 <span className="flex shrink-0 items-center gap-1.5">
                   {node?.note && (
@@ -527,18 +532,20 @@ function FolderActions({
   onCreateInside,
   onRenameFolder,
   onDeleteFolder,
+  className,
 }: {
   folder: string;
   onCreateInside?: (folder: string) => void;
   onRenameFolder?: (folder: string) => void;
   onDeleteFolder?: (folder: string) => void;
+  className?: string;
 }) {
   const stop = (fn: () => void) => (e: React.MouseEvent) => {
     e.stopPropagation();
     fn();
   };
   return (
-    <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+    <span className={`flex items-center gap-0.5 ${className ?? ""}`}>
       {onCreateInside && (
         <IconBtn label="New entry here" onClick={stop(() => onCreateInside(folder))}>
           <PlusIcon />

@@ -24,6 +24,7 @@ import {
   upsertPerson,
   upsertProject,
   writeBrain,
+  attributionFromAuth,
   type AuthContext,
   type CommitmentOwner,
   type CommitmentStatus,
@@ -44,7 +45,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
 /** The public MCP tool contract version. Bumped for the retrieval architecture
  *  (research_brain + graph primitives + write_brain + routing policy). Kept
  *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.1";
+const CONTRACT_VERSION = "2.4";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -101,6 +102,8 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         "- get_neighbors / get_backlinks / search_by_entity / timeline: navigate the graph around a note or entity, or scan a time window.",
         "",
         "SPACES: the same retrieval routing applies to company wikis you belong to (list_spaces). Use the *_space variants (recall_space, search_space, research_space, get_space_neighbors, get_space_backlinks, search_space_by_entity, space_timeline) instead of the personal tools when the question is about a company (e.g. Bonds). Never answer about a company from the personal brain.",
+        "",
+        "FRIENDS: brains shared with you (list_friends) mirror the same read routing via *_friend variants: recall_friend / search_friend_brain (fast), research_friend (deep), get_friend_neighbors / get_friend_backlinks / search_friend_by_entity / friend_timeline (navigate). Always read-only; capped at the visibility they granted. Never answer about a friend from your own brain.",
         "",
         "WRITING: prefer the specific tools (remember, add_person, upsert_project, add_to_project, set_goal, log_journal, update_identity) when you know the destination. Use write_brain to auto-route + dedupe when you don't. For a company wiki use the *_space write tools (create_space_note / update_space_note / append_space_note, or write_space to auto-route). Never invent facts; capture durable info in the moment.",
       ].join("\n"),
@@ -382,9 +385,11 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           fast_recall: "recall / search_brain — narrow, explicit questions; 1-2 notes suffice",
           deep_research: "research_brain — ambiguous, multi-hop, history/synthesis, or low coverage",
           navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
-          write: "specific write tools when destination is known; write_brain to auto-route + dedupe",
+          write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version for note version timeline",
           spaces:
             "company wikis (list_spaces) mirror the same routing via *_space variants: recall_space / search_space (fast), research_space (deep), get_space_neighbors / get_space_backlinks / search_space_by_entity / space_timeline (navigate), create_space_note / update_space_note / append_space_note / write_space (write, owner/admin)",
+          friends:
+            "shared brains (list_friends) mirror the same read routing via *_friend variants: recall_friend / search_friend_brain (fast), research_friend (deep), get_friend_neighbors / get_friend_backlinks / search_friend_by_entity / friend_timeline (navigate) — always read-only, capped at granted visibility",
         },
         categories: cfg.noteTypes,
         conventions: {
@@ -443,7 +448,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "List friends",
       description:
-        "List the people who've shared their brain (read-only) with you. Returns each friend's slug (use it as the `friend` argument for recall_friend, search_friend_brain, list_friend_notes, read_friend_note, who_is_friend) and the visibility level they granted you.",
+        "List the people who've shared their brain (read-only) with you. Returns each friend's slug (use it as the `friend` argument for recall_friend, search_friend_brain, research_friend, list_friend_notes, read_friend_note, who_is_friend, get_friend_neighbors, get_friend_backlinks, search_friend_by_entity, friend_timeline) and the visibility level they granted you.",
       annotations: { readOnlyHint: true },
       inputSchema: {},
     },
@@ -554,6 +559,128 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     async ({ friend }) => {
       const f = findFriend(await friends(), friend);
       return text(await friendIdentityText(f.ownerId, f.name, allowedVisibilities(f.maxVisibility)));
+    },
+  );
+
+  server.registerTool(
+    "research_friend",
+    {
+      title: "Research a friend's brain (deep)",
+      description:
+        "DEEP retrieval over a friend's shared brain — same as research_brain, but scoped to a friend. For hard, multi-hop, or synthesis questions ('why did they decide X?', 'how do their goals connect to project Y?', 'what's the story of Z across time?'). Plans sub-queries, does multiple hybrid searches, follows links, reads the top notes, and returns a synthesized `answer` with cited `sources`, `coverage`, `suggested_followups`, and a `trace`. Slower/costlier — for a single fact use recall_friend or search_friend_brain. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        question: z.string().describe("the question to research over the friend's brain"),
+        max_searches: z.number().int().positive().max(8).optional().describe("cap on hybrid searches (default 5)"),
+        max_reads: z.number().int().positive().max(15).optional().describe("cap on notes read in full (default 8)"),
+      },
+    },
+    async ({ friend, question, max_searches, max_reads }) => {
+      const f = findFriend(await friends(), friend);
+      const res = await researchBrain(brain, f.ownerId, question, allowedVisibilities(f.maxVisibility), {
+        maxSearches: max_searches,
+        maxReads: max_reads,
+      });
+      return text(res);
+    },
+  );
+
+  server.registerTool(
+    "get_friend_backlinks",
+    {
+      title: "Get backlinks in a friend's brain",
+      description:
+        "List notes that link TO a given note inside a friend's brain — same as get_backlinks, but scoped to a friend. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        path: z.string().describe("the note whose backlinks you want, e.g. people/ana.md"),
+        limit: z.number().int().positive().max(100).optional(),
+      },
+    },
+    async ({ friend, path, limit }) => {
+      const f = findFriend(await friends(), friend);
+      return text(await brain.getBacklinks(f.ownerId, path, allowedVisibilities(f.maxVisibility), limit ?? 50));
+    },
+  );
+
+  server.registerTool(
+    "get_friend_neighbors",
+    {
+      title: "Get neighboring notes in a friend's brain",
+      description:
+        "Explore a note's neighborhood in a friend's knowledge graph: `outgoing` links, `backlinks`, and `semantic` (topically similar) notes — same as get_neighbors, but scoped to a friend. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        path: z.string().describe("the note to explore, e.g. projects/x/_index.md"),
+        semantic_limit: z.number().int().positive().max(15).optional().describe("how many semantic neighbors (default 6)"),
+      },
+    },
+    async ({ friend, path, semantic_limit }) => {
+      const f = findFriend(await friends(), friend);
+      return text(
+        await brain.getNeighbors(f.ownerId, path, allowedVisibilities(f.maxVisibility), {
+          semanticLimit: semantic_limit,
+        }),
+      );
+    },
+  );
+
+  server.registerTool(
+    "search_friend_by_entity",
+    {
+      title: "Search a friend's brain by entity",
+      description:
+        "Find everything a friend has shared about a named person, project, or concept: its canonical page plus the notes that mention or link to it — same as search_by_entity, but scoped to a friend. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        name: z.string().describe("the person, project, or concept name"),
+        limit: z.number().int().positive().max(50).optional(),
+      },
+    },
+    async ({ friend, name, limit }) => {
+      const f = findFriend(await friends(), friend);
+      return text(await brain.searchByEntity(f.ownerId, name, allowedVisibilities(f.maxVisibility), { limit }));
+    },
+  );
+
+  server.registerTool(
+    "friend_timeline",
+    {
+      title: "Timeline of a friend's notes",
+      description:
+        "List a friend's notes chronologically within an optional date window — same as timeline, but scoped to a friend. Order by `created` (default) or `updated`, filter by type/tag/path prefix. Read-only; capped at the visibility they granted you. Call list_friends first for valid `friend` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        friend: z.string().describe("friend slug from list_friends"),
+        from: z.string().optional().describe("inclusive start date YYYY-MM-DD"),
+        to: z.string().optional().describe("inclusive end date YYYY-MM-DD"),
+        by: z.enum(["created", "updated"]).optional(),
+        order: z.enum(["asc", "desc"]).optional(),
+        type: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        prefix: z.string().optional().describe("path prefix filter, e.g. journal/"),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ friend, from, to, by, order, type, tags, prefix, limit }) => {
+      const f = findFriend(await friends(), friend);
+      return text(
+        await brain.timeline(f.ownerId, {
+          allowed: allowedVisibilities(f.maxVisibility),
+          from,
+          to,
+          by,
+          order,
+          types: type ? [type] : undefined,
+          tags,
+          prefix,
+          limit,
+        }),
+      );
     },
   );
 
@@ -1506,6 +1633,49 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
 
   // ── Power tools (generic CRUD) ─────────────────────────────────────────────
 
+  function mcpAttr(summary?: string) {
+    return attributionFromAuth(auth, summary);
+  }
+
+  server.registerTool(
+    "history",
+    {
+      title: "Note version history",
+      description:
+        "Version timeline for a note (stored in Supabase). Each entry has a numeric `version` id to pass to restore_version.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().describe("note path"),
+        limit: z.number().int().min(1).max(200).optional(),
+        offset: z.number().int().min(0).optional(),
+      },
+    },
+    async ({ path, limit, offset }) => {
+      const entries = await brain.getNoteHistory(auth.spaceId, path, allowed, { limit, offset });
+      return text({ path, entries });
+    },
+  );
+
+  server.registerTool(
+    "restore_version",
+    {
+      title: "Restore note version",
+      description:
+        "Restore a note to a historical version (SHA from history). Writes vault + shadow git; emits live SSE.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: {
+        path: z.string(),
+        version: z.string().describe("version id from history"),
+        summary: z.string().max(80).optional().describe("intent shown on the timeline"),
+      },
+    },
+    async ({ path, version, summary }) => {
+      requireWrite();
+      const note = await brain.restoreVersion(auth.spaceId, path, version, allowed, mcpAttr(summary));
+      return text({ restored: note.path, version, meta: note.meta });
+    },
+  );
+
   server.registerTool(
     "create_note",
     {
@@ -1521,6 +1691,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
         path: z.string().optional(),
+        summary: z.string().max(80).optional().describe("intent shown on the timeline"),
       },
     },
     async (args) => {
@@ -1528,8 +1699,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       if (args.visibility && !allowed.includes(args.visibility)) {
         throw new ForbiddenError("cannot create a note above your scope");
       }
+      const { summary, ...input } = args;
       // Pass `allowed` so a note can't exceed scope via its type's default visibility.
-      const note = await brain.createNote(auth.spaceId, args, await config(), allowed);
+      const note = await brain.createNote(auth.spaceId, input, await config(), allowed, mcpAttr(summary));
       return text({ created: note.path, meta: note.meta });
     },
   );
@@ -1547,11 +1719,12 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility: VisibilityEnum.optional(),
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
+        summary: z.string().max(80).optional().describe("intent shown on the timeline"),
       },
     },
-    async ({ path, ...patch }) => {
+    async ({ path, summary, ...patch }) => {
       requireWrite();
-      const note = await brain.updateNote(auth.spaceId, path, patch, allowed);
+      const note = await brain.updateNote(auth.spaceId, path, patch, allowed, mcpAttr(summary));
       return text({ updated: note.path, meta: note.meta });
     },
   );
@@ -1562,11 +1735,11 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       title: "Append to a note",
       description: "Append text to the end of a note's body by path.",
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: { path: z.string(), text: z.string() },
+      inputSchema: { path: z.string(), text: z.string(), summary: z.string().max(80).optional() },
     },
-    async ({ path, text: t }) => {
+    async ({ path, text: t, summary }) => {
       requireWrite();
-      const note = await brain.appendToNote(auth.spaceId, path, t, allowed);
+      const note = await brain.appendToNote(auth.spaceId, path, t, allowed, mcpAttr(summary));
       return text({ appended: note.path });
     },
   );

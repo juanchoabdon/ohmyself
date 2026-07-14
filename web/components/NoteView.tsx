@@ -5,7 +5,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FullNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
-import { MarkdownEditor } from "./MarkdownEditor";
+import { MarkdownEditor, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
+import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
 
 export function NoteView({
   note,
@@ -13,41 +14,29 @@ export function NoteView({
   onOpenLink,
   onSave,
   onDelete,
+  onBodyChange,
+  onDirtyChange,
+  scrollToHeading,
 }: {
   note: FullNote | null;
   loading: boolean;
   onOpenLink: (path: string) => void;
   onSave?: (patch: { title?: string; body?: string; visibility?: Visibility; tags?: string[] }) => Promise<void>;
   onDelete?: () => Promise<void>;
+  onBodyChange?: (body: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+  scrollToHeading?: ScrollToHeadingTarget | null;
 }) {
   const editable = Boolean(onSave);
-  const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("private");
   const [tags, setTags] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const focusTarget = useRef<"title" | "body" | null>(null);
-  const clickCoords = useRef<{ x: number; y: number } | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
-  const articleRef = useRef<HTMLElement>(null);
-  const savedScroll = useRef<number | null>(null);
 
-  // The scrollable ancestor that actually holds this note's scroll position.
-  function scrollParent(): HTMLElement | null {
-    let el = articleRef.current?.parentElement ?? null;
-    while (el) {
-      const oy = getComputedStyle(el).overflowY;
-      if (oy === "auto" || oy === "scroll") return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
-  // Sync local fields whenever a different note opens; leave edit mode.
   useEffect(() => {
-    setEditing(false);
     setError(null);
     if (note) {
       setTitle(note.meta.title);
@@ -57,35 +46,17 @@ export function NoteView({
     }
   }, [note?.path]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Focus the title field if that's what the user clicked. The body is a
-  // WYSIWYG editor that self-focuses via its autoFocus prop.
-  useLayoutEffect(() => {
-    if (!editing) return;
-    if (focusTarget.current === "title" && titleRef.current) {
-      const el = titleRef.current;
-      el.focus();
-      const len = el.value.length;
-      el.setSelectionRange(len, len);
-    }
-    // Entering edit mode swaps the rendered body for a WYSIWYG editor that
-    // mounts empty for a frame (immediatelyRender:false), briefly collapsing
-    // the article height and letting the scroll container clamp to the top.
-    // Pin the scroll position back through that reflow so the page stays put.
-    const top = savedScroll.current;
-    if (top != null) {
-      const sc = scrollParent();
-      if (sc) {
-        sc.scrollTop = top;
-        requestAnimationFrame(() => {
-          sc.scrollTop = top;
-        });
-        const t = setTimeout(() => {
-          sc.scrollTop = top;
-        }, 80);
-        return () => clearTimeout(t);
-      }
-    }
-  }, [editing]);
+  const dirty =
+    Boolean(note) &&
+    editable &&
+    (title.trim() !== note!.meta.title ||
+      body !== note!.body ||
+      visibility !== note!.meta.visibility ||
+      tags !== note!.meta.tags.join(", "));
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   if (loading) return <Centered>Loading…</Centered>;
   if (!note) {
@@ -101,28 +72,7 @@ export function NoteView({
     );
   }
 
-  const dirty =
-    editing &&
-    (title.trim() !== note.meta.title ||
-      body !== note.body ||
-      visibility !== note.meta.visibility ||
-      tags !== note.meta.tags.join(", "));
-
-  function start(target: "title" | "body", e?: React.MouseEvent) {
-    if (!editable || busy) return;
-    // Clicking a link (e.g. a [source] in a note) should follow the link, not edit.
-    if (e && (e.target as HTMLElement).closest("a")) return;
-    // If the user is selecting text (to copy), don't hijack it into edit mode.
-    const sel = typeof window !== "undefined" ? window.getSelection() : null;
-    if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
-    focusTarget.current = target;
-    clickCoords.current = e ? { x: e.clientX, y: e.clientY } : null;
-    savedScroll.current = scrollParent()?.scrollTop ?? null;
-    setEditing(true);
-  }
-
   function cancel() {
-    setEditing(false);
     setError(null);
     setTitle(note!.meta.title);
     setBody(note!.body);
@@ -141,7 +91,6 @@ export function NoteView({
         visibility,
         tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
       });
-      setEditing(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save");
     } finally {
@@ -150,14 +99,12 @@ export function NoteView({
   }
 
   return (
-    <article ref={articleRef} className="mx-auto w-full max-w-3xl px-8 py-10">
+    <article className="mx-auto w-full max-w-3xl px-8 py-10">
       <header className="mb-6 border-b border-border pb-5">
-        {/* Always-present top row. Buttons swap in place (Edit/Delete ⇄ Cancel/Save)
-            so entering edit mode never inserts a bar above the content (no scroll jump). */}
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted">
             <span className="rounded bg-bg px-1.5 py-0.5 font-medium capitalize">{note.meta.type}</span>
-            {editing ? (
+            {editable ? (
               <select
                 value={visibility}
                 onChange={(e) => setVisibility(e.target.value as Visibility)}
@@ -170,7 +117,7 @@ export function NoteView({
             ) : (
               <VisibilityBadge visibility={note.meta.visibility} />
             )}
-            {editing ? (
+            {editable ? (
               <span>· {dirty ? "unsaved changes" : "editing"}</span>
             ) : (
               note.meta.updated && <span>· updated {note.meta.updated}</span>
@@ -178,7 +125,7 @@ export function NoteView({
           </div>
           {(onSave || onDelete) && (
             <div className="flex items-center gap-1.5">
-              {editing ? (
+              {editable && dirty && (
                 <>
                   <button
                     onClick={cancel}
@@ -189,45 +136,34 @@ export function NoteView({
                   </button>
                   <button
                     onClick={save}
-                    disabled={busy || !title.trim() || !dirty}
+                    disabled={busy || !title.trim()}
                     className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-60"
                   >
                     {busy ? "Saving…" : "Save"}
                   </button>
                 </>
-              ) : (
-                <>
-                  {onSave && (
-                    <button
-                      onClick={() => start("body")}
-                      className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-ink hover:border-brand hover:text-brand-ink"
-                    >
-                      Edit
-                    </button>
-                  )}
-                  {onDelete && (
-                    <button
-                      onClick={async () => {
-                        setBusy(true);
-                        try {
-                          await onDelete();
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                      disabled={busy}
-                      className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret disabled:opacity-60"
-                    >
-                      Delete
-                    </button>
-                  )}
-                </>
+              )}
+              {onDelete && (
+                <button
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await onDelete();
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  disabled={busy}
+                  className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret disabled:opacity-60"
+                >
+                  Delete
+                </button>
               )}
             </div>
           )}
         </div>
 
-        {editing ? (
+        {editable ? (
           <AutoTextarea
             ref={titleRef}
             value={title}
@@ -237,18 +173,10 @@ export function NoteView({
             className="oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
           />
         ) : (
-          <h1
-            onClick={(e) => start("title", e)}
-            className={`text-[1.7rem] font-bold tracking-tight text-balance ${
-              editable ? "cursor-text rounded transition-colors hover:bg-surface" : ""
-            }`}
-            title={editable ? "Click to edit" : undefined}
-          >
-            {note.meta.title}
-          </h1>
+          <h1 className="text-[1.7rem] font-bold tracking-tight text-balance">{note.meta.title}</h1>
         )}
 
-        {editing ? (
+        {editable ? (
           <input
             value={tags}
             onChange={(e) => setTags(e.target.value)}
@@ -268,30 +196,31 @@ export function NoteView({
         )}
       </header>
 
-      {editing ? (
+      {editable ? (
         <MarkdownEditor
+          key={note.path}
+          noteKey={note.path}
           value={body}
-          onChange={setBody}
-          autoFocus={focusTarget.current === "body"}
-          focusCoords={clickCoords.current}
+          onChange={(md) => {
+            setBody(md);
+            onBodyChange?.(md);
+          }}
+          onOpenLink={onOpenLink}
+          scrollToHeading={scrollToHeading}
         />
       ) : (
-        <div
-          onClick={(e) => start("body", e)}
-          className={`prose min-h-[8rem] ${editable ? "cursor-text" : ""}`}
-          title={editable ? "Click to edit" : undefined}
-        >
+        <div className="prose min-h-[8rem]">
           {note.body.trim() ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{note.body}</ReactMarkdown>
+            <ReadOnlyBody body={note.body} onOpenLink={onOpenLink} />
           ) : (
-            <p className="text-muted/70">{editable ? "Empty — click to write something." : "Empty."}</p>
+            <p className="text-muted/70">Empty.</p>
           )}
         </div>
       )}
 
       {error && <p className="mt-3 rounded-md bg-vis-secret/10 px-3 py-2 text-sm text-vis-secret">{error}</p>}
 
-      {!editing && note.meta.links.length > 0 && (
+      {note.meta.links.length > 0 && (
         <footer className="mt-8 border-t border-border pt-4">
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Linked</h3>
           <div className="flex flex-wrap gap-2">
@@ -311,8 +240,36 @@ export function NoteView({
   );
 }
 
-/** A borderless textarea that grows to fit its content, so editing feels inline
- *  with the page rather than inside a fixed box. */
+function ReadOnlyBody({ body, onOpenLink }: { body: string; onOpenLink: (path: string) => void }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => {
+          if (isWikiHref(href)) {
+            return (
+              <button
+                type="button"
+                onClick={() => onOpenLink(wikiPathFromHref(href!))}
+                className="oms-wiki-link font-medium text-brand underline underline-offset-2"
+              >
+                {children}
+              </button>
+            );
+          }
+          return (
+            <a href={href} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          );
+        },
+      }}
+    >
+      {wikiLinksToMarkdownLinks(body)}
+    </ReactMarkdown>
+  );
+}
+
 const AutoTextarea = forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(
   function AutoTextarea(props, ref) {
     const innerRef = useRef<HTMLTextAreaElement>(null);

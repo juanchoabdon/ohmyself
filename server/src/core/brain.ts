@@ -5,6 +5,7 @@ import {
   type UserConfig,
 } from "./config.js";
 import { embedQuery, embedTexts, embeddingsEnabled } from "./embeddings.js";
+import { emitBrainEvent } from "./events.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "./errors.js";
 import { excerptOf, parseNote, serializeNote, todayISO } from "./frontmatter.js";
 import type { BrainIndex } from "./indexer/types.js";
@@ -21,6 +22,8 @@ import type {
   Visibility,
 } from "./types.js";
 import type { Vault } from "./vault/types.js";
+import type { WriteAttribution } from "./versions/types.js";
+import type { VersionOp, VersionStore } from "./versions/types.js";
 
 export function slugify(s: string): string {
   return s
@@ -74,6 +77,7 @@ export class Brain {
   constructor(
     private vault: Vault,
     private index: BrainIndex,
+    private versions: VersionStore,
   ) {}
 
   private indexRecord(path: string, meta: NoteMeta, body: string): IndexRecord {
@@ -130,11 +134,35 @@ export class Brain {
     }
   }
 
+  private async recordVersion(
+    spaceId: string,
+    notePath: string,
+    meta: NoteMeta,
+    raw: string | null,
+    op: VersionOp,
+    attr?: WriteAttribution,
+  ): Promise<void> {
+    try {
+      await this.versions.record(spaceId, {
+        path: notePath,
+        title: meta.title,
+        visibility: meta.visibility,
+        author: attr?.author ?? "ohmyself",
+        summary: attr?.summary,
+        op,
+        raw,
+      });
+    } catch {
+      /* version history is best-effort; vault/index remain SSOT */
+    }
+  }
+
   async createNote(
     userId: string,
     input: CreateNoteInput,
     config: UserConfig,
     allowed?: Visibility[],
+    attr?: WriteAttribution,
   ): Promise<Note> {
     if (!input.title?.trim()) throw new BadRequestError("title is required");
     const type = input.type?.trim() || "note";
@@ -164,8 +192,11 @@ export class Brain {
       extra: input.extra && Object.keys(input.extra).length ? input.extra : undefined,
     };
     const body = input.body ?? "";
-    await this.vault.write(userId, path, serializeNote(meta, body));
+    const raw = serializeNote(meta, body);
+    await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
+    await this.recordVersion(userId, path, meta, raw, "create", attr);
+    emitBrainEvent({ type: "note_created", spaceId: userId, path, updated: meta.updated });
     return { path, meta, body };
   }
 
@@ -181,6 +212,7 @@ export class Brain {
     input: UpsertNoteInput,
     config: UserConfig,
     allowed: Visibility[],
+    attr?: WriteAttribution,
   ): Promise<{ note: Note; created: boolean }> {
     const clean = path.trim().replace(/^\/+/, "");
     const existingRaw = await this.vault.read(userId, clean);
@@ -199,7 +231,7 @@ export class Brain {
           ? `${curBody.replace(/\s+$/, "")}\n\n${input.body.trim()}\n`
           : input.body;
       }
-      const note = await this.updateNote(userId, clean, patch, allowed);
+      const note = await this.updateNote(userId, clean, patch, allowed, attr);
       return { note, created: false };
     }
 
@@ -221,16 +253,64 @@ export class Brain {
       },
       config,
       allowed,
+      attr,
     );
     return { note, created: true };
   }
 
+  async getNoteHistory(
+    spaceId: string,
+    path: string,
+    allowed: Visibility[],
+    opts?: { limit?: number; offset?: number },
+  ) {
+    return this.versions.history(spaceId, path, allowed, opts);
+  }
+
+  async getRecentActivity(
+    spaceId: string,
+    allowed: Visibility[],
+    opts?: { limit?: number },
+  ) {
+    return this.versions.recentActivity(spaceId, allowed, opts);
+  }
+
+  async restoreVersion(
+    userId: string,
+    path: string,
+    version: string,
+    allowed: Visibility[],
+    attr?: WriteAttribution,
+  ): Promise<Note> {
+    const raw = await this.versions.readAtVersion(userId, path, version, allowed);
+    if (raw == null) throw new NotFoundError(`no version ${version} for ${path}`);
+    const { meta, body } = parseNote(raw, path);
+    if (!allowed.includes(meta.visibility)) throw new NotFoundError(`no note at ${path}`);
+    meta.updated = todayISO();
+    const next = serializeNote(meta, body);
+    await this.vault.write(userId, path, next);
+    await this.writeIndex(userId, path, meta, body);
+    await this.recordVersion(userId, path, meta, next, "restore", {
+      author: attr?.author ?? "human",
+      summary: attr?.summary ?? `restore ${version}`,
+    });
+    emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
+    return { path, meta, body };
+  }
+
   /** Write a note from raw markdown at an exact path, preserving its
    *  frontmatter as-is. Used for seeding and file-based imports. */
-  async importRaw(userId: string, path: string, raw: string): Promise<Note> {
+  async importRaw(
+    userId: string,
+    path: string,
+    raw: string,
+    attr?: WriteAttribution,
+  ): Promise<Note> {
     const { meta, body } = parseNote(raw, path);
     await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
+    await this.recordVersion(userId, path, meta, raw, "update", attr);
+    emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
     return { path, meta, body };
   }
 
@@ -248,6 +328,7 @@ export class Brain {
     path: string,
     patch: UpdateNoteInput,
     allowed: Visibility[],
+    attr?: WriteAttribution,
   ): Promise<Note> {
     const current = await this.readNote(userId, path, allowed); // enforces visibility
     const meta: NoteMeta = { ...current.meta };
@@ -266,8 +347,11 @@ export class Brain {
     }
     meta.updated = todayISO();
     const body = patch.body !== undefined ? patch.body : current.body;
-    await this.vault.write(userId, path, serializeNote(meta, body));
+    const raw = serializeNote(meta, body);
+    await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
+    await this.recordVersion(userId, path, meta, raw, "update", attr);
+    emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
     return { path, meta, body };
   }
 
@@ -276,17 +360,25 @@ export class Brain {
     path: string,
     text: string,
     allowed: Visibility[],
+    attr?: WriteAttribution,
   ): Promise<Note> {
     const current = await this.readNote(userId, path, allowed);
     const body = `${current.body.replace(/\s+$/, "")}\n\n${text.trim()}\n`;
-    return this.updateNote(userId, path, { body }, allowed);
+    return this.updateNote(userId, path, { body }, allowed, attr);
   }
 
-  async deleteNote(userId: string, path: string, allowed: Visibility[]): Promise<void> {
-    await this.readNote(userId, path, allowed); // enforce visibility / existence
+  async deleteNote(
+    userId: string,
+    path: string,
+    allowed: Visibility[],
+    attr?: WriteAttribution,
+  ): Promise<void> {
+    const current = await this.readNote(userId, path, allowed); // enforce visibility / existence
     await this.vault.remove(userId, path);
     await this.index.remove(userId, path);
     await this.removeChunks(userId, path);
+    await this.recordVersion(userId, path, current.meta, null, "delete", attr);
+    emitBrainEvent({ type: "note_deleted", spaceId: userId, path });
   }
 
   /** Move/rename a note to a new path, preserving its frontmatter. Used by the
@@ -296,6 +388,7 @@ export class Brain {
     from: string,
     to: string,
     allowed: Visibility[],
+    attr?: WriteAttribution,
   ): Promise<Note> {
     const dest = to.trim().replace(/^\/+/, "");
     if (!dest) throw new BadRequestError("destination path is required");
@@ -305,11 +398,23 @@ export class Brain {
     const collision = await this.vault.read(userId, dest);
     if (collision != null) throw new BadRequestError(`a note already exists at ${dest}`);
 
-    await this.vault.write(userId, dest, serializeNote(current.meta, current.body));
+    const raw = serializeNote(current.meta, current.body);
+    await this.vault.write(userId, dest, raw);
     await this.writeIndex(userId, dest, current.meta, current.body);
     await this.vault.remove(userId, from);
     await this.index.remove(userId, from);
     await this.removeChunks(userId, from);
+    await this.recordVersion(userId, dest, current.meta, raw, "move", {
+      author: attr?.author ?? "ohmyself",
+      summary: attr?.summary ?? `move ${from} → ${dest}`,
+    });
+    emitBrainEvent({
+      type: "note_moved",
+      spaceId: userId,
+      path: from,
+      to: dest,
+      updated: current.meta.updated,
+    });
     return { path: dest, meta: current.meta, body: current.body };
   }
 

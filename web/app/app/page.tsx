@@ -15,6 +15,21 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { SpaceSwitcher, applySpaceAccent } from "@/components/SpaceSwitcher";
 import { CreateSpaceDialog, type CreateSpaceValues } from "@/components/CreateSpaceDialog";
 import { ProfileMenu, type SettingsTab } from "@/components/ProfileMenu";
+import { EditorTabs } from "@/components/EditorTabs";
+import { CommandPalette } from "@/components/CommandPalette";
+import { DocPanel } from "@/components/DocPanel";
+import {
+  closeTab,
+  loadEditorTabs,
+  reorderTabs,
+  saveEditorTabs,
+  upsertTab,
+  type EditorTab,
+} from "@/lib/editorTabs";
+import { PanelRight, Search } from "lucide-react";
+import { connectBrainEvents } from "@/lib/brainEvents";
+import type { OutlineItem } from "@/lib/outline";
+import type { ScrollToHeadingTarget } from "@/components/editor/MarkdownEditor";
 
 /** localStorage key holding the last note opened in a given space, so a page
  *  refresh (or coming back to a space) reopens where you left off. */
@@ -73,6 +88,12 @@ export default function Dashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [view, setView] = useState<"notes" | "map">("notes");
+  const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [docPanelOpen, setDocPanelOpen] = useState(true);
+  const [docPanelTab, setDocPanelTab] = useState<"outline" | "links" | "timeline">("outline");
+  const [editorBody, setEditorBody] = useState<string | undefined>(undefined);
+  const [scrollToHeading, setScrollToHeading] = useState<ScrollToHeadingTarget | null>(null);
 
   // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
   // hydration mismatch; persisted on every change.
@@ -91,6 +112,45 @@ export default function Dashboard() {
       /* storage unavailable — fine */
     }
   }, [view]);
+
+  // Editor tabs persist per space.
+  useEffect(() => {
+    if (!activeSpaceId) return;
+    setOpenTabs(loadEditorTabs(activeSpaceId));
+  }, [activeSpaceId]);
+
+  useEffect(() => {
+    if (!activeSpaceId) return;
+    saveEditorTabs(activeSpaceId, openTabs);
+  }, [openTabs, activeSpaceId]);
+
+  useEffect(() => {
+    setEditorBody(undefined);
+    setScrollToHeading(null);
+  }, [selected]);
+
+  useEffect(() => {
+    if (!fullNote) return;
+    setOpenTabs((prev) => upsertTab(prev, fullNote.path, fullNote.meta.title));
+  }, [fullNote?.path, fullNote?.meta.title]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    if (!paletteOpen || !token || !ready) return;
+    void ensureAllLoaded();
+    // ensureAllLoaded is idempotent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteOpen, token, ready]);
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -352,6 +412,8 @@ export default function Dashboard() {
     setSelected(path);
     setNoteLoading(true);
     setFullNote(null);
+    const indexed = (searchResults ?? baseNotes).find((n) => n.path === path);
+    setOpenTabs((prev) => upsertTab(prev, path, indexed?.title ?? path.split("/").pop()?.replace(/\.md$/, "") ?? path));
     // Remember it so a refresh reopens this note (see the space-load effect).
     if (activeSpaceId) {
       try {
@@ -376,6 +438,30 @@ export default function Dashboard() {
     } finally {
       setNoteLoading(false);
     }
+  }
+
+  function closeEditorTab(path: string) {
+    const remaining = closeTab(openTabs, path);
+    setOpenTabs(remaining);
+    if (selected === path) {
+      const next = remaining[remaining.length - 1]?.path;
+      if (next) void openNote(next);
+      else {
+        setSelected(null);
+        setFullNote(null);
+        if (activeSpaceId) {
+          try {
+            localStorage.removeItem(openNoteKey(activeSpaceId));
+          } catch {
+            /* storage unavailable */
+          }
+        }
+      }
+    }
+  }
+
+  function handleTabReorder(activePath: string, overPath: string) {
+    setOpenTabs((prev) => reorderTabs(prev, activePath, overPath));
   }
 
   async function signOut() {
@@ -427,6 +513,9 @@ export default function Dashboard() {
   const [confirm, setConfirm] = useState<{ kind: "note" | "folder"; path: string; count?: number } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const noteDirtyRef = useRef(false);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selected;
 
   async function refresh(open?: string | null) {
     if (!token) return;
@@ -466,6 +555,66 @@ export default function Dashboard() {
       }
     }
   }
+
+  // Live refresh when an agent (MCP) or another client writes to this space.
+  useEffect(() => {
+    if (!token || !ready || !activeSpaceId) return;
+    const ac = new AbortController();
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = async () => {
+      try {
+        await connectBrainEvents(
+          token,
+          async (event) => {
+            if (event.spaceId !== activeSpaceId) return;
+
+            if (event.type === "note_deleted" && selectedRef.current === event.path) {
+              setBanner("This note was deleted elsewhere.");
+              await refresh(null);
+              return;
+            }
+
+            let reopen: string | undefined;
+            if (event.type === "note_moved" && event.to && selectedRef.current === event.path) {
+              reopen = event.to;
+              setSelected(event.to);
+              setOpenTabs((prev) => {
+                const old = prev.find((t) => t.path === event.path);
+                if (!old) return prev;
+                return upsertTab(closeTab(prev, event.path), event.to!, old.title);
+              });
+            }
+
+            await refresh(reopen);
+
+            const livePath = event.type === "note_moved" && event.to ? event.to : event.path;
+            const cur = selectedRef.current;
+            if (livePath && (cur === event.path || cur === livePath)) {
+              if (noteDirtyRef.current) {
+                setBanner("This note was updated elsewhere — save or reload to sync.");
+                return;
+              }
+              try {
+                setFullNote(await api.readNote(token, livePath));
+              } catch {
+                /* note gone or inaccessible */
+              }
+            }
+          },
+          ac.signal,
+        );
+      } catch {
+        if (!ac.signal.aborted) retryTimer = setTimeout(connect, 4000);
+      }
+    };
+
+    void connect();
+    return () => {
+      ac.abort();
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [token, ready, activeSpaceId]);
 
   async function handleCreate(values: CreateEntryValues) {
     if (!token || !createFolder) return;
@@ -595,6 +744,28 @@ export default function Dashboard() {
             ))}
           </div>
           <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="hidden items-center gap-2 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm text-muted hover:text-ink sm:flex"
+          >
+            <Search className="h-3.5 w-3.5" />
+            <span>Search</span>
+            <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">⌘K</kbd>
+          </button>
+          {view === "notes" && selected && (
+            <button
+              type="button"
+              onClick={() => setDocPanelOpen((v) => !v)}
+              aria-pressed={docPanelOpen}
+              className={`rounded-lg border border-border p-1.5 transition-colors ${
+                docPanelOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
+              }`}
+              title="Toggle outline panel"
+            >
+              <PanelRight className="h-4 w-4" />
+            </button>
+          )}
+          <button
             onClick={() => {
               setSettingsTab("connectors");
               setSettingsOpen(true);
@@ -644,8 +815,8 @@ export default function Dashboard() {
           }}
         />
         <main
-          className={`min-h-0 min-w-0 flex-1 ${
-            view === "map" ? "relative overflow-hidden" : "overflow-y-auto overscroll-y-contain bg-bg"
+          className={`min-h-0 min-w-0 flex flex-1 flex-col overflow-hidden bg-bg ${
+            view === "map" ? "relative" : ""
           }`}
         >
           {view === "map" ? (
@@ -655,28 +826,93 @@ export default function Dashboard() {
               loadSemantic={token ? () => api.semanticLinks(token) : undefined}
             />
           ) : totalEntries === 0 && !selected && !noteLoading ? (
-            <SpaceWelcome
-              space={activeSpace}
-              categories={categories}
-              onCreateInside={(folder) => {
-                setCreateError(null);
-                setCreateFolder({ folder });
-              }}
-            />
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+              <SpaceWelcome
+                space={activeSpace}
+                categories={categories}
+                onCreateInside={(folder) => {
+                  setCreateError(null);
+                  setCreateFolder({ folder });
+                }}
+              />
+            </div>
           ) : (
-            <NoteView
-              note={fullNote}
-              loading={noteLoading}
-              onOpenLink={openNote}
-              onSave={handleSaveNote}
-              onDelete={async () => {
-                if (selected) setConfirm({ kind: "note", path: selected });
-              }}
-            />
+            <>
+              <EditorTabs
+                tabs={openTabs}
+                activePath={selected}
+                onSelect={openNote}
+                onClose={closeEditorTab}
+                onReorder={handleTabReorder}
+              />
+              <div className="flex min-h-0 flex-1 overflow-hidden">
+                <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain">
+                  <NoteView
+                    note={fullNote}
+                    loading={noteLoading}
+                    onOpenLink={openNote}
+                    onSave={handleSaveNote}
+                    onBodyChange={setEditorBody}
+                    onDirtyChange={(d) => {
+                      noteDirtyRef.current = d;
+                    }}
+                    scrollToHeading={scrollToHeading}
+                    onDelete={async () => {
+                      if (selected) setConfirm({ kind: "note", path: selected });
+                    }}
+                  />
+                </div>
+                {docPanelOpen && selected && fullNote && !noteLoading && (
+                  <DocPanel
+                    note={fullNote}
+                    tab={docPanelTab}
+                    onTabChange={setDocPanelTab}
+                    onOpenLink={openNote}
+                    onClose={() => setDocPanelOpen(false)}
+                    liveBody={editorBody}
+                    onOutlineClick={(item: OutlineItem, occurrence: number) =>
+                      setScrollToHeading({
+                        text: item.text,
+                        level: item.level,
+                        occurrence,
+                        nonce: Date.now(),
+                      })
+                    }
+                    token={token}
+                    onRestoreVersion={
+                      selected && token
+                        ? async (version) => {
+                            await api.restoreVersion(token, selected, version);
+                            noteDirtyRef.current = false;
+                            setEditorBody(undefined);
+                            await openNote(selected);
+                          }
+                        : undefined
+                    }
+                  />
+                )}
+              </div>
+            </>
           )}
         </main>
         <Chat token={token} open={chatOpen} onClose={() => setChatOpen(false)} onOpenNote={openNote} />
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        notes={baseNotes}
+        spaces={spaces}
+        activeSpaceId={activeSpaceId}
+        recentTabs={openTabs}
+        onOpenNote={openNote}
+        onNewNote={() => {
+          setCreateError(null);
+          setCreateFolder({ folder: "" });
+        }}
+        onToggleMap={() => setView((v) => (v === "map" ? "notes" : "map"))}
+        onSwitchSpace={switchSpace}
+      />
 
       <Settings
         token={token}

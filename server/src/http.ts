@@ -51,6 +51,25 @@ async function handleHono(req: IncomingMessage, res: ServerResponse): Promise<vo
     headers[key] = value;
   });
   res.writeHead(response.status, headers);
+
+  const isStream =
+    response.body != null &&
+    (response.headers.get("content-type")?.includes("text/event-stream") ?? false);
+
+  if (isStream && response.body) {
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+    } finally {
+      res.end();
+    }
+    return;
+  }
+
   const buf = Buffer.from(await response.arrayBuffer());
   res.end(buf);
 }

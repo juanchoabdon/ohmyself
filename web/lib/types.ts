@@ -31,6 +31,15 @@ export interface FullNote {
   raw: string;
 }
 
+export interface HistoryEntry {
+  version: string;
+  author: string;
+  timestamp: number;
+  summary: string;
+  op?: string;
+  path?: string;
+}
+
 export interface Category {
   folder: string;
   label: string;

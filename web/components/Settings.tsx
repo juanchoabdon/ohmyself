@@ -399,7 +399,8 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
             <h3 className="text-sm font-semibold text-ink">Friends</h3>
             <p className="mt-1 text-sm text-muted">
               Share your brain, read-only, with someone else on ohmyself! — they&apos;ll get
-              recall_friend, search_friend_brain, list_friend_notes and read_friend_note in their
+              recall_friend, search_friend_brain, research_friend, list_friend_notes,
+              read_friend_note, and graph tools (neighbors / backlinks / entity / timeline) in their
               own agent, capped at the level you pick. Never includes secret notes.
             </p>
 

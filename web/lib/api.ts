@@ -7,6 +7,7 @@ import type {
   ContextResult,
   FriendVisibility,
   FullNote,
+  HistoryEntry,
   IndexedNote,
   Me,
   SharedByMe,
@@ -131,6 +132,19 @@ export const api = {
     call<{ path: string }>("/v1/move", token, {
       method: "POST",
       body: JSON.stringify({ from, to }),
+    }),
+
+  noteHistory: (token: string, path: string, opts?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams({ path });
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.offset != null) q.set("offset", String(opts.offset));
+    return call<{ path: string; entries: HistoryEntry[] }>(`/v1/history?${q.toString()}`, token);
+  },
+
+  restoreVersion: (token: string, path: string, version: string, summary?: string) =>
+    call<{ path: string; restored: string }>("/v1/restore", token, {
+      method: "POST",
+      body: JSON.stringify({ path, version, summary }),
     }),
 
   context: (token: string, topic: string) =>

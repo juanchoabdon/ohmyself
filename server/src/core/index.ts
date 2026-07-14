@@ -6,11 +6,16 @@ import type { BrainIndex } from "./indexer/types.js";
 import { FsVault } from "./vault/fs.js";
 import { SupabaseVault } from "./vault/supabase.js";
 import type { Vault } from "./vault/types.js";
+import { FsVersionStore } from "./versions/fs.js";
+import { NoopVersionStore } from "./versions/noop.js";
+import { SupabaseVersionStore } from "./versions/supabase.js";
+import type { VersionStore } from "./versions/types.js";
 
 export * from "./types.js";
 export * from "./scope.js";
 export * from "./config.js";
 export * from "./errors.js";
+export { emitBrainEvent, subscribeBrainEvents, type BrainEvent, type BrainEventType } from "./events.js";
 export { Brain, slugify } from "./brain.js";
 export { parseNote, serializeNote, todayISO, excerptOf } from "./frontmatter.js";
 export {
@@ -122,6 +127,12 @@ export type {
   IngestMode,
   GroundingContext,
 } from "./distill.js";
+export {
+  type HistoryEntry,
+  type WriteAttribution,
+  type VersionOp,
+} from "./versions/types.js";
+export { attributionFromAuth } from "./write-attribution.js";
 
 export interface OhmyselfCore {
   brain: Brain;
@@ -145,8 +156,17 @@ export function buildCore(): OhmyselfCore {
     vault = new SupabaseVault();
     index = new SupabaseIndex();
   }
+  const versionsEnabled = process.env.VERSIONS_ENABLED !== "false";
+  let versions: VersionStore;
+  if (!versionsEnabled) {
+    versions = new NoopVersionStore();
+  } else if (backend === "fs") {
+    versions = new FsVersionStore(process.env.VERSIONS_DIR ?? "./versions");
+  } else {
+    versions = new SupabaseVersionStore();
+  }
   _core = {
-    brain: new Brain(vault, index),
+    brain: new Brain(vault, index, versions),
     vault,
     backend,
     getConfig: getUserConfig,

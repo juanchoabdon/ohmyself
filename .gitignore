@@ -22,6 +22,8 @@ secrets/
 # Root-anchored so it doesn't also swallow the `src/core/vault/` SOURCE dir.
 /vault/
 .vault/
+/versions/
+server/versions/
 
 # OS / editor
 .DS_Store

@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "next build",
-  "installCommand": "npm install --no-audit --no-fund",
+  "installCommand": "npm install --legacy-peer-deps --no-audit --no-fund",
   "rewrites": [
     { "source": "/mcp", "destination": "https://ohmyself-api-production.up.railway.app/mcp" },
     {

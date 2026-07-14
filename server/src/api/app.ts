@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { streamSSE } from "hono/streaming";
 import { resolveAuth } from "../auth.js";
 import {
   allowedVisibilities,
@@ -31,11 +32,13 @@ import {
   shareWith,
   updateMemberRole,
   updateSpace,
+  attributionFromAuth,
   type AuthContext,
   type Scope,
   type Visibility,
 } from "../core/index.js";
 import { BadRequestError, BrainError, ForbiddenError } from "../core/errors.js";
+import { subscribeBrainEvents } from "../core/events.js";
 import { embedTexts, embeddingsEnabled, semanticEdges } from "../core/embeddings.js";
 import { connectors, getConnector } from "../connectors/index.js";
 import {
@@ -441,6 +444,63 @@ export function createApp(): Hono<Env> {
     return c.json({ folders });
   });
 
+  /** SSE stream of vault writes for the active space — powers live refresh in the web UI. */
+  app.get("/v1/events", async (c) => {
+    const auth = c.get("auth");
+    return streamSSE(c, async (stream) => {
+      const unsub = subscribeBrainEvents(auth.spaceId, (event) => {
+        void stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
+      });
+      const ping = setInterval(() => {
+        void stream.writeSSE({ event: "ping", data: "{}" });
+      }, 25_000);
+      stream.onAbort(() => {
+        clearInterval(ping);
+        unsub();
+      });
+      while (true) {
+        await stream.sleep(60_000);
+      }
+    });
+  });
+
+  app.get("/v1/history", async (c) => {
+    const auth = c.get("auth");
+    const allowed = allowedVisibilities(auth.scope);
+    const path = c.req.query("path") ?? "";
+    if (!path.trim()) throw new BadRequestError("path is required");
+    const limit = Math.min(Number(c.req.query("limit") ?? 50) || 50, 200);
+    const offset = Math.max(Number(c.req.query("offset") ?? 0) || 0, 0);
+    const entries = await brain.getNoteHistory(auth.spaceId, path, allowed, { limit, offset });
+    return c.json({ path, entries });
+  });
+
+  app.get("/v1/activity", async (c) => {
+    const auth = c.get("auth");
+    const allowed = allowedVisibilities(auth.scope);
+    const limit = Math.min(Number(c.req.query("limit") ?? 30) || 30, 200);
+    const entries = await brain.getRecentActivity(auth.spaceId, allowed, { limit });
+    return c.json({ entries });
+  });
+
+  app.post("/v1/restore", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    const allowed = allowedVisibilities(auth.scope);
+    const body = await c.req.json<{ path?: string; version?: string; summary?: string }>();
+    if (!body.path?.trim()) throw new BadRequestError("path is required");
+    if (!body.version?.trim()) throw new BadRequestError("version is required");
+    const attr = attributionFromAuth(auth, body.summary);
+    const note = await brain.restoreVersion(
+      auth.spaceId,
+      body.path,
+      body.version,
+      allowed,
+      attr,
+    );
+    return c.json({ path: note.path, meta: note.meta, restored: body.version });
+  });
+
   app.post("/v1/notes", async (c) => {
     const auth = c.get("auth");
     requireWrite(auth);
@@ -453,13 +513,15 @@ export function createApp(): Hono<Env> {
       tags?: string[];
       links?: string[];
       path?: string;
+      summary?: string;
     }>();
     if (body.visibility && !allowed.includes(body.visibility)) {
       throw new ForbiddenError("cannot create a note above your scope");
     }
     const config = await getUserConfig(auth.spaceId);
+    const attr = attributionFromAuth(auth, body.summary);
     // Pass `allowed` so a note can't exceed scope via its type's default visibility.
-    const note = await brain.createNote(auth.spaceId, body, config, allowed);
+    const note = await brain.createNote(auth.spaceId, body, config, allowed, attr);
     return c.json({ path: note.path, meta: note.meta }, 201);
   });
 
@@ -474,8 +536,10 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireWrite(auth);
     const allowed = allowedVisibilities(auth.scope);
-    const patch = await c.req.json();
-    const note = await brain.updateNote(auth.spaceId, c.req.param("path"), patch, allowed);
+    const patch = await c.req.json<{ summary?: string } & Record<string, unknown>>();
+    const { summary, ...notePatch } = patch;
+    const attr = attributionFromAuth(auth, summary);
+    const note = await brain.updateNote(auth.spaceId, c.req.param("path"), notePatch, allowed, attr);
     return c.json({ path: note.path, meta: note.meta });
   });
 
@@ -483,7 +547,7 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireWrite(auth);
     const allowed = allowedVisibilities(auth.scope);
-    await brain.deleteNote(auth.spaceId, c.req.param("path"), allowed);
+    await brain.deleteNote(auth.spaceId, c.req.param("path"), allowed, attributionFromAuth(auth));
     return c.json({ deleted: c.req.param("path") });
   });
 
@@ -491,8 +555,8 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireWrite(auth);
     const allowed = allowedVisibilities(auth.scope);
-    const { from, to } = await c.req.json<{ from: string; to: string }>();
-    const note = await brain.moveNote(auth.spaceId, from, to, allowed);
+    const { from, to, summary } = await c.req.json<{ from: string; to: string; summary?: string }>();
+    const note = await brain.moveNote(auth.spaceId, from, to, allowed, attributionFromAuth(auth, summary));
     return c.json({ path: note.path, meta: note.meta });
   });
 
@@ -500,8 +564,8 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireWrite(auth);
     const allowed = allowedVisibilities(auth.scope);
-    const { path, text } = await c.req.json<{ path: string; text: string }>();
-    const note = await brain.appendToNote(auth.spaceId, path, text, allowed);
+    const { path, text, summary } = await c.req.json<{ path: string; text: string; summary?: string }>();
+    const note = await brain.appendToNote(auth.spaceId, path, text, allowed, attributionFromAuth(auth, summary));
     return c.json({ appended: note.path });
   });
 
