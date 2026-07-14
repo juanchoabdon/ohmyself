@@ -15,6 +15,7 @@ import type { FullNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
 import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
+import { cn } from "@/lib/utils";
 
 /** Pause after last keystroke before autosave — tuned to feel like Docs/OK. */
 const AUTOSAVE_MS = 400;
@@ -215,29 +216,10 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     [],
   );
 
-  const switching = loading && Boolean(activePath) && note?.path !== activePath;
-  const booting = loading && !note;
+  const fetching = Boolean(activePath) && loading && (!note || note.path !== activePath);
+  const ready = Boolean(note) && !fetching;
 
-  if (switching || booting) {
-    return (
-      <article className="mx-auto w-full max-w-3xl px-8 py-10" aria-busy="true">
-        <header className="mb-6 border-b border-border pb-5">
-          <div className="mb-2 flex gap-2">
-            <span className="skeleton h-5 w-16 rounded-full" />
-            <span className="skeleton h-5 w-20 rounded-full" />
-          </div>
-          {previewTitle ? (
-            <h1 className="text-[1.7rem] font-bold tracking-tight text-ink/50">{previewTitle}</h1>
-          ) : (
-            <span className="skeleton block h-8 w-2/3 rounded-md" />
-          )}
-          <span className="skeleton mt-3 block h-3 w-1/2 rounded" />
-        </header>
-        <EditorBodySkeleton />
-      </article>
-    );
-  }
-  if (!note) {
+  if (!ready && !fetching) {
     return (
       <Centered>
         <div className="max-w-sm text-center">
@@ -251,13 +233,14 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   }
 
   function revert() {
+    if (!note) return;
     setError(null);
     setSaveStatus("idle");
     clearTimeout(saveTimerRef.current);
-    setTitle(note!.meta.title);
-    setBody(note!.body);
-    setVisibility(note!.meta.visibility);
-    setTags(note!.meta.tags.join(", "));
+    setTitle(note.meta.title);
+    setBody(note.body);
+    setVisibility(note.meta.visibility);
+    setTags(note.meta.tags.join(", "));
   }
 
   const statusLabel =
@@ -272,41 +255,53 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
             : "Editing";
 
   return (
-    <article className="mx-auto w-full max-w-3xl px-8 py-10">
+    <article
+      className="mx-auto w-full max-w-3xl px-8 py-10"
+      aria-busy={fetching || !editorLive}
+    >
       <header className="mb-6 border-b border-border pb-5">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted">
-            <span className="rounded bg-bg px-1.5 py-0.5 font-medium capitalize">{note.meta.type}</span>
-            {editable ? (
-              <select
-                value={visibility}
-                onChange={(e) => setVisibility(e.target.value as Visibility)}
-                className="rounded border border-border bg-surface px-1.5 py-0.5 text-xs text-ink focus:border-brand"
-              >
-                <option value="public">public</option>
-                <option value="private">private</option>
-                <option value="secret">secret</option>
-              </select>
+            {fetching ? (
+              <>
+                <span className="skeleton h-5 w-16 rounded-full" />
+                <span className="skeleton h-5 w-20 rounded-full" />
+              </>
             ) : (
-              <VisibilityBadge visibility={note.meta.visibility} />
-            )}
-            {editable ? (
-              <span
-                className={
-                  saveStatus === "saved"
-                    ? "text-vis-public"
-                    : saveStatus === "error"
-                      ? "text-vis-secret"
-                      : undefined
-                }
-              >
-                · {statusLabel}
-              </span>
-            ) : (
-              note.meta.updated && <span>· updated {note.meta.updated}</span>
+              <>
+                <span className="rounded bg-bg px-1.5 py-0.5 font-medium capitalize">{note!.meta.type}</span>
+                {editable ? (
+                  <select
+                    value={visibility}
+                    onChange={(e) => setVisibility(e.target.value as Visibility)}
+                    className="rounded border border-border bg-surface px-1.5 py-0.5 text-xs text-ink focus:border-brand"
+                  >
+                    <option value="public">public</option>
+                    <option value="private">private</option>
+                    <option value="secret">secret</option>
+                  </select>
+                ) : (
+                  <VisibilityBadge visibility={note!.meta.visibility} />
+                )}
+                {editable ? (
+                  <span
+                    className={
+                      saveStatus === "saved"
+                        ? "text-vis-public"
+                        : saveStatus === "error"
+                          ? "text-vis-secret"
+                          : undefined
+                    }
+                  >
+                    · {statusLabel}
+                  </span>
+                ) : (
+                  note!.meta.updated && <span>· updated {note!.meta.updated}</span>
+                )}
+              </>
             )}
           </div>
-          {(onSave || onDelete) && (
+          {ready && (onSave || onDelete) && (
             <div className="flex items-center gap-1.5">
               {editable && dirty && (
                 <button
@@ -336,94 +331,147 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
           )}
         </div>
 
-        {editable ? (
-          <AutoTextarea
-            ref={titleRef}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => void flush()}
-            placeholder="Title"
-            spellCheck={false}
-            className="oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
-          />
+        {fetching ? (
+          <>
+            {previewTitle ? (
+              <h1 className="text-[1.7rem] font-bold leading-tight tracking-tight text-balance">
+                {previewTitle}
+              </h1>
+            ) : (
+              <span className="skeleton block h-8 w-2/3 rounded-md" />
+            )}
+            <span className="skeleton mt-3 block h-3 w-1/2 rounded" />
+          </>
+        ) : editable ? (
+          <>
+            <AutoTextarea
+              ref={titleRef}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => void flush()}
+              placeholder="Title"
+              spellCheck={false}
+              className="oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
+            />
+            <input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              onBlur={() => void flush()}
+              placeholder="tags, comma, separated"
+              className="oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50"
+            />
+          </>
         ) : (
-          <h1 className="text-[1.7rem] font-bold tracking-tight text-balance">{note.meta.title}</h1>
-        )}
-
-        {editable ? (
-          <input
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-            onBlur={() => void flush()}
-            placeholder="tags, comma, separated"
-            className="oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50"
-          />
-        ) : (
-          note.meta.tags.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {note.meta.tags.map((t) => (
-                <span key={t} className="rounded-full bg-bg px-2 py-0.5 text-xs text-muted">
-                  #{t}
-                </span>
-              ))}
-            </div>
-          )
+          <>
+            <h1 className="text-[1.7rem] font-bold tracking-tight text-balance">{note!.meta.title}</h1>
+            {note!.meta.tags.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {note!.meta.tags.map((t) => (
+                  <span key={t} className="rounded-full bg-bg px-2 py-0.5 text-xs text-muted">
+                    #{t}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </header>
 
-      {editable ? (
-        <div className="relative min-h-[8rem]">
-          {!editorLive &&
-            (body.trim() ? (
-              <div className="prose min-h-[8rem]" aria-busy="true">
-                <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
-              </div>
-            ) : (
-              <EditorBodySkeleton />
-            ))}
-          <div className={editorLive ? undefined : "pointer-events-none invisible absolute inset-0"}>
-            <MarkdownEditor
-              key={note.path}
-              noteKey={note.path}
-              value={body}
-              onChange={(md) => {
-                setBody(md);
-                onBodyChange?.(md);
-              }}
-              onBlur={() => void flush()}
-              onOpenLink={onOpenLink}
-              scrollToHeading={scrollToHeading}
-              onReady={() => setEditorLive(true)}
-              collab={
-                collab?.enabled && collab.token && collab.spaceId
-                  ? {
-                      token: collab.token,
-                      spaceId: collab.spaceId,
-                      path: note.path,
-                      initialBody: note.body,
-                    }
-                  : null
-              }
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="prose min-h-[8rem]">
-          {note.body.trim() ? (
-            <ReadOnlyBody body={note.body} onOpenLink={onOpenLink} />
-          ) : (
-            <p className="text-muted/70">Empty.</p>
+      <div className="relative min-h-[8rem]">
+        {/* Fetch shimmer — fades out when note body is ready */}
+        <div
+          className={cn(
+            "transition-opacity duration-200 ease-out",
+            fetching ? "opacity-100" : "pointer-events-none absolute inset-0 opacity-0",
           )}
+          aria-hidden={!fetching}
+        >
+          <EditorBodySkeleton />
         </div>
-      )}
+
+        {ready && editable && (
+          <div
+            className={cn(
+              "transition-opacity duration-200 ease-out",
+              fetching ? "pointer-events-none opacity-0" : "opacity-100",
+            )}
+          >
+            <div className="relative min-h-[8rem]">
+              <div
+                className={cn(
+                  "transition-opacity duration-200 ease-out",
+                  editorLive
+                    ? "pointer-events-none absolute inset-0 opacity-0"
+                    : "opacity-100",
+                )}
+                aria-hidden={editorLive}
+              >
+                {body.trim() ? (
+                  <div className="prose min-h-[8rem]">
+                    <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
+                  </div>
+                ) : (
+                  <EditorBodySkeleton />
+                )}
+              </div>
+              <div
+                className={cn(
+                  "transition-opacity duration-200 ease-out",
+                  editorLive ? "opacity-100" : "pointer-events-none absolute inset-0 opacity-0",
+                )}
+                aria-hidden={!editorLive}
+              >
+                <MarkdownEditor
+                  key={note!.path}
+                  noteKey={note!.path}
+                  value={body}
+                  onChange={(md) => {
+                    setBody(md);
+                    onBodyChange?.(md);
+                  }}
+                  onBlur={() => void flush()}
+                  onOpenLink={onOpenLink}
+                  scrollToHeading={scrollToHeading}
+                  onReady={() => setEditorLive(true)}
+                  collab={
+                    collab?.enabled && collab.token && collab.spaceId
+                      ? {
+                          token: collab.token,
+                          spaceId: collab.spaceId,
+                          path: note!.path,
+                          initialBody: note!.body,
+                        }
+                      : null
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {ready && !editable && (
+          <div className="prose min-h-[8rem]">
+            {note!.body.trim() ? (
+              <ReadOnlyBody body={note!.body} onOpenLink={onOpenLink} />
+            ) : (
+              <p className="text-muted/70">Empty.</p>
+            )}
+          </div>
+        )}
+      </div>
 
       {error && <p className="mt-3 rounded-md bg-vis-secret/10 px-3 py-2 text-sm text-vis-secret">{error}</p>}
 
-      {editorLive && note.meta.links.length > 0 && (
-        <footer className="mt-8 border-t border-border pt-4">
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Linked</h3>
-          <div className="flex flex-wrap gap-2">
-            {note.meta.links.map((l) => (
+      <footer
+        className={cn(
+          "mt-8 border-t border-border pt-4 transition-opacity duration-200 ease-out",
+          ready && editorLive && note!.meta.links.length > 0 ? "opacity-100" : "hidden",
+        )}
+      >
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Linked</h3>
+        <div className="flex flex-wrap gap-2">
+          {ready &&
+            note!.meta.links.map((l) => (
               <button
                 key={l}
                 onClick={() => onOpenLink(l)}
@@ -432,9 +480,8 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 {l}
               </button>
             ))}
-          </div>
-        </footer>
-      )}
+        </div>
+      </footer>
     </article>
   );
 });
