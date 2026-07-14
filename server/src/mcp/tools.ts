@@ -37,6 +37,7 @@ import {
   type Visibility,
 } from "../core/index.js";
 import { ForbiddenError, NotFoundError } from "../core/errors.js";
+import { searchPalette } from "../core/palette.js";
 import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
 import { instrumentToolUsage } from "./telemetry.js";
 
@@ -45,7 +46,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
 /** The public MCP tool contract version. Bumped for the retrieval architecture
  *  (research_brain + graph primitives + write_brain + routing policy). Kept
  *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.4";
+const CONTRACT_VERSION = "2.5";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -385,7 +386,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           fast_recall: "recall / search_brain — narrow, explicit questions; 1-2 notes suffice",
           deep_research: "research_brain — ambiguous, multi-hop, history/synthesis, or low coverage",
           navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
-          write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version for note version timeline",
+          write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version + activity for version timeline; palette for embed starters; link_context for graph hints",
           spaces:
             "company wikis (list_spaces) mirror the same routing via *_space variants: recall_space / search_space (fast), research_space (deep), get_space_neighbors / get_space_backlinks / search_space_by_entity / space_timeline (navigate), create_space_note / update_space_note / append_space_note / write_space (write, owner/admin)",
           friends:
@@ -1661,7 +1662,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Restore note version",
       description:
-        "Restore a note to a historical version (SHA from history). Writes vault + shadow git; emits live SSE.",
+        "Restore a note to a historical version (id from history). Writes vault + Postgres version row; emits live SSE.",
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: {
         path: z.string(),
@@ -1673,6 +1674,58 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       requireWrite();
       const note = await brain.restoreVersion(auth.spaceId, path, version, allowed, mcpAttr(summary));
       return text({ restored: note.path, version, meta: note.meta });
+    },
+  );
+
+  server.registerTool(
+    "activity",
+    {
+      title: "Recent brain activity",
+      description:
+        "Space-wide version timeline (newest first): who changed what note, when, and why. Complements per-note history.",
+      annotations: { readOnlyHint: true },
+      inputSchema: { limit: z.number().int().min(1).max(200).optional() },
+    },
+    async ({ limit }) => {
+      const entries = await brain.getRecentActivity(auth.spaceId, allowed, { limit });
+      return text({ entries });
+    },
+  );
+
+  server.registerTool(
+    "palette",
+    {
+      title: "Embed & block palette",
+      description:
+        "Markdown starters for rich blocks (callout, mermaid, html preview, table, tasks). Pass snippets to edit tools or append_to_note.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        query: z.string().optional().describe("filter by name/tag"),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+    },
+    async ({ query, limit }) => {
+      return text({ items: searchPalette(query, limit ?? 20) });
+    },
+  );
+
+  server.registerTool(
+    "link_context",
+    {
+      title: "Link graph context",
+      description:
+        "Outgoing links, backlinks, and semantic neighbors for a note — use before suggesting wiki-links or restructuring docs.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().describe("note path"),
+        semantic_limit: z.number().int().min(0).max(20).optional(),
+      },
+    },
+    async ({ path, semantic_limit }) => {
+      const ctx = await brain.getNeighbors(auth.spaceId, path, allowed, {
+        semanticLimit: semantic_limit ?? 5,
+      });
+      return text(ctx);
     },
   );
 

@@ -120,7 +120,7 @@ export const api = {
     path: string,
     patch: { body?: string; title?: string; visibility?: Visibility; tags?: string[] },
   ) =>
-    call<{ path: string }>(`/v1/notes/${encPath(path)}`, token, {
+    call<{ path: string; meta: FullNote["meta"]; body: string }>(`/v1/notes/${encPath(path)}`, token, {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
@@ -139,6 +139,19 @@ export const api = {
     if (opts?.limit != null) q.set("limit", String(opts.limit));
     if (opts?.offset != null) q.set("offset", String(opts.offset));
     return call<{ path: string; entries: HistoryEntry[] }>(`/v1/history?${q.toString()}`, token);
+  },
+
+  spaceActivity: (token: string, opts?: { limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return call<{ entries: HistoryEntry[] }>(`/v1/activity${qs ? `?${qs}` : ""}`, token);
+  },
+
+  noteBacklinks: (token: string, path: string, opts?: { limit?: number }) => {
+    const q = new URLSearchParams({ path });
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    return call<{ path: string; backlinks: IndexedNote[] }>(`/v1/backlinks?${q.toString()}`, token);
   },
 
   restoreVersion: (token: string, path: string, version: string, summary?: string) =>

@@ -1,6 +1,14 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FullNote, Visibility } from "@/lib/types";
@@ -8,36 +16,78 @@ import { VisibilityBadge } from "./VisibilityBadge";
 import { MarkdownEditor, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
 
-export function NoteView({
-  note,
-  loading,
-  onOpenLink,
-  onSave,
-  onDelete,
-  onBodyChange,
-  onDirtyChange,
-  scrollToHeading,
-}: {
+/** Pause after last keystroke before autosave — tuned to feel like Docs/OK. */
+const AUTOSAVE_MS = 400;
+const SAVED_FLASH_MS = 1500;
+
+type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
+
+export type NoteViewHandle = {
+  /** Flush any pending debounced save (e.g. before switching notes). */
+  flush: () => Promise<void>;
+};
+
+type NoteViewProps = {
   note: FullNote | null;
   loading: boolean;
   onOpenLink: (path: string) => void;
-  onSave?: (patch: { title?: string; body?: string; visibility?: Visibility; tags?: string[] }) => Promise<void>;
+  onSave?: (patch: {
+    title?: string;
+    body?: string;
+    visibility?: Visibility;
+    tags?: string[];
+  }) => Promise<FullNote | void>;
   onDelete?: () => Promise<void>;
   onBodyChange?: (body: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   scrollToHeading?: ScrollToHeadingTarget | null;
-}) {
+  /** When set, enables Yjs co-editing for the note body (REST autosave still applies). */
+  collab?: {
+    enabled: boolean;
+    token: string;
+    spaceId: string;
+  } | null;
+};
+
+export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteView(
+  {
+    note,
+    loading,
+    onOpenLink,
+    onSave,
+    onDelete,
+    onBodyChange,
+    onDirtyChange,
+    scrollToHeading,
+    collab,
+  },
+  ref,
+) {
   const editable = Boolean(onSave);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("private");
   const [tags, setTags] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const savedFlashRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const savingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const titleRefVal = useRef("");
+  const bodyRefVal = useRef("");
+  const visibilityRefVal = useRef<Visibility>("private");
+  const tagsRefVal = useRef("");
+
+  titleRefVal.current = title;
+  bodyRefVal.current = body;
+  visibilityRefVal.current = visibility;
+  tagsRefVal.current = tags;
 
   useEffect(() => {
     setError(null);
+    setSaveStatus("idle");
     if (note) {
       setTitle(note.meta.title);
       setBody(note.body);
@@ -54,9 +104,108 @@ export function NoteView({
       visibility !== note!.meta.visibility ||
       tags !== note!.meta.tags.join(", "));
 
+  dirtyRef.current = dirty;
+
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+
+  const persist = useCallback(async () => {
+    if (!onSave || !note || savingRef.current || !titleRefVal.current.trim()) return;
+    savingRef.current = true;
+    clearTimeout(saveTimerRef.current);
+    setSaveStatus("saving");
+    setError(null);
+    const patch = {
+      title: titleRefVal.current.trim(),
+      body: bodyRefVal.current,
+      visibility: visibilityRefVal.current,
+      tags: tagsRefVal.current.split(",").map((t) => t.trim()).filter(Boolean),
+    };
+    try {
+      const saved = await onSave(patch);
+      if (saved) {
+        setTitle(saved.meta.title);
+        setBody(saved.body);
+        setVisibility(saved.meta.visibility);
+        setTags(saved.meta.tags.join(", "));
+      }
+      setSaveStatus("saved");
+      clearTimeout(savedFlashRef.current);
+      savedFlashRef.current = setTimeout(() => setSaveStatus("idle"), SAVED_FLASH_MS);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save");
+      setSaveStatus("error");
+    } finally {
+      savingRef.current = false;
+      // User kept typing during the round-trip — save again without waiting full debounce.
+      if (dirtyRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => void persist(), 150);
+      }
+    }
+  }, [onSave, note]);
+
+  const scheduleSave = useCallback(() => {
+    if (!dirtyRef.current || !onSave || !titleRefVal.current.trim()) return;
+    setSaveStatus("pending");
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => void persist(), AUTOSAVE_MS);
+  }, [onSave, persist]);
+
+  const flush = useCallback(async () => {
+    clearTimeout(saveTimerRef.current);
+    if (dirtyRef.current && titleRefVal.current.trim()) await persist();
+  }, [persist]);
+
+  useImperativeHandle(ref, () => ({ flush }), [flush]);
+
+  // Debounced autosave on every edit.
+  useEffect(() => {
+    if (!dirty || !onSave || !title.trim()) return;
+    scheduleSave();
+    return () => clearTimeout(saveTimerRef.current);
+  }, [dirty, onSave, title, body, visibility, tags, scheduleSave]);
+
+  useEffect(() => {
+    if (!dirty) setSaveStatus((s) => (s === "pending" ? "idle" : s));
+  }, [dirty]);
+
+  // ⌘S / Ctrl+S flushes immediately.
+  useEffect(() => {
+    if (!editable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        void flush();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editable, flush]);
+
+  // Flush when leaving the tab or closing the window.
+  useEffect(() => {
+    if (!editable) return;
+    const onHide = () => void flush();
+    const onVis = () => {
+      if (document.visibilityState === "hidden") void flush();
+    };
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [editable, flush]);
+
+  useEffect(
+    () => () => {
+      clearTimeout(saveTimerRef.current);
+      clearTimeout(savedFlashRef.current);
+    },
+    [],
+  );
 
   if (loading) return <Centered>Loading…</Centered>;
   if (!note) {
@@ -72,31 +221,26 @@ export function NoteView({
     );
   }
 
-  function cancel() {
+  function revert() {
     setError(null);
+    setSaveStatus("idle");
+    clearTimeout(saveTimerRef.current);
     setTitle(note!.meta.title);
     setBody(note!.body);
     setVisibility(note!.meta.visibility);
     setTags(note!.meta.tags.join(", "));
   }
 
-  async function save() {
-    if (!onSave) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await onSave({
-        title: title.trim(),
-        body,
-        visibility,
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const statusLabel =
+    saveStatus === "saving"
+      ? "Saving…"
+      : saveStatus === "saved"
+        ? "Saved"
+        : saveStatus === "pending"
+          ? "Unsaved"
+          : saveStatus === "error"
+            ? "Save failed"
+            : "Editing";
 
   return (
     <article className="mx-auto w-full max-w-3xl px-8 py-10">
@@ -118,7 +262,17 @@ export function NoteView({
               <VisibilityBadge visibility={note.meta.visibility} />
             )}
             {editable ? (
-              <span>· {dirty ? "unsaved changes" : "editing"}</span>
+              <span
+                className={
+                  saveStatus === "saved"
+                    ? "text-vis-public"
+                    : saveStatus === "error"
+                      ? "text-vis-secret"
+                      : undefined
+                }
+              >
+                · {statusLabel}
+              </span>
             ) : (
               note.meta.updated && <span>· updated {note.meta.updated}</span>
             )}
@@ -126,34 +280,24 @@ export function NoteView({
           {(onSave || onDelete) && (
             <div className="flex items-center gap-1.5">
               {editable && dirty && (
-                <>
-                  <button
-                    onClick={cancel}
-                    disabled={busy}
-                    className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:text-ink disabled:opacity-60"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={save}
-                    disabled={busy || !title.trim()}
-                    className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:opacity-95 disabled:opacity-60"
-                  >
-                    {busy ? "Saving…" : "Save"}
-                  </button>
-                </>
+                <button
+                  onClick={revert}
+                  disabled={saveStatus === "saving"}
+                  className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:text-ink disabled:opacity-60"
+                >
+                  Revert
+                </button>
               )}
               {onDelete && (
                 <button
                   onClick={async () => {
-                    setBusy(true);
                     try {
                       await onDelete();
-                    } finally {
-                      setBusy(false);
+                    } catch {
+                      /* parent handles */
                     }
                   }}
-                  disabled={busy}
+                  disabled={saveStatus === "saving"}
                   className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret disabled:opacity-60"
                 >
                   Delete
@@ -168,6 +312,7 @@ export function NoteView({
             ref={titleRef}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => void flush()}
             placeholder="Title"
             spellCheck={false}
             className="oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50"
@@ -180,6 +325,7 @@ export function NoteView({
           <input
             value={tags}
             onChange={(e) => setTags(e.target.value)}
+            onBlur={() => void flush()}
             placeholder="tags, comma, separated"
             className="oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50"
           />
@@ -205,8 +351,19 @@ export function NoteView({
             setBody(md);
             onBodyChange?.(md);
           }}
+          onBlur={() => void flush()}
           onOpenLink={onOpenLink}
           scrollToHeading={scrollToHeading}
+          collab={
+            collab?.enabled && collab.token && collab.spaceId
+              ? {
+                  token: collab.token,
+                  spaceId: collab.spaceId,
+                  path: note.path,
+                  initialBody: note.body,
+                }
+              : null
+          }
         />
       ) : (
         <div className="prose min-h-[8rem]">
@@ -238,7 +395,7 @@ export function NoteView({
       )}
     </article>
   );
-}
+});
 
 function ReadOnlyBody({ body, onOpenLink }: { body: string; onOpenLink: (path: string) => void }) {
   return (

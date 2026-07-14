@@ -103,7 +103,14 @@ export function createApp(): Hono<Env> {
 
   app.use("*", cors({ origin: "*", allowHeaders: ["Authorization", "Content-Type", "X-Brain-Scope", "X-Brain-Space"] }));
 
-  app.get("/health", (c) => c.json({ ok: true, service: "ohmyself", version: "0.1.0" }));
+  app.get("/health", (c) =>
+    c.json({
+      ok: true,
+      service: "ohmyself",
+      version: "0.1.0",
+      collab: process.env.COLLAB_ENABLED === "true",
+    }),
+  );
 
   // Scheduled sync (Vercel Cron). Public route guarded by CRON_SECRET: Vercel
   // sends it as `Authorization: Bearer <CRON_SECRET>` on a GET request.
@@ -483,6 +490,23 @@ export function createApp(): Hono<Env> {
     return c.json({ entries });
   });
 
+  app.get("/v1/backlinks", async (c) => {
+    const auth = c.get("auth");
+    const allowed = allowedVisibilities(auth.scope);
+    const path = c.req.query("path") ?? "";
+    if (!path.trim()) throw new BadRequestError("path is required");
+    const limit = Math.min(Number(c.req.query("limit") ?? 50) || 50, 200);
+    const notes = await brain.getBacklinks(auth.spaceId, path, allowed, limit);
+    return c.json({ path, backlinks: notes });
+  });
+
+  app.get("/v1/palette", async (c) => {
+    const q = c.req.query("q");
+    const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 50);
+    const { searchPalette } = await import("../core/palette.js");
+    return c.json({ items: searchPalette(q, limit) });
+  });
+
   app.post("/v1/restore", async (c) => {
     const auth = c.get("auth");
     requireWrite(auth);
@@ -540,7 +564,7 @@ export function createApp(): Hono<Env> {
     const { summary, ...notePatch } = patch;
     const attr = attributionFromAuth(auth, summary);
     const note = await brain.updateNote(auth.spaceId, c.req.param("path"), notePatch, allowed, attr);
-    return c.json({ path: note.path, meta: note.meta });
+    return c.json({ path: note.path, meta: note.meta, body: note.body });
   });
 
   app.delete("/v1/notes/:path{.+}", async (c) => {

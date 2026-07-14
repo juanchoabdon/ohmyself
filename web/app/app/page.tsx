@@ -6,7 +6,8 @@ import { api, setActiveSpace } from "@/lib/api";
 import { supabase } from "@/lib/supabaseClient";
 import type { Category, FolderCount, FullNote, IndexedNote, Space, Visibility } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
-import { NoteView } from "@/components/NoteView";
+import { NoteView, type NoteViewHandle } from "@/components/NoteView";
+import { ActivityPanel } from "@/components/ActivityPanel";
 import { BrainMap } from "@/components/BrainMap";
 import { Chat } from "@/components/Chat";
 import { Settings } from "@/components/Settings";
@@ -26,8 +27,9 @@ import {
   upsertTab,
   type EditorTab,
 } from "@/lib/editorTabs";
-import { PanelRight, Search } from "lucide-react";
+import { Clock, PanelRight, Search } from "lucide-react";
 import { connectBrainEvents } from "@/lib/brainEvents";
+import { fetchCollabEnabled } from "@/lib/collab";
 import type { OutlineItem } from "@/lib/outline";
 import type { ScrollToHeadingTarget } from "@/components/editor/MarkdownEditor";
 
@@ -91,9 +93,12 @@ export default function Dashboard() {
   const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [docPanelOpen, setDocPanelOpen] = useState(true);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [docPanelTab, setDocPanelTab] = useState<"outline" | "links" | "timeline">("outline");
   const [editorBody, setEditorBody] = useState<string | undefined>(undefined);
   const [scrollToHeading, setScrollToHeading] = useState<ScrollToHeadingTarget | null>(null);
+  const [collabEnabled, setCollabEnabled] = useState(false);
 
   // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
   // hydration mismatch; persisted on every change.
@@ -174,6 +179,16 @@ export default function Dashboard() {
     url.searchParams.delete("connector");
     url.searchParams.delete("status");
     window.history.replaceState({}, "", url.toString());
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void fetchCollabEnabled().then((on) => {
+      if (active) setCollabEnabled(on);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Auth bootstrap
@@ -408,6 +423,9 @@ export default function Dashboard() {
 
   async function openNote(path: string) {
     if (!token) return;
+    if (selected && selected !== path) {
+      await noteViewRef.current?.flush();
+    }
     setView("notes");
     setSelected(path);
     setNoteLoading(true);
@@ -515,6 +533,7 @@ export default function Dashboard() {
   const [banner, setBanner] = useState<string | null>(null);
   const noteDirtyRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
+  const noteViewRef = useRef<NoteViewHandle>(null);
   selectedRef.current = selected;
 
   async function refresh(open?: string | null) {
@@ -588,6 +607,8 @@ export default function Dashboard() {
 
             await refresh(reopen);
 
+            setActivityRefreshKey((k) => k + 1);
+
             const livePath = event.type === "note_moved" && event.to ? event.to : event.path;
             const cur = selectedRef.current;
             if (livePath && (cur === event.path || cur === livePath)) {
@@ -644,10 +665,19 @@ export default function Dashboard() {
     body?: string;
     visibility?: Visibility;
     tags?: string[];
-  }) {
-    if (!token || !selected) return;
-    await api.updateNote(token, selected, patch);
-    await refresh(selected);
+  }): Promise<FullNote> {
+    if (!token || !selected) throw new Error("Not ready");
+    const updated = await api.updateNote(token, selected, patch);
+    const note: FullNote = {
+      path: updated.path,
+      meta: updated.meta,
+      body: updated.body,
+      raw: fullNote?.raw ?? "",
+    };
+    setFullNote(note);
+    setOpenTabs((prev) => upsertTab(prev, selected, note.meta.title));
+    void refresh();
+    return note;
   }
 
   async function runConfirm() {
@@ -752,10 +782,29 @@ export default function Dashboard() {
             <span>Search</span>
             <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">⌘K</kbd>
           </button>
+          {view === "notes" && (
+            <button
+              type="button"
+              onClick={() => {
+                setActivityOpen((v) => !v);
+                if (!activityOpen) setDocPanelOpen(false);
+              }}
+              aria-pressed={activityOpen}
+              className={`rounded-lg border border-border p-1.5 transition-colors ${
+                activityOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
+              }`}
+              title="Space activity feed"
+            >
+              <Clock className="h-4 w-4" />
+            </button>
+          )}
           {view === "notes" && selected && (
             <button
               type="button"
-              onClick={() => setDocPanelOpen((v) => !v)}
+              onClick={() => {
+                setDocPanelOpen((v) => !v);
+                if (!docPanelOpen) setActivityOpen(false);
+              }}
               aria-pressed={docPanelOpen}
               className={`rounded-lg border border-border p-1.5 transition-colors ${
                 docPanelOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
@@ -848,6 +897,7 @@ export default function Dashboard() {
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain">
                   <NoteView
+                    ref={noteViewRef}
                     note={fullNote}
                     loading={noteLoading}
                     onOpenLink={openNote}
@@ -857,6 +907,11 @@ export default function Dashboard() {
                       noteDirtyRef.current = d;
                     }}
                     scrollToHeading={scrollToHeading}
+                    collab={
+                      token && activeSpaceId
+                        ? { enabled: collabEnabled, token, spaceId: activeSpaceId }
+                        : null
+                    }
                     onDelete={async () => {
                       if (selected) setConfirm({ kind: "note", path: selected });
                     }}
@@ -891,6 +946,13 @@ export default function Dashboard() {
                     }
                   />
                 )}
+                <ActivityPanel
+                  token={token}
+                  open={activityOpen}
+                  onClose={() => setActivityOpen(false)}
+                  onOpenNote={openNote}
+                  refreshKey={activityRefreshKey}
+                />
               </div>
             </>
           )}

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock, Link2, ListTree, RotateCcw, X } from "lucide-react";
 import { api } from "@/lib/api";
-import type { FullNote, HistoryEntry } from "@/lib/types";
+import type { FullNote, HistoryEntry, IndexedNote } from "@/lib/types";
 import type { OutlineItem } from "@/lib/outline";
 import { extractOutline } from "@/lib/outline";
 import { cn } from "@/lib/utils";
@@ -61,9 +61,31 @@ export function DocPanel({
 }) {
   const outline = useMemo(() => extractOutline(liveBody ?? note.body), [liveBody, note.body]);
   const links = note.meta.links ?? [];
+  const [backlinks, setBacklinks] = useState<IndexedNote[] | null>(null);
+  const [linksLoading, setLinksLoading] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (tab !== "links" || !token) return;
+    let cancelled = false;
+    setLinksLoading(true);
+    void api
+      .noteBacklinks(token, note.path, { limit: 30 })
+      .then((res) => {
+        if (!cancelled) setBacklinks(res.backlinks);
+      })
+      .catch(() => {
+        if (!cancelled) setBacklinks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLinksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, token, note.path]);
 
   useEffect(() => {
     if (tab !== "timeline" || !token) return;
@@ -159,28 +181,61 @@ export function DocPanel({
             </ul>
           )
         ) : tab === "links" ? (
-          links.length === 0 ? (
+          linksLoading ? (
+            <p className="px-2 py-6 text-center text-xs text-muted">Loading links…</p>
+          ) : links.length === 0 && !backlinks?.length ? (
             <p className="px-2 py-6 text-center text-xs leading-relaxed text-muted">
-              No wiki-links yet
+              No links yet
               <br />
-              <span className="text-muted/70">([[path]] in the note)</span>
+              <span className="text-muted/70">Use [[path]] in the note</span>
             </p>
           ) : (
-            <ul className="space-y-0.5">
-              {links.map((path) => (
-                <li key={path}>
-                  <button
-                    type="button"
-                    onClick={() => onOpenLink(path)}
-                    className="w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-brand-weak hover:text-brand-ink"
-                    title={path}
-                  >
-                    <span className="block truncate text-sm font-medium text-ink">{friendlyLinkLabel(path)}</span>
-                    <span className="block truncate text-[10px] text-muted">{path}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-3">
+              {links.length > 0 && (
+                <section>
+                  <h4 className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Outgoing
+                  </h4>
+                  <ul className="space-y-0.5">
+                    {links.map((path) => (
+                      <li key={`out-${path}`}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenLink(path)}
+                          className="w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-brand-weak hover:text-brand-ink"
+                          title={path}
+                        >
+                          <span className="block truncate text-sm font-medium text-ink">{friendlyLinkLabel(path)}</span>
+                          <span className="block truncate text-[10px] text-muted">{path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {backlinks && backlinks.length > 0 && (
+                <section>
+                  <h4 className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Backlinks
+                  </h4>
+                  <ul className="space-y-0.5">
+                    {backlinks.map((n) => (
+                      <li key={`in-${n.path}`}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenLink(n.path)}
+                          className="w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-brand-weak hover:text-brand-ink"
+                          title={n.path}
+                        >
+                          <span className="block truncate text-sm font-medium text-ink">{n.title}</span>
+                          <span className="block truncate text-[10px] text-muted">{n.path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </div>
           )
         ) : historyLoading ? (
           <p className="px-2 py-6 text-center text-xs text-muted">Loading history…</p>

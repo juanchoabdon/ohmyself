@@ -6,6 +6,10 @@
   "rewrites": [
     { "source": "/mcp", "destination": "https://ohmyself-api-production.up.railway.app/mcp" },
     {
+      "source": "/collab",
+      "destination": "https://ohmyself-api-production.up.railway.app/collab"
+    },
+    {
       "source": "/v1/:path*",
       "destination": "https://ohmyself-api-production.up.railway.app/v1/:path*"
     },
