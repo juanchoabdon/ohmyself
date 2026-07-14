@@ -291,6 +291,13 @@ main {
   color: var(--brand);
 }
 
+.oms-source-editor .cm-editor {
+  outline: none;
+}
+.oms-source-editor .cm-scroller {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
 .oms-editor-body {
   max-width: 70ch;
 }

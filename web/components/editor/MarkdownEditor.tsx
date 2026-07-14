@@ -8,6 +8,13 @@ import * as Y from "yjs";
 import "tippy.js/dist/tippy.css";
 import { buildEditorExtensions } from "./extensions";
 import { scrollEditorToHeading } from "./scrollToHeading";
+import {
+  EditorModeToggle,
+  loadEditorModePreference,
+  saveEditorModePreference,
+  type EditorMode,
+} from "./EditorModeToggle";
+import { SourceEditor } from "./SourceEditor";
 import { collabRoomName, collabWsUrl } from "@/lib/collab";
 import type { CollabUser } from "@/lib/collabUser";
 import {
@@ -91,6 +98,24 @@ export function MarkdownEditor({
   const collabInitialBodyRef = useRef(collabInitialBody);
   collabInitialBodyRef.current = collabInitialBody;
 
+  const [mode, setMode] = useState<EditorMode>("visual");
+  const [sourceMd, setSourceMd] = useState(value);
+  const modeRef = useRef<EditorMode>("visual");
+  const sourceMdRef = useRef(value);
+  const editorRef = useRef<Editor | null>(null);
+  const collabSyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    const pref = loadEditorModePreference();
+    setMode(pref);
+    modeRef.current = pref;
+  }, [noteKey]);
+
+  useEffect(() => {
+    setSourceMd(value);
+    sourceMdRef.current = value;
+  }, [noteKey]);
+
   const ydoc = useMemo(() => (collabActive ? new Y.Doc() : null), [noteKey, collabActive]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [syncStatus, setSyncStatus] = useState<CollabSyncStatus>("connecting");
@@ -155,12 +180,61 @@ export function MarkdownEditor({
         },
       },
       onUpdate: ({ editor: ed }) => {
-        if (ed.isDestroyed) return;
+        if (ed.isDestroyed || modeRef.current === "source") return;
         onChangeRef.current(ed.getMarkdown());
       },
     },
     [noteKey, collabActive, canMountEditor, provider, collabUser?.id],
   );
+
+  editorRef.current = editor ?? null;
+
+  const handleModeChange = useCallback((next: EditorMode) => {
+    const ed = editorRef.current;
+    if (next === "source" && ed && !ed.isDestroyed) {
+      const md = ed.getMarkdown();
+      setSourceMd(md);
+      sourceMdRef.current = md;
+    } else if (next === "visual" && ed && !ed.isDestroyed) {
+      const md = sourceMdRef.current;
+      if (md !== ed.getMarkdown()) {
+        ed.commands.setContent(md, { contentType: "markdown" });
+      }
+      onChangeRef.current(md);
+    }
+    modeRef.current = next;
+    setMode(next);
+    saveEditorModePreference(next);
+  }, []);
+
+  const handleSourceChange = useCallback((md: string) => {
+    setSourceMd(md);
+    sourceMdRef.current = md;
+    onChangeRef.current(md);
+    const ed = editorRef.current;
+    if (!ed || ed.isDestroyed) return;
+    if (collabSyncTimerRef.current) clearTimeout(collabSyncTimerRef.current);
+    collabSyncTimerRef.current = setTimeout(() => {
+      const current = editorRef.current;
+      if (!current || current.isDestroyed) return;
+      if (md !== current.getMarkdown()) {
+        current.commands.setContent(md, { contentType: "markdown" });
+      }
+    }, 350);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (collabSyncTimerRef.current) clearTimeout(collabSyncTimerRef.current);
+    };
+  }, [noteKey]);
+
+  useEffect(() => {
+    if (modeRef.current !== "source" || readyFiredRef.current) return;
+    if (collabActive && !collabSyncedRef.current) return;
+    readyFiredRef.current = true;
+    onReadyRef.current?.();
+  }, [mode, collabActive, editor, provider]);
 
   useEffect(() => {
     readyFiredRef.current = false;
@@ -248,14 +322,14 @@ export function MarkdownEditor({
   }, [editor, value, collabActive]);
 
   useEffect(() => {
-    if (!editor || editor.isDestroyed || !scrollToHeading) return;
+    if (!editor || editor.isDestroyed || !scrollToHeading || mode !== "visual") return;
     scrollEditorToHeading(
       editor,
       scrollToHeading.text,
       scrollToHeading.level,
       scrollToHeading.occurrence,
     );
-  }, [editor, scrollToHeading]);
+  }, [editor, scrollToHeading, mode]);
 
   if (!canMountEditor || !editor || editor.isDestroyed) return null;
 
@@ -270,7 +344,17 @@ export function MarkdownEditor({
           onSelectPeer={onSelectPresencePeer}
         />
       )}
-      <EditorContent editor={editor} />
+      <EditorModeToggle mode={mode} onChange={handleModeChange} />
+      {mode === "source" ? (
+        <SourceEditor
+          value={sourceMd}
+          onChange={handleSourceChange}
+          onBlur={() => onBlurRef.current?.()}
+        />
+      ) : null}
+      <div className={mode === "source" ? "sr-only h-0 overflow-hidden" : undefined}>
+        <EditorContent editor={editor} />
+      </div>
     </div>
   );
 }
