@@ -38,6 +38,7 @@ import {
 } from "../core/index.js";
 import { ForbiddenError, NotFoundError } from "../core/errors.js";
 import { searchPalette } from "../core/palette.js";
+import { getLinkContext } from "../core/link-intelligence.js";
 import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
 import { instrumentToolUsage } from "./telemetry.js";
 
@@ -46,7 +47,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
 /** The public MCP tool contract version. Bumped for the retrieval architecture
  *  (research_brain + graph primitives + write_brain + routing policy). Kept
  *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.5";
+const CONTRACT_VERSION = "2.6";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -196,7 +197,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Recall about a topic",
       description:
-        "Recall everything relevant about a topic or question using hybrid retrieval. Returns `text` (aggregated context to ground an answer), `notes`, `sources` (per-hit path/section/score/match_reasons), and `coverage` (high|medium|low retrieval confidence). Use before answering questions about the person; if `coverage` is low, treat the context as incomplete rather than authoritative.",
+        "Recall everything relevant about a topic or question using hybrid retrieval. Returns `text` (aggregated context to ground an answer), `notes`, `sources` (per-hit path/section/score/match_reasons), `coverage` (high|medium|low retrieval confidence), `graph_hints` (one-hop related notes from top hits), and `suggested_followups`. Use before answering questions about the person; if `coverage` is low, treat the context as incomplete rather than authoritative.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         topic: z.string().describe("the topic or question to recall context for"),
@@ -1714,7 +1715,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Link graph context",
       description:
-        "Outgoing links, backlinks, and semantic neighbors for a note — use before suggesting wiki-links or restructuring docs.",
+        "Outgoing links, backlinks, semantic link suggestions, and orphan/hub flags for a note — use before suggesting wiki-links or restructuring docs.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         path: z.string().describe("note path"),
@@ -1722,7 +1723,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       },
     },
     async ({ path, semantic_limit }) => {
-      const ctx = await brain.getNeighbors(auth.spaceId, path, allowed, {
+      const ctx = await getLinkContext(brain, auth.spaceId, path, allowed, {
         semanticLimit: semantic_limit ?? 5,
       });
       return text(ctx);

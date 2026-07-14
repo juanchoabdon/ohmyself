@@ -5,6 +5,7 @@ import type {
   Connection,
   FolderCount,
   ContextResult,
+  LinkContextResult,
   FriendVisibility,
   FullNote,
   HistoryEntry,
@@ -152,6 +153,12 @@ export const api = {
     const q = new URLSearchParams({ path });
     if (opts?.limit != null) q.set("limit", String(opts.limit));
     return call<{ path: string; backlinks: IndexedNote[] }>(`/v1/backlinks?${q.toString()}`, token);
+  },
+
+  noteLinkContext: (token: string, path: string, opts?: { semanticLimit?: number }) => {
+    const q = new URLSearchParams({ path });
+    if (opts?.semanticLimit != null) q.set("semantic_limit", String(opts.semanticLimit));
+    return call<LinkContextResult>(`/v1/link-context?${q.toString()}`, token);
   },
 
   restoreVersion: (token: string, path: string, version: string, summary?: string) =>

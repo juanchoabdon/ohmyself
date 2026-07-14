@@ -64,6 +64,27 @@ export interface ContextResult {
   topic: string;
   notes: { path: string; title: string; body: string }[];
   text: string;
+  coverage?: "high" | "medium" | "low";
+  graph_hints?: { from: string; path: string; title: string; relation: "outgoing" | "backlink" }[];
+  suggested_followups?: string[];
+}
+
+export interface LinkSuggestion {
+  path: string;
+  title: string;
+  type: string;
+  reason: "semantic" | "shared_backlink";
+  score?: number;
+}
+
+export interface LinkContextResult {
+  note: { path: string; title: string; type: string };
+  outgoing: IndexedNote[];
+  backlinks: IndexedNote[];
+  suggestions: LinkSuggestion[];
+  is_orphan: boolean;
+  is_hub: boolean;
+  backlink_count: number;
 }
 
 /** The ceiling a brain owner can share with a friend — any visibility,

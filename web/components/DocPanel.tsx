@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock, Link2, ListTree, RotateCcw, X } from "lucide-react";
 import { api } from "@/lib/api";
-import type { FullNote, HistoryEntry, IndexedNote } from "@/lib/types";
+import type { FullNote, HistoryEntry, LinkContextResult } from "@/lib/types";
 import type { OutlineItem } from "@/lib/outline";
 import { extractOutline } from "@/lib/outline";
 import { cn } from "@/lib/utils";
@@ -61,7 +61,7 @@ export function DocPanel({
 }) {
   const outline = useMemo(() => extractOutline(liveBody ?? note.body), [liveBody, note.body]);
   const links = note.meta.links ?? [];
-  const [backlinks, setBacklinks] = useState<IndexedNote[] | null>(null);
+  const [linkCtx, setLinkCtx] = useState<LinkContextResult | null>(null);
   const [linksLoading, setLinksLoading] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -72,12 +72,12 @@ export function DocPanel({
     let cancelled = false;
     setLinksLoading(true);
     void api
-      .noteBacklinks(token, note.path, { limit: 30 })
+      .noteLinkContext(token, note.path, { semanticLimit: 8 })
       .then((res) => {
-        if (!cancelled) setBacklinks(res.backlinks);
+        if (!cancelled) setLinkCtx(res);
       })
       .catch(() => {
-        if (!cancelled) setBacklinks([]);
+        if (!cancelled) setLinkCtx(null);
       })
       .finally(() => {
         if (!cancelled) setLinksLoading(false);
@@ -183,7 +183,7 @@ export function DocPanel({
         ) : tab === "links" ? (
           linksLoading ? (
             <p className="px-2 py-6 text-center text-xs text-muted">Loading links…</p>
-          ) : links.length === 0 && !backlinks?.length ? (
+          ) : !linkCtx && links.length === 0 ? (
             <p className="px-2 py-6 text-center text-xs leading-relaxed text-muted">
               No links yet
               <br />
@@ -191,6 +191,20 @@ export function DocPanel({
             </p>
           ) : (
             <div className="space-y-3">
+              {(linkCtx?.is_orphan || linkCtx?.is_hub) && (
+                <div className="flex flex-wrap gap-1 px-2">
+                  {linkCtx.is_orphan && (
+                    <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                      Orphan
+                    </span>
+                  )}
+                  {linkCtx.is_hub && (
+                    <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-medium text-brand-ink">
+                      Hub · {linkCtx.backlink_count} backlinks
+                    </span>
+                  )}
+                </div>
+              )}
               {links.length > 0 && (
                 <section>
                   <h4 className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
@@ -213,13 +227,13 @@ export function DocPanel({
                   </ul>
                 </section>
               )}
-              {backlinks && backlinks.length > 0 && (
+              {linkCtx && linkCtx.backlinks.length > 0 && (
                 <section>
                   <h4 className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
                     Backlinks
                   </h4>
                   <ul className="space-y-0.5">
-                    {backlinks.map((n) => (
+                    {linkCtx.backlinks.map((n) => (
                       <li key={`in-${n.path}`}>
                         <button
                           type="button"
@@ -229,6 +243,28 @@ export function DocPanel({
                         >
                           <span className="block truncate text-sm font-medium text-ink">{n.title}</span>
                           <span className="block truncate text-[10px] text-muted">{n.path}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              {linkCtx && linkCtx.suggestions.length > 0 && (
+                <section>
+                  <h4 className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Suggested links
+                  </h4>
+                  <ul className="space-y-0.5">
+                    {linkCtx.suggestions.map((s) => (
+                      <li key={`sug-${s.path}`}>
+                        <button
+                          type="button"
+                          onClick={() => onOpenLink(s.path)}
+                          className="w-full rounded-md border border-dashed border-border/80 px-2 py-1.5 text-left transition-colors hover:border-brand/40 hover:bg-brand-weak/50 hover:text-brand-ink"
+                          title={s.path}
+                        >
+                          <span className="block truncate text-sm font-medium text-ink">{s.title}</span>
+                          <span className="block truncate text-[10px] text-muted">{s.path}</span>
                         </button>
                       </li>
                     ))}

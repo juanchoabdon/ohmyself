@@ -500,6 +500,17 @@ export function createApp(): Hono<Env> {
     return c.json({ path, backlinks: notes });
   });
 
+  app.get("/v1/link-context", async (c) => {
+    const auth = c.get("auth");
+    const allowed = allowedVisibilities(auth.scope);
+    const path = c.req.query("path") ?? "";
+    if (!path.trim()) throw new BadRequestError("path is required");
+    const semanticLimit = Math.min(Number(c.req.query("semantic_limit") ?? 8) || 8, 20);
+    const { getLinkContext } = await import("../core/link-intelligence.js");
+    const ctx = await getLinkContext(brain, auth.spaceId, path, allowed, { semanticLimit });
+    return c.json(ctx);
+  });
+
   app.get("/v1/palette", async (c) => {
     const q = c.req.query("q");
     const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 50);

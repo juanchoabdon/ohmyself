@@ -67,6 +67,46 @@ export const slashCommandItems: SlashCommandItem[] = [
         })
         .run(),
   },
+  {
+    title: "Callout",
+    hint: "info",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "blockquote",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "[!info] Title\nBody text here." }],
+            },
+          ],
+        })
+        .run(),
+  },
+  {
+    title: "Mermaid",
+    hint: "diagram",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "codeBlock",
+          attrs: { language: "mermaid" },
+          content: [{ type: "text", text: "flowchart LR\n  A[Start] --> B[End]" }],
+        })
+        .run(),
+  },
+  {
+    title: "Wiki link",
+    hint: "[[path]]",
+    command: ({ editor, range }) =>
+      editor.chain().focus().deleteRange(range).insertContent("[[notes/example]]").run(),
+  },
 ];
 
 function filterItems(query: string): SlashCommandItem[] {

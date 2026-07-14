@@ -644,6 +644,7 @@ export class Brain {
     }[];
     coverage: "high" | "medium" | "low";
     suggested_followups: string[];
+    graph_hints: { from: string; path: string; title: string; relation: "outgoing" | "backlink" }[];
   }> {
     const hits = (await this.search(userId, topic, { allowed, limit })) as (IndexedNote &
       Partial<HybridHit>)[];
@@ -694,6 +695,15 @@ export class Brain {
       .map((n) => `## ${n.title}\n(${n.path})\n\n${n.body}`)
       .join("\n\n---\n\n");
 
-    return { topic, notes, text, sources, coverage, suggested_followups: [] };
+    const { graphHintsFromHits, followupsFromGraph } = await import("./link-intelligence.js");
+    const graph_hints = await graphHintsFromHits(
+      this,
+      userId,
+      hits.map((h) => h.path),
+      allowed,
+    );
+    const suggested_followups = followupsFromGraph(graph_hints, topic);
+
+    return { topic, notes, text, sources, coverage, suggested_followups, graph_hints };
   }
 }
