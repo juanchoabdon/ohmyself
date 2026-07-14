@@ -1,5 +1,6 @@
 function apiBase(): string {
-  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
+  if (typeof window !== "undefined") return window.location.origin;
+  return process.env.NEXT_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:8787";
 }
 
 /** WebSocket endpoint — same origin in the browser so Vercel can proxy /collab. */

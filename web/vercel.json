@@ -4,6 +4,7 @@
   "buildCommand": "next build",
   "installCommand": "npm install --legacy-peer-deps --no-audit --no-fund",
   "rewrites": [
+    { "source": "/health", "destination": "https://ohmyself-api-production.up.railway.app/health" },
     { "source": "/mcp", "destination": "https://ohmyself-api-production.up.railway.app/mcp" },
     {
       "source": "/collab",
