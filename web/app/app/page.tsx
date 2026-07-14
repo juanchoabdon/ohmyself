@@ -30,7 +30,6 @@ import {
 import { Clock, PanelRight, Search } from "lucide-react";
 import { connectBrainEvents } from "@/lib/brainEvents";
 import { fetchCollabEnabled } from "@/lib/collab";
-import { cn } from "@/lib/utils";
 import type { OutlineItem } from "@/lib/outline";
 import type { ScrollToHeadingTarget } from "@/components/editor/MarkdownEditor";
 
@@ -925,56 +924,37 @@ export default function Dashboard() {
                   />
                 </div>
                 {docPanelOpen && selected && (
-                  <div className="relative min-h-0 w-64 shrink-0">
-                    <div
-                      className={cn(
-                        "transition-opacity duration-200 ease-out",
-                        noteLoading || !fullNote || fullNote.path !== selected
-                          ? "opacity-100"
-                          : "pointer-events-none absolute inset-0 opacity-0",
-                      )}
-                      aria-hidden={!(noteLoading || !fullNote || fullNote.path !== selected)}
-                    >
-                      <DocPanelSkeleton />
-                    </div>
-                    {fullNote && fullNote.path === selected && (
-                      <div
-                        className={cn(
-                          "transition-opacity duration-200 ease-out",
-                          noteLoading ? "pointer-events-none opacity-0" : "opacity-100",
-                        )}
-                        aria-hidden={noteLoading}
-                      >
-                        <DocPanel
-                          note={fullNote}
-                          tab={docPanelTab}
-                          onTabChange={setDocPanelTab}
-                          onOpenLink={openNote}
-                          onClose={() => setDocPanelOpen(false)}
-                          liveBody={editorBody}
-                          onOutlineClick={(item: OutlineItem, occurrence: number) =>
-                            setScrollToHeading({
-                              text: item.text,
-                              level: item.level,
-                              occurrence,
-                              nonce: Date.now(),
-                            })
-                          }
-                          token={token}
-                          onRestoreVersion={
-                            selected && token
-                              ? async (version) => {
-                                  await api.restoreVersion(token, selected, version);
-                                  noteDirtyRef.current = false;
-                                  setEditorBody(undefined);
-                                  await openNote(selected);
-                                }
-                              : undefined
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
+                  noteLoading || !fullNote || fullNote.path !== selected ? (
+                    <DocPanelSkeleton />
+                  ) : (
+                    <DocPanel
+                      note={fullNote}
+                      tab={docPanelTab}
+                      onTabChange={setDocPanelTab}
+                      onOpenLink={openNote}
+                      onClose={() => setDocPanelOpen(false)}
+                      liveBody={editorBody}
+                      onOutlineClick={(item: OutlineItem, occurrence: number) =>
+                        setScrollToHeading({
+                          text: item.text,
+                          level: item.level,
+                          occurrence,
+                          nonce: Date.now(),
+                        })
+                      }
+                      token={token}
+                      onRestoreVersion={
+                        selected && token
+                          ? async (version) => {
+                              await api.restoreVersion(token, selected, version);
+                              noteDirtyRef.current = false;
+                              setEditorBody(undefined);
+                              await openNote(selected);
+                            }
+                          : undefined
+                      }
+                    />
+                  )
                 )}
                 <ActivityPanel
                   token={token}

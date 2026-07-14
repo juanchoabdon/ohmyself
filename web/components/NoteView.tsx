@@ -329,78 +329,52 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
       </header>
 
       <div className="relative min-h-[8rem]">
-        {/* Fetch shimmer — fades out when note body is ready */}
-        <div
-          className={cn(
-            "transition-opacity duration-200 ease-out",
-            fetching ? "opacity-100" : "pointer-events-none absolute inset-0 opacity-0",
-          )}
-          aria-hidden={!fetching}
-        >
+        {fetching ? (
           <EditorBodySkeleton />
-        </div>
-
-        {ready && editable && (
-          <div
-            className={cn(
-              "transition-opacity duration-200 ease-out",
-              fetching ? "pointer-events-none opacity-0" : "opacity-100",
-            )}
-          >
-            <div className="relative min-h-[8rem]">
-              <div
-                className={cn(
-                  "transition-opacity duration-200 ease-out",
-                  editorLive
-                    ? "pointer-events-none absolute inset-0 opacity-0"
-                    : "opacity-100",
-                )}
-                aria-hidden={editorLive}
-              >
-                {body.trim() ? (
-                  <div className="prose min-h-[8rem]">
-                    <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
-                  </div>
-                ) : (
-                  <EditorBodySkeleton />
-                )}
-              </div>
-              <div
-                className={cn(
-                  "transition-opacity duration-200 ease-out",
-                  editorLive ? "opacity-100" : "pointer-events-none absolute inset-0 opacity-0",
-                )}
-                aria-hidden={!editorLive}
-              >
-                <MarkdownEditor
-                  key={note!.path}
-                  noteKey={note!.path}
-                  value={body}
-                  onChange={(md) => {
-                    setBody(md);
-                    onBodyChange?.(md);
-                  }}
-                  onBlur={() => void flush()}
-                  onOpenLink={onOpenLink}
-                  scrollToHeading={scrollToHeading}
-                  onReady={() => setEditorLive(true)}
-                  collab={
-                    collab?.enabled && collab.token && collab.spaceId
-                      ? {
-                          token: collab.token,
-                          spaceId: collab.spaceId,
-                          path: note!.path,
-                          initialBody: note!.body,
-                        }
-                      : null
-                  }
-                />
-              </div>
+        ) : ready && editable ? (
+          <div className="relative min-h-[8rem]">
+            {!editorLive &&
+              (body.trim() ? (
+                <div className="prose min-h-[8rem]">
+                  <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
+                </div>
+              ) : (
+                <EditorBodySkeleton />
+              ))}
+            <div
+              className={
+                editorLive
+                  ? "relative min-h-[8rem]"
+                  : "pointer-events-none absolute inset-x-0 top-0 opacity-0"
+              }
+              aria-hidden={!editorLive}
+            >
+              <MarkdownEditor
+                key={note!.path}
+                noteKey={note!.path}
+                value={body}
+                onChange={(md) => {
+                  setBody(md);
+                  onBodyChange?.(md);
+                }}
+                onBlur={() => void flush()}
+                onOpenLink={onOpenLink}
+                scrollToHeading={scrollToHeading}
+                onReady={() => setEditorLive(true)}
+                collab={
+                  collab?.enabled && collab.token && collab.spaceId
+                    ? {
+                        token: collab.token,
+                        spaceId: collab.spaceId,
+                        path: note!.path,
+                        initialBody: note!.body,
+                      }
+                    : null
+                }
+              />
             </div>
           </div>
-        )}
-
-        {ready && !editable && (
+        ) : ready && !editable ? (
           <div className="prose min-h-[8rem]">
             {note!.body.trim() ? (
               <ReadOnlyBody body={note!.body} onOpenLink={onOpenLink} />
@@ -408,15 +382,15 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               <p className="text-muted/70">Empty.</p>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {error && <p className="mt-3 rounded-md bg-vis-secret/10 px-3 py-2 text-sm text-vis-secret">{error}</p>}
 
       <footer
         className={cn(
-          "mt-8 border-t border-border pt-4 transition-opacity duration-200 ease-out",
-          ready && editorLive && note!.meta.links.length > 0 ? "opacity-100" : "hidden",
+          "mt-8 border-t border-border pt-4",
+          ready && note!.meta.links.length > 0 ? "block" : "hidden",
         )}
       >
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Linked</h3>

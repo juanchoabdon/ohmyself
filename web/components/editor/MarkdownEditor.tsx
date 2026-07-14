@@ -91,11 +91,11 @@ export function MarkdownEditor({
     (ed: Editor) => {
       if (readyFiredRef.current || ed.isDestroyed) return;
       const seed = collabInitialBodyRef.current ?? value;
-      if (collabActive && ed.isEmpty && seed.trim()) return;
+      if (ed.isEmpty && seed.trim()) return;
       readyFiredRef.current = true;
       onReadyRef.current?.();
     },
-    [collabActive, value],
+    [value],
   );
 
   const seedIfEmpty = useCallback((ed: Editor) => {
@@ -114,7 +114,8 @@ export function MarkdownEditor({
       content: collabActive ? collabInitialBody ?? value : value,
       contentType: "markdown",
       onCreate: ({ editor: ed }) => {
-        if (!collabActive) signalReady(ed);
+        if (collabActive) return;
+        requestAnimationFrame(() => signalReady(ed));
       },
       editorProps: {
         attributes: {
