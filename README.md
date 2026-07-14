@@ -104,6 +104,17 @@ pnpm seed --user <userId>
 
 ## Connect your personal Claude (MCP)
 
+### One command — `oms init` (recommended)
+
+Wire any project folder to your hosted brain (Cursor + Claude snippets):
+
+```bash
+pnpm oms init
+OMS_TOKEN=oms_… pnpm oms init --token "$OMS_TOKEN"
+```
+
+See [docs/OMS_INIT.md](docs/OMS_INIT.md) for modes, company spaces, and local vault setup.
+
 ### Local, over stdio
 Add to your Claude Desktop / MCP client config. Use `VAULT_BACKEND=supabase` with your
 real user id, or `VAULT_BACKEND=fs` for a purely local markdown folder.

@@ -25,6 +25,10 @@ secrets/
 /versions/
 server/versions/
 
+# oms init secrets (config.yml is safe to commit)
+.oms/secrets.env
+.oms/*.local
+
 # OS / editor
 .DS_Store
 *.log

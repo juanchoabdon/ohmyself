@@ -15,7 +15,8 @@
     "mcp": "pnpm --filter @ohmyself/server mcp",
     "seed": "pnpm --filter @ohmyself/server seed",
     "typecheck": "pnpm -r typecheck",
-    "db:push": "supabase db push"
+    "db:push": "supabase db push",
+    "oms": "pnpm --filter @ohmyself/server exec tsx src/cli/index.ts"
   },
   "devDependencies": {
     "typescript": "^5.5.4"
