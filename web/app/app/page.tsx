@@ -86,6 +86,7 @@ export default function Dashboard() {
   const [selected, setSelected] = useState<string | null>(null);
   const [fullNote, setFullNote] = useState<FullNote | null>(null);
   const [noteLoading, setNoteLoading] = useState(false);
+  const [notePreviewTitle, setNotePreviewTitle] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
@@ -429,8 +430,10 @@ export default function Dashboard() {
     setView("notes");
     setSelected(path);
     setNoteLoading(true);
-    setFullNote(null);
     const indexed = (searchResults ?? baseNotes).find((n) => n.path === path);
+    setNotePreviewTitle(
+      indexed?.title ?? path.split("/").pop()?.replace(/\.md$/, "") ?? path,
+    );
     setOpenTabs((prev) => upsertTab(prev, path, indexed?.title ?? path.split("/").pop()?.replace(/\.md$/, "") ?? path));
     // Remember it so a refresh reopens this note (see the space-load effect).
     if (activeSpaceId) {
@@ -455,6 +458,7 @@ export default function Dashboard() {
       }
     } finally {
       setNoteLoading(false);
+      setNotePreviewTitle(null);
     }
   }
 
@@ -900,6 +904,8 @@ export default function Dashboard() {
                     ref={noteViewRef}
                     note={fullNote}
                     loading={noteLoading}
+                    activePath={selected}
+                    previewTitle={notePreviewTitle}
                     onOpenLink={openNote}
                     onSave={handleSaveNote}
                     onBodyChange={setEditorBody}
@@ -917,34 +923,38 @@ export default function Dashboard() {
                     }}
                   />
                 </div>
-                {docPanelOpen && selected && fullNote && !noteLoading && (
-                  <DocPanel
-                    note={fullNote}
-                    tab={docPanelTab}
-                    onTabChange={setDocPanelTab}
-                    onOpenLink={openNote}
-                    onClose={() => setDocPanelOpen(false)}
-                    liveBody={editorBody}
-                    onOutlineClick={(item: OutlineItem, occurrence: number) =>
-                      setScrollToHeading({
-                        text: item.text,
-                        level: item.level,
-                        occurrence,
-                        nonce: Date.now(),
-                      })
-                    }
-                    token={token}
-                    onRestoreVersion={
-                      selected && token
-                        ? async (version) => {
-                            await api.restoreVersion(token, selected, version);
-                            noteDirtyRef.current = false;
-                            setEditorBody(undefined);
-                            await openNote(selected);
-                          }
-                        : undefined
-                    }
-                  />
+                {docPanelOpen && selected && (
+                  noteLoading || !fullNote || fullNote.path !== selected ? (
+                    <DocPanelSkeleton />
+                  ) : (
+                    <DocPanel
+                      note={fullNote}
+                      tab={docPanelTab}
+                      onTabChange={setDocPanelTab}
+                      onOpenLink={openNote}
+                      onClose={() => setDocPanelOpen(false)}
+                      liveBody={editorBody}
+                      onOutlineClick={(item: OutlineItem, occurrence: number) =>
+                        setScrollToHeading({
+                          text: item.text,
+                          level: item.level,
+                          occurrence,
+                          nonce: Date.now(),
+                        })
+                      }
+                      token={token}
+                      onRestoreVersion={
+                        selected && token
+                          ? async (version) => {
+                              await api.restoreVersion(token, selected, version);
+                              noteDirtyRef.current = false;
+                              setEditorBody(undefined);
+                              await openNote(selected);
+                            }
+                          : undefined
+                      }
+                    />
+                  )
                 )}
                 <ActivityPanel
                   token={token}
@@ -1132,6 +1142,25 @@ function SpaceWelcome({
         </div>
       </div>
     </div>
+  );
+}
+
+function DocPanelSkeleton() {
+  return (
+    <aside
+      className="flex min-h-0 w-64 shrink-0 flex-col border-l border-border bg-surface"
+      aria-busy="true"
+      aria-hidden
+    >
+      <div className="border-b border-border px-2 py-2">
+        <span className="skeleton block h-7 w-full rounded-lg" />
+      </div>
+      <div className="flex-1 space-y-3 p-3">
+        {["72%", "58%", "64%", "50%", "68%"].map((w, i) => (
+          <span key={i} className="skeleton block h-3 rounded" style={{ width: w }} />
+        ))}
+      </div>
+    </aside>
   );
 }
 

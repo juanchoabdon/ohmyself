@@ -30,6 +30,10 @@ export type NoteViewHandle = {
 type NoteViewProps = {
   note: FullNote | null;
   loading: boolean;
+  /** Path currently being fetched (may differ from `note.path` while switching). */
+  activePath?: string | null;
+  /** Sidebar/index title shown in the loading shell. */
+  previewTitle?: string | null;
   onOpenLink: (path: string) => void;
   onSave?: (patch: {
     title?: string;
@@ -53,6 +57,8 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   {
     note,
     loading,
+    activePath,
+    previewTitle,
     onOpenLink,
     onSave,
     onDelete,
@@ -207,7 +213,10 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     [],
   );
 
-  if (loading && !note) {
+  const switching = loading && Boolean(activePath) && note?.path !== activePath;
+  const booting = loading && !note;
+
+  if (switching || booting) {
     return (
       <article className="mx-auto w-full max-w-3xl px-8 py-10" aria-busy="true">
         <header className="mb-6 border-b border-border pb-5">
@@ -215,7 +224,11 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
             <span className="skeleton h-5 w-16 rounded-full" />
             <span className="skeleton h-5 w-20 rounded-full" />
           </div>
-          <span className="skeleton block h-8 w-2/3 rounded-md" />
+          {previewTitle ? (
+            <h1 className="text-[1.7rem] font-bold tracking-tight text-ink/50">{previewTitle}</h1>
+          ) : (
+            <span className="skeleton block h-8 w-2/3 rounded-md" />
+          )}
           <span className="skeleton mt-3 block h-3 w-1/2 rounded" />
         </header>
         <EditorBodySkeleton />

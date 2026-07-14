@@ -71,6 +71,7 @@ export function MarkdownEditor({
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const seededRef = useRef(false);
   const [peers, setPeers] = useState(0);
+  const [editorReady, setEditorReady] = useState(false);
 
   const extensions = useMemo(
     () => buildEditorExtensions((path) => onOpenLinkRef.current?.(path), ydoc ?? undefined),
@@ -83,6 +84,7 @@ export function MarkdownEditor({
       extensions,
       content: collabActive ? collabInitialBody ?? value : value,
       contentType: "markdown",
+      onCreate: () => setEditorReady(true),
       editorProps: {
         attributes: {
           class: "prose oms-editor-body min-h-[8rem] focus:outline-none",
@@ -101,6 +103,10 @@ export function MarkdownEditor({
     },
     [noteKey, collabActive],
   );
+
+  useEffect(() => {
+    setEditorReady(false);
+  }, [noteKey]);
 
   // Reconnect provider only when the note changes — never on parent re-renders.
   useEffect(() => {
@@ -165,7 +171,7 @@ export function MarkdownEditor({
     );
   }, [editor, scrollToHeading]);
 
-  if (!editor || editor.isDestroyed) {
+  if (!editor || editor.isDestroyed || !editorReady) {
     return <EditorBodySkeleton />;
   }
 
