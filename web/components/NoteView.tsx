@@ -19,9 +19,8 @@ import { cn } from "@/lib/utils";
 
 /** Pause after last keystroke before autosave — tuned to feel like Docs/OK. */
 const AUTOSAVE_MS = 400;
-const SAVED_FLASH_MS = 1500;
 
-type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
+type SaveStatus = "idle" | "saving" | "error";
 
 export type NoteViewHandle = {
   /** Flush any pending debounced save (e.g. before switching notes). */
@@ -80,7 +79,6 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const savedFlashRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const savingRef = useRef(false);
   const dirtyRef = useRef(false);
   const titleRefVal = useRef("");
@@ -139,9 +137,8 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
         setVisibility(saved.meta.visibility);
         setTags(saved.meta.tags.join(", "));
       }
-      setSaveStatus("saved");
-      clearTimeout(savedFlashRef.current);
-      savedFlashRef.current = setTimeout(() => setSaveStatus("idle"), SAVED_FLASH_MS);
+      setSaveStatus("idle");
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save");
       setSaveStatus("error");
@@ -157,7 +154,6 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
 
   const scheduleSave = useCallback(() => {
     if (!dirtyRef.current || !onSave || !titleRefVal.current.trim()) return;
-    setSaveStatus("pending");
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => void persist(), AUTOSAVE_MS);
   }, [onSave, persist]);
@@ -175,10 +171,6 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     scheduleSave();
     return () => clearTimeout(saveTimerRef.current);
   }, [dirty, onSave, title, body, visibility, tags, scheduleSave]);
-
-  useEffect(() => {
-    if (!dirty) setSaveStatus((s) => (s === "pending" ? "idle" : s));
-  }, [dirty]);
 
   // ⌘S / Ctrl+S flushes immediately.
   useEffect(() => {
@@ -211,7 +203,6 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   useEffect(
     () => () => {
       clearTimeout(saveTimerRef.current);
-      clearTimeout(savedFlashRef.current);
     },
     [],
   );
@@ -231,28 +222,6 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
       </Centered>
     );
   }
-
-  function revert() {
-    if (!note) return;
-    setError(null);
-    setSaveStatus("idle");
-    clearTimeout(saveTimerRef.current);
-    setTitle(note.meta.title);
-    setBody(note.body);
-    setVisibility(note.meta.visibility);
-    setTags(note.meta.tags.join(", "));
-  }
-
-  const statusLabel =
-    saveStatus === "saving"
-      ? "Saving…"
-      : saveStatus === "saved"
-        ? "Saved"
-        : saveStatus === "pending"
-          ? "Unsaved"
-          : saveStatus === "error"
-            ? "Save failed"
-            : "Editing";
 
   return (
     <article
@@ -283,35 +252,17 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 ) : (
                   <VisibilityBadge visibility={note!.meta.visibility} />
                 )}
-                {editable ? (
-                  <span
-                    className={
-                      saveStatus === "saved"
-                        ? "text-vis-public"
-                        : saveStatus === "error"
-                          ? "text-vis-secret"
-                          : undefined
-                    }
-                  >
-                    · {statusLabel}
-                  </span>
-                ) : (
-                  note!.meta.updated && <span>· updated {note!.meta.updated}</span>
+                {saveStatus === "error" && editable && (
+                  <span className="text-vis-secret">· Save failed</span>
+                )}
+                {!editable && note!.meta.updated && (
+                  <span>· updated {note!.meta.updated}</span>
                 )}
               </>
             )}
           </div>
           {ready && (onSave || onDelete) && (
             <div className="flex items-center gap-1.5">
-              {editable && dirty && (
-                <button
-                  onClick={revert}
-                  disabled={saveStatus === "saving"}
-                  className="rounded-lg px-2.5 py-1 text-xs font-medium text-muted hover:text-ink disabled:opacity-60"
-                >
-                  Revert
-                </button>
-              )}
               {onDelete && (
                 <button
                   onClick={async () => {
