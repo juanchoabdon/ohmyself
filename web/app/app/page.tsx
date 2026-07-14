@@ -600,10 +600,12 @@ export default function Dashboard() {
   const [actionBusy, setActionBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const noteDirtyRef = useRef(false);
+  const collabEnabledRef = useRef(false);
   const selectedRef = useRef<string | null>(null);
   const noteViewRef = useRef<NoteViewHandle>(null);
   const openNoteSeqRef = useRef(0);
   selectedRef.current = selected;
+  collabEnabledRef.current = collabEnabled;
 
   async function refresh(open?: string | null) {
     if (!token) return;
@@ -681,6 +683,9 @@ export default function Dashboard() {
             const livePath = event.type === "note_moved" && event.to ? event.to : event.path;
             const cur = selectedRef.current;
             if (livePath && (cur === event.path || cur === livePath)) {
+              // With Yjs collab, autosave from the other editor is expected — not a conflict.
+              if (collabEnabledRef.current) return;
+
               if (noteDirtyRef.current) {
                 setBanner("This note was updated elsewhere — save or reload to sync.");
                 return;
