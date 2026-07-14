@@ -41,13 +41,13 @@ export function startCollabServer(): Hocuspocus | null {
 
     async onAuthenticate({ token, documentName }) {
       if (!token) throw new Error("collab: missing token");
+      const room = parseRoom(documentName);
+      if (!room) throw new Error("collab: invalid room");
       const auth = await resolveAuth({
         authorization: `Bearer ${token}`,
         "x-brain-scope": null,
-        "x-brain-space": null,
+        "x-brain-space": room.spaceId,
       });
-      const room = parseRoom(documentName);
-      if (!room || room.spaceId !== auth.spaceId) throw new Error("collab: invalid room");
       if (auth.readonly) throw new Error("collab: read-only token");
       return { userId: auth.userId, spaceId: auth.spaceId };
     },

@@ -76,7 +76,8 @@ export function MarkdownEditor({
     {
       immediatelyRender: false,
       extensions,
-      content: collabActive ? "" : value,
+      // Always show note body immediately — don't block on WebSocket sync.
+      content: collabActive ? collab?.initialBody ?? value : value,
       contentType: "markdown",
       editorProps: {
         attributes: {
@@ -140,7 +141,12 @@ export function MarkdownEditor({
       else if (status === "connected") setCollabStatus("live");
     });
 
+    const connectTimer = window.setTimeout(() => {
+      setCollabStatus((s) => (s === "connecting" ? "error" : s));
+    }, 8000);
+
     return () => {
+      window.clearTimeout(connectTimer);
       provider.awareness?.off("change", bumpPeers);
       provider.destroy();
       providerRef.current = null;
