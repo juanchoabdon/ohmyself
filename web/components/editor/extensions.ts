@@ -16,6 +16,9 @@ import type { CollabUser } from "@/lib/collabUser";
 import { WikiLink } from "./WikiLink";
 import { OmsCodeBlock } from "./OmsCodeBlock";
 import { Callout } from "./Callout";
+import { Tabs, Tab } from "./Tabs";
+import { Accordion, AccordionItem } from "./Accordion";
+import { OmsImage, OmsVideo, OmsEmbed } from "./MediaBlocks";
 import { SlashCommand } from "./slashCommand";
 
 export function buildEditorExtensions(
@@ -34,6 +37,13 @@ export function buildEditorExtensions(
     }),
     OmsCodeBlock,
     Callout,
+    Tabs,
+    Tab,
+    Accordion,
+    AccordionItem,
+    OmsImage,
+    OmsVideo,
+    OmsEmbed,
     Link.configure({
       openOnClick: false,
       autolink: true,

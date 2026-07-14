@@ -108,6 +108,45 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     markdown: "[[notes/example]]",
     tags: ["link", "wiki"],
   },
+  {
+    id: "tabs",
+    label: "Tabs",
+    description: "Tabbed sections with rich markdown per tab",
+    markdown:
+      ":::tabs\n:::tab Overview\nFirst tab content.\n:::\n:::tab Details\nSecond tab content.\n:::\n:::\n",
+    tags: ["tabs", "layout"],
+  },
+  {
+    id: "accordion",
+    label: "Accordion",
+    description: "Collapsible sections",
+    markdown:
+      ":::accordion\n:::accordion-item Section 1\nContent here.\n:::\n:::accordion-item Section 2\nMore content.\n:::\n:::\n",
+    tags: ["accordion", "layout"],
+  },
+  {
+    id: "image",
+    label: "Image (zoom)",
+    description: "Image with caption and click-to-zoom",
+    markdown:
+      ":::image\nsrc: https://example.com/image.png\nalt: Description\ncaption: Optional caption\n:::\n",
+    tags: ["image", "media"],
+  },
+  {
+    id: "video",
+    label: "Video",
+    description: "YouTube or Vimeo embed",
+    markdown:
+      ":::video\nsrc: https://www.youtube.com/watch?v=VIDEO_ID\ntitle: Video title\n:::\n",
+    tags: ["video", "media"],
+  },
+  {
+    id: "embed",
+    label: "Embed",
+    description: "Generic iframe embed (Figma, Loom, etc.)",
+    markdown: ":::embed\nurl: https://example.com/embed\ntitle: Embed\nheight: 420\n:::\n",
+    tags: ["embed", "iframe"],
+  },
 ];
 
 export const PALETTE_COMPONENTS: PaletteComponent[] = [
@@ -156,6 +195,66 @@ export const PALETTE_COMPONENTS: PaletteComponent[] = [
       { name: "label", type: "string", required: false },
     ],
     tags: ["link", "wiki"],
+  },
+  {
+    id: "tabs",
+    label: "Tabs",
+    description: "Tabbed layout; each tab holds block markdown",
+    markdownSyntax: ":::tabs\n:::tab {title}\n{body}\n:::\n:::\n",
+    example:
+      ":::tabs\n:::tab Overview\nSummary here.\n:::\n:::tab Spec\nDetails.\n:::\n:::\n",
+    props: [
+      { name: "tabs", type: "array", required: true, description: "Array of { title, body }" },
+    ],
+    tags: ["tabs", "layout"],
+  },
+  {
+    id: "accordion",
+    label: "Accordion",
+    description: "Collapsible sections",
+    markdownSyntax: ":::accordion\n:::accordion-item {title}\n{body}\n:::\n:::\n",
+    example:
+      ":::accordion\n:::accordion-item FAQ\nAnswer here.\n:::\n:::\n",
+    props: [{ name: "items", type: "array", required: true, description: "Array of { title, body }" }],
+    tags: ["accordion", "layout"],
+  },
+  {
+    id: "image",
+    label: "Image",
+    description: "Image block with alt, caption, zoom on click",
+    markdownSyntax: ":::image\nsrc: {url}\nalt: {text}\ncaption: {text}\n:::\n",
+    example: ":::image\nsrc: https://example.com/diagram.png\nalt: Architecture\ncaption: System overview\n:::\n",
+    props: [
+      { name: "src", type: "string", required: true },
+      { name: "alt", type: "string", required: false },
+      { name: "caption", type: "string", required: false },
+    ],
+    tags: ["image", "media"],
+  },
+  {
+    id: "video",
+    label: "Video",
+    description: "YouTube or Vimeo player embed",
+    markdownSyntax: ":::video\nsrc: {youtube_or_vimeo_url}\ntitle: {text}\n:::\n",
+    example: ":::video\nsrc: https://www.youtube.com/watch?v=xxx\ntitle: Demo walkthrough\n:::\n",
+    props: [
+      { name: "src", type: "string", required: true },
+      { name: "title", type: "string", required: false },
+    ],
+    tags: ["video", "media"],
+  },
+  {
+    id: "embed",
+    label: "Embed",
+    description: "Sandboxed iframe for external tools",
+    markdownSyntax: ":::embed\nurl: {embed_url}\ntitle: {text}\nheight: {px}\n:::\n",
+    example: ":::embed\nurl: https://www.figma.com/embed/...\ntitle: Design\nheight: 480\n:::\n",
+    props: [
+      { name: "url", type: "string", required: true },
+      { name: "title", type: "string", required: false },
+      { name: "height", type: "number", required: false },
+    ],
+    tags: ["embed", "iframe"],
   },
 ];
 

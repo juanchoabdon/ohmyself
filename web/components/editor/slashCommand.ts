@@ -103,6 +103,102 @@ export const slashCommandItems: SlashCommandItem[] = [
         .run(),
   },
   {
+    title: "Tabs",
+    hint: "sections",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "tabs",
+          content: [
+            {
+              type: "tab",
+              attrs: { title: "Overview" },
+              content: [{ type: "paragraph", content: [{ type: "text", text: "First tab content." }] }],
+            },
+            {
+              type: "tab",
+              attrs: { title: "Details" },
+              content: [{ type: "paragraph", content: [{ type: "text", text: "Second tab content." }] }],
+            },
+          ],
+        })
+        .run(),
+  },
+  {
+    title: "Accordion",
+    hint: "collapse",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "accordion",
+          content: [
+            {
+              type: "accordionItem",
+              attrs: { title: "Section 1" },
+              content: [{ type: "paragraph", content: [{ type: "text", text: "Expandable content." }] }],
+            },
+            {
+              type: "accordionItem",
+              attrs: { title: "Section 2" },
+              content: [{ type: "paragraph", content: [{ type: "text", text: "More details here." }] }],
+            },
+          ],
+        })
+        .run(),
+  },
+  {
+    title: "Image",
+    hint: "zoom",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "omsImage",
+          attrs: {
+            src: "https://picsum.photos/seed/ohmyself/800/450",
+            alt: "Example image",
+            caption: "Click to zoom",
+          },
+        })
+        .run(),
+  },
+  {
+    title: "Video",
+    hint: "youtube",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "omsVideo",
+          attrs: { src: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Video title" },
+        })
+        .run(),
+  },
+  {
+    title: "Embed",
+    hint: "iframe",
+    command: ({ editor, range }) =>
+      editor
+        .chain()
+        .focus()
+        .deleteRange(range)
+        .insertContent({
+          type: "omsEmbed",
+          attrs: { url: "", title: "Embed", height: 420 },
+        })
+        .run(),
+  },
+  {
     title: "Wiki link",
     hint: "[[path]]",
     command: ({ editor, range }) =>

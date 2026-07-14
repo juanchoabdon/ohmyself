@@ -48,7 +48,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
 /** The public MCP tool contract version. Bumped for the retrieval architecture
  *  (research_brain + graph primitives + write_brain + routing policy). Kept
  *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.7";
+const CONTRACT_VERSION = "2.8";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves

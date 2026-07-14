@@ -296,6 +296,72 @@ main {
   outline: none;
 }
 
+/* Tabs */
+.oms-tabs {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  overflow: hidden;
+  background: var(--surface);
+}
+.oms-tabs__header {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--surface) 92%, var(--border));
+  overflow-x: auto;
+}
+.oms-tabs__tab {
+  flex-shrink: 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+}
+.oms-tabs__tab--active {
+  color: var(--ink);
+  border-bottom-color: var(--brand);
+  background: var(--surface);
+}
+.oms-tabs__body {
+  padding: 0.75rem 0.9rem 0.9rem;
+}
+.oms-tab-panel--hidden {
+  display: none !important;
+}
+.oms-tab-panel__content > :first-child {
+  margin-top: 0;
+}
+.oms-tab-panel__content > :last-child {
+  margin-bottom: 0;
+}
+
+/* Accordion */
+.oms-accordion {
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  overflow: hidden;
+  background: var(--surface);
+  padding: 0 0.9rem;
+}
+.oms-accordion-item__body > :first-child {
+  margin-top: 0;
+}
+.oms-accordion-item__body > :last-child {
+  margin-bottom: 0;
+}
+
+.oms-image--selected,
+.oms-video--selected,
+.oms-embed--selected {
+  outline: 2px solid color-mix(in oklch, var(--brand) 45%, transparent);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
 .prose hr {
   border: none;
   border-top: 1px solid var(--border);
