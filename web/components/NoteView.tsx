@@ -13,7 +13,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { FullNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
-import { MarkdownEditor, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
+import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
 
 /** Pause after last keystroke before autosave — tuned to feel like Docs/OK. */
@@ -207,7 +207,21 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     [],
   );
 
-  if (loading) return <Centered>Loading…</Centered>;
+  if (loading && !note) {
+    return (
+      <article className="mx-auto w-full max-w-3xl px-8 py-10" aria-busy="true">
+        <header className="mb-6 border-b border-border pb-5">
+          <div className="mb-2 flex gap-2">
+            <span className="skeleton h-5 w-16 rounded-full" />
+            <span className="skeleton h-5 w-20 rounded-full" />
+          </div>
+          <span className="skeleton block h-8 w-2/3 rounded-md" />
+          <span className="skeleton mt-3 block h-3 w-1/2 rounded" />
+        </header>
+        <EditorBodySkeleton />
+      </article>
+    );
+  }
   if (!note) {
     return (
       <Centered>

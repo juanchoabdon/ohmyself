@@ -30,8 +30,8 @@ export type CollabConfig = {
  * Always-on WYSIWYG markdown editor. Content round-trips to stored `.md` via
  * TipTap Markdown (tables, task lists, wiki-links, blockquotes, etc.).
  *
- * When `collab` is set, Yjs syncs live edits via Hocuspocus; REST autosave remains
- * the vault source of truth (onChange → PATCH).
+ * When `collab` is set, Yjs syncs live edits via Hocuspocus in the background;
+ * REST autosave remains the vault source of truth (onChange → PATCH).
  */
 export function MarkdownEditor({
   value,
@@ -57,13 +57,20 @@ export function MarkdownEditor({
   onBlurRef.current = onBlur;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  const collabActive = Boolean(collab?.token && collab.spaceId);
+
+  const collabToken = collab?.token;
+  const collabSpaceId = collab?.spaceId;
+  const collabPath = collab?.path;
+  const collabInitialBody = collab?.initialBody;
+  const collabActive = Boolean(collabToken && collabSpaceId && collabPath);
+
+  const collabInitialBodyRef = useRef(collabInitialBody);
+  collabInitialBodyRef.current = collabInitialBody;
 
   const ydoc = useMemo(() => (collabActive ? new Y.Doc() : null), [noteKey, collabActive]);
   const providerRef = useRef<HocuspocusProvider | null>(null);
   const seededRef = useRef(false);
   const [peers, setPeers] = useState(0);
-  const [collabReady, setCollabReady] = useState(!collabActive);
 
   const extensions = useMemo(
     () => buildEditorExtensions((path) => onOpenLinkRef.current?.(path), ydoc ?? undefined),
@@ -74,8 +81,7 @@ export function MarkdownEditor({
     {
       immediatelyRender: false,
       extensions,
-      // Always show note body immediately — don't block on WebSocket sync.
-      content: collabActive ? collab?.initialBody ?? value : value,
+      content: collabActive ? collabInitialBody ?? value : value,
       contentType: "markdown",
       editorProps: {
         attributes: {
@@ -96,58 +102,49 @@ export function MarkdownEditor({
     [noteKey, collabActive],
   );
 
+  // Reconnect provider only when the note changes — never on parent re-renders.
   useEffect(() => {
     seededRef.current = false;
-    if (!collabActive || !ydoc || !collab || !editor) {
+    if (!collabActive || !ydoc || !collabToken || !collabSpaceId || !collabPath || !editor) {
       providerRef.current?.destroy();
       providerRef.current = null;
       setPeers(0);
-      setCollabReady(!collabActive);
       return;
     }
 
-    setCollabReady(false);
     const provider = new HocuspocusProvider({
       url: collabWsUrl(),
-      name: collabRoomName(collab.spaceId, collab.path),
+      name: collabRoomName(collabSpaceId, collabPath),
       document: ydoc,
-      token: collab.token,
+      token: collabToken,
     });
     providerRef.current = provider;
 
     const bumpPeers = () => {
       const awareness = provider.awareness;
       if (!awareness) return;
-      const n = awareness.getStates().size;
-      setPeers(Math.max(0, n - 1));
+      setPeers(Math.max(0, awareness.getStates().size - 1));
     };
     provider.awareness?.on("change", bumpPeers);
     bumpPeers();
 
     const onSynced = () => {
-      setCollabReady(true);
       if (seededRef.current || editor.isDestroyed) return;
-      if (editor.isEmpty && collab.initialBody.trim()) {
-        editor.commands.setContent(collab.initialBody, { contentType: "markdown" });
+      const seed = collabInitialBodyRef.current;
+      if (editor.isEmpty && seed?.trim()) {
+        editor.commands.setContent(seed, { contentType: "markdown" });
         seededRef.current = true;
       }
     };
     provider.on("synced", onSynced);
 
-    provider.on("status", ({ status }: { status: string }) => {
-      if (status === "connected") setCollabReady(true);
-    });
-
-    const connectTimer = window.setTimeout(() => setCollabReady(true), 8000);
-
     return () => {
-      window.clearTimeout(connectTimer);
       provider.awareness?.off("change", bumpPeers);
       provider.destroy();
       providerRef.current = null;
       setPeers(0);
     };
-  }, [collabActive, ydoc, collab, editor, noteKey]);
+  }, [collabActive, collabToken, collabSpaceId, collabPath, ydoc, editor, noteKey]);
 
   // Parent reset (Cancel) without remounting the note — skip when Yjs owns the doc.
   useEffect(() => {
@@ -168,9 +165,7 @@ export function MarkdownEditor({
     );
   }, [editor, scrollToHeading]);
 
-  const booting = !editor || editor.isDestroyed || (collabActive && !collabReady);
-
-  if (booting) {
+  if (!editor || editor.isDestroyed) {
     return <EditorBodySkeleton />;
   }
 
@@ -191,7 +186,7 @@ export function MarkdownEditor({
 
 const SKELETON_LINES = ["92%", "78%", "85%", "64%", "88%", "72%", "55%"];
 
-function EditorBodySkeleton() {
+export function EditorBodySkeleton() {
   return (
     <div className="min-h-[8rem] space-y-3 py-1" aria-hidden>
       {SKELETON_LINES.map((w, i) => (
