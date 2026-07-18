@@ -1,0 +1,42 @@
+[
+  {
+    "id": "dw",
+    "title": "DW",
+    "date": "2026-07-18",
+    "drive_doc_id": "1t07aPca37mtDgoRPqJkFb-4JFXdjmWtzlciNz34A7cM",
+    "expected_space": "bonds",
+    "expected_concepts": [
+      ["private ai", "private mode", "ai privada"],
+      ["multiplayer", "shared interface", "shared state"],
+      ["relationship world", "relationship space", "mundos", "world"],
+      ["three surface", "three layer", "three mode", "conversation layer"],
+      ["belgium", "tomorrowland"],
+      ["monogram", "tomo"],
+      ["chat before home", "chat first", "chat before"],
+      ["recall", "persistent", "pin"],
+      ["yc", "demo"]
+    ],
+    "expected_decisions_min": 3,
+    "expected_insights_min": 3,
+    "expected_models_min": 1
+  },
+  {
+    "id": "wow",
+    "title": "WOW",
+    "date": "2026-07-17",
+    "expected_space": "bonds",
+    "expected_concepts": [
+      ["relationship is the product", "relationship as the product", "unit of product"],
+      ["dynamic interface", "generated interface", "living interface"],
+      ["whatsapp"],
+      ["daily challenge", "friend challenge"],
+      ["shared memory", "relationship memory"],
+      ["multiplayer"],
+      ["yc", "y combinator"],
+      ["network effect", "coordination cost"]
+    ],
+    "expected_decisions_min": 2,
+    "expected_insights_min": 3,
+    "expected_models_min": 1
+  }
+]

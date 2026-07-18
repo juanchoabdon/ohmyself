@@ -593,7 +593,9 @@ async function conceptCullPass(
   apply: LintApplyMode,
   report: LintReport,
 ): Promise<void> {
-  const concepts = entities.filter((e) => e.meta.type === "concept");
+  const concepts = entities.filter(
+    (e) => e.meta.type === "concept" && !e.meta.tags.includes("glossary-seed"),
+  );
   if (!concepts.length) return;
   const bad = await classifyConcepts(concepts.map((c) => c.meta.title));
   for (const c of concepts) {

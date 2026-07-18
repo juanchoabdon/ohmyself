@@ -5,6 +5,8 @@
 import { Node } from "@tiptap/pm/model";
 import { getSchema } from "@tiptap/core";
 import type { Extensions, JSONContent } from "@tiptap/core";
+import { yXmlFragmentToProseMirrorRootNode } from "@tiptap/y-tiptap";
+import type { Doc } from "yjs";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import { Table } from "@tiptap/extension-table";
@@ -53,4 +55,17 @@ export function markdownToProsemirrorJson(body: string): JSONContent {
 
 export function jsonToProsemirrorNode(json: JSONContent) {
   return Node.fromJSON(schema, json);
+}
+
+/** Serialize the live collab fragment back to markdown (vault persistence). */
+export function yDocToMarkdown(ydoc: Doc): string {
+  const fragment = ydoc.getXmlFragment(COLLAB_FIELD);
+  const node = yXmlFragmentToProseMirrorRootNode(fragment, schema);
+  return markdown.serialize(node.toJSON());
+}
+
+/** Markdown as it looks after a parse→serialize round-trip through the collab
+ *  schema. Used to tell real edits apart from serializer normalization. */
+export function roundTripMarkdown(body: string): string {
+  return markdown.serialize(markdownToProsemirrorJson(body));
 }

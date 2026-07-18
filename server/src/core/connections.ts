@@ -12,6 +12,21 @@ import { serviceClient } from "./supabase.js";
 
 export type ConnectionStatus = "active" | "error" | "disabled";
 
+/** Max Drive lookback window for every connection (sync + backfill). */
+export const MAX_LOOKBACK_MONTHS =
+  Number(process.env.MAX_LOOKBACK_MONTHS ?? process.env.FIRST_BACKFILL_MAX_MONTHS ?? "3") || 3;
+
+/** @deprecated use MAX_LOOKBACK_MONTHS */
+export const FIRST_BACKFILL_MAX_MONTHS = MAX_LOOKBACK_MONTHS;
+
+/** Cap lookback — always clamped to {@link MAX_LOOKBACK_MONTHS}. */
+export function capLookbackMonths(_settings: ConnectionSettings, requested: number): number {
+  const raw = Number(requested);
+  // UI sends 0 for "all history" — still capped.
+  const months = !Number.isFinite(raw) || raw <= 0 ? MAX_LOOKBACK_MONTHS : raw;
+  return Math.min(months, MAX_LOOKBACK_MONTHS);
+}
+
 /** Progress of a server-side fire-and-forget run (historical backfill in `light`
  *  mode, or a "Sync now" in `full` mode), persisted on the connection so it
  *  survives the browser closing and can be polled by the UI. */
@@ -57,6 +72,9 @@ export interface ConnectionSettings {
   /** Drive file ids only light-processed (person/concept facts, no meeting note).
    *  Kept separate so a later full sync still creates their meeting notes. */
   seenLightIds?: string[];
+  /** Drive file ids whose ingest failed, with attempt counts. Retried on later
+   *  syncs; after MAX attempts they're marked seen (dead-lettered) and logged. */
+  failedIngests?: Record<string, number>;
   /** In-progress / last historical backfill. */
   backfill?: BackfillState;
   [key: string]: unknown;
@@ -265,11 +283,13 @@ export async function listActiveConnectionsForProvider(
   provider: string,
 ): Promise<Connection[]> {
   const db = serviceClient();
+  // Include "error" so transient failures (e.g. a Google 500) self-heal on the
+  // next tick instead of parking the connection forever. Only "disabled" is out.
   const { data, error } = await db
     .from("connections")
     .select("*")
     .eq("provider", provider)
-    .eq("status", "active");
+    .in("status", ["active", "error"]);
   if (error) throw new Error(`listActiveConnectionsForProvider: ${error.message}`);
   return (data as ConnectionRow[]).map(toConnection);
 }

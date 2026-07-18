@@ -37,6 +37,7 @@ export {
   addMember,
   updateMemberRole,
   removeMember,
+  listSelfSpaceIds,
 } from "./spaces.js";
 export type { Space, SpaceKind, CreateSpaceInput, UpdateSpaceInput, SpaceMember } from "./spaces.js";
 export { serviceClient, brainBucket, logoBucket } from "./supabase.js";
@@ -67,6 +68,7 @@ export { upsertPerson, appendPersonFact, personPath, setPersonHeadline } from ".
 export type { UpsertPersonInput, PersonWriteResult } from "./people.js";
 export { profilePerson, profileStalePeople, profileConcept, profileStaleConcepts } from "./profile.js";
 export type { ProfilePersonResult, ProfileBatchResult, ProfileOptions } from "./profile.js";
+export { ensureConceptPillar, mergeConceptCategory, CONCEPTS_INDEX_PATH } from "./concepts-pillar.js";
 export {
   PROJECT_KINDS,
   upsertProject,
@@ -99,6 +101,9 @@ export {
   encryptCredential,
   decryptCredential,
   listConnections,
+  capLookbackMonths,
+  FIRST_BACKFILL_MAX_MONTHS,
+  MAX_LOOKBACK_MONTHS,
   getConnectionWithCredential,
   upsertConnection,
   updateConnection,
@@ -120,13 +125,17 @@ export type { ResearchResult, ResearchOptions, ResearchSource } from "./research
 export { writeBrain } from "./writer.js";
 export type { WriteResult, WriteCategory } from "./writer.js";
 export { modelForTier, llmEnabled } from "./llm.js";
-export { distill } from "./distill.js";
+export { distill, shouldRichDistill, distillModelForTier } from "./distill.js";
 export type {
   DistillResult,
   DistillInput,
   IngestKind,
   IngestMode,
   GroundingContext,
+  DistillTier,
+  MeetingRouting,
+  DistillCoverage,
+  CompanySpaceHint,
 } from "./distill.js";
 export {
   type HistoryEntry,

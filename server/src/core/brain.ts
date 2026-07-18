@@ -8,6 +8,7 @@ import { embedQuery, embedTexts, embeddingsEnabled } from "./embeddings.js";
 import { emitBrainEvent } from "./events.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "./errors.js";
 import { excerptOf, parseNote, serializeNote, todayISO } from "./frontmatter.js";
+import { stripRedundantTitleH1 } from "./titleBody.js";
 import type { BrainIndex } from "./indexer/types.js";
 import type {
   ChunkRecord,
@@ -191,7 +192,7 @@ export class Brain {
       updated: todayISO(),
       extra: input.extra && Object.keys(input.extra).length ? input.extra : undefined,
     };
-    const body = input.body ?? "";
+    const body = stripRedundantTitleH1(input.body ?? "", meta.title);
     const raw = serializeNote(meta, body);
     await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
@@ -346,7 +347,8 @@ export class Brain {
       meta.visibility = patch.visibility;
     }
     meta.updated = todayISO();
-    const body = patch.body !== undefined ? patch.body : current.body;
+    const body =
+      patch.body !== undefined ? stripRedundantTitleH1(patch.body, meta.title) : current.body;
     const raw = serializeNote(meta, body);
     await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);

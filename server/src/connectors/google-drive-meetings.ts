@@ -86,6 +86,9 @@ export interface DriveMeetingsResult extends PullResult {
   candidates?: DriveNoteCandidate[];
   /** Drive file ids ingested this run (append to connection.settings.seenFileIds). */
   ingestedIds?: string[];
+  /** Drive file ids whose ingest threw this run — NOT marked seen, so the sync
+   *  layer can retry them (with an attempt cap) instead of losing them. */
+  failedIds?: string[];
   /** Fresh candidates handled this call (success + noise + error). */
   processed?: number;
   /** Fresh candidates still pending after this call. */
@@ -265,7 +268,7 @@ export const googleDriveMeetingsConnector: Connector<DriveMeetingsOptions> = {
     const limit = Math.min(cap, fresh.length);
     const startedAt = Date.now();
 
-    const result: DriveMeetingsResult = { ...emptyResult(), ingestedIds: [], items: [] };
+    const result: DriveMeetingsResult = { ...emptyResult(), ingestedIds: [], failedIds: [], items: [] };
     let done = 0;
     for (let i = 0; i < limit; i++) {
       if (i > 0 && options.deadlineMs && Date.now() - startedAt > options.deadlineMs) break;
@@ -296,10 +299,15 @@ export const googleDriveMeetingsConnector: Connector<DriveMeetingsOptions> = {
           result.items!.push({ title, outcome: "updated", touched: r.touched.length });
         }
       } catch (err) {
-        // Mark seen on error too, so a persistently failing doc can't stall the loop.
-        result.ingestedIds!.push(c.id);
+        // NOT marked seen: the sync layer tracks attempts in failedIngests and
+        // retries on later ticks, dead-lettering only after repeated failures.
+        result.failedIds!.push(c.id);
         result.skipped.push(`${c.name} (error: ${(err as Error).message})`);
         result.items!.push({ title, outcome: "error", touched: 0 });
+        console.error(
+          `[drive-meetings] ingest failed for "${c.name}" (${c.id}):`,
+          (err as Error).message,
+        );
       }
     }
     result.processed = done;

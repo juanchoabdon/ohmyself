@@ -10,8 +10,10 @@
 import {
   allowedVisibilities,
   buildCore,
+  ensureConceptPillar,
   getUserConfig,
   listActiveConnectionsForProvider,
+  listSelfSpaceIds,
   profileStaleConcepts,
   profileStalePeople,
   serviceClient,
@@ -19,28 +21,40 @@ import {
 import { embeddingsEnabled } from "./core/embeddings.js";
 import { GOOGLE_DRIVE_MEETINGS_PROVIDER } from "./connectors/google-auth.js";
 import { syncDriveConnection } from "./sync.js";
-import { DISCOVER_MAX, STALL_MS, detach, runBackfillLoop } from "./backfill.js";
+import { DISCOVER_MAX, STALL_MS, detach, recordTickOutcome, runBackfillLoop } from "./backfill.js";
 import { lintAllUsers, scheduledApplyMode } from "./lint.js";
 
-/** Keep person "Read" profiles fresh: for each user with an auto-sync connection,
- *  regenerate the read for people whose fact count changed (capped per tick so it
- *  backfills gradually without a burst of LLM calls). Disable with PROFILE=off. */
+/** Keep person + concept profiles fresh. People: spaces with Drive sync.
+ *  Concepts: every self space (glossary pages may exist without a connector). */
 async function profileTick(): Promise<void> {
   const conns = await listActiveConnectionsForProvider(GOOGLE_DRIVE_MEETINGS_PROVIDER);
-  const users = [...new Set(conns.map((c) => c.spaceId))];
+  const driveSpaces = [...new Set(conns.map((c) => c.spaceId))];
+  const selfSpaces = await listSelfSpaceIds();
   const { brain } = buildCore();
   const allowed = allowedVisibilities("secret");
   const cap = Number(process.env.PROFILE_TICK_LIMIT ?? "25") || 25;
-  for (const userId of users) {
+
+  for (const spaceId of driveSpaces) {
     detach(async () => {
       try {
-        const config = await getUserConfig(userId);
-        const r = await profileStalePeople(brain, userId, config, allowed, { limit: cap });
-        if (r.profiled) console.log(`[profile] ${userId}: refreshed ${r.profiled} read(s)`);
-        const c = await profileStaleConcepts(brain, userId, config, allowed, { limit: cap });
-        if (c.profiled) console.log(`[profile] ${userId}: refreshed ${c.profiled} concept(s)`);
+        const config = await getUserConfig(spaceId);
+        const r = await profileStalePeople(brain, spaceId, config, allowed, { limit: cap });
+        if (r.profiled) console.log(`[profile] ${spaceId}: refreshed ${r.profiled} person read(s)`);
       } catch (err) {
-        console.error(`[profile] ${userId} failed:`, (err as Error).message);
+        console.error(`[profile] ${spaceId} people failed:`, (err as Error).message);
+      }
+    });
+  }
+
+  for (const spaceId of selfSpaces) {
+    detach(async () => {
+      try {
+        await ensureConceptPillar(brain, spaceId, allowed);
+        const config = await getUserConfig(spaceId);
+        const c = await profileStaleConcepts(brain, spaceId, config, allowed, { limit: cap });
+        if (c.profiled) console.log(`[profile] ${spaceId}: refreshed ${c.profiled} concept(s)`);
+      } catch (err) {
+        console.error(`[profile] ${spaceId} concepts failed:`, (err as Error).message);
       }
     });
   }
@@ -94,7 +108,11 @@ export async function runScheduledTick(): Promise<{ synced: number; resumed: num
     synced++;
     detach(async () => {
       try {
-        await syncDriveConnection(conn.spaceId, conn.id, { mode: "full", max: DISCOVER_MAX });
+        const result = await syncDriveConnection(conn.spaceId, conn.id, {
+          mode: "full",
+          max: DISCOVER_MAX,
+        });
+        await recordTickOutcome(conn.spaceId, conn.id, result.items ?? []);
       } catch (err) {
         console.error(`[scheduler] sync ${conn.id} failed:`, (err as Error).message);
       }

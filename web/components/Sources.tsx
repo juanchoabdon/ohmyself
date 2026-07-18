@@ -5,16 +5,11 @@ import { api } from "@/lib/api";
 import type { BackfillState, Connection, DriveNoteCandidate } from "@/lib/types";
 
 const PROVIDER = "google-drive-meetings";
-const ALL_HISTORY_MONTHS = 1200;
 /** How often to poll a running server-side backfill for progress. */
 const POLL_MS = 3000;
 const WINDOW_PRESETS: { label: string; months: number }[] = [
   { label: "1 month", months: 1 },
   { label: "3 months", months: 3 },
-  { label: "6 months", months: 6 },
-  { label: "12 months", months: 12 },
-  { label: "24 months", months: 24 },
-  { label: "All history", months: 0 },
 ];
 
 interface PreviewInfo {
@@ -89,9 +84,9 @@ export function Sources({ token, open, onChanged }: Props) {
     return () => clearInterval(t);
   }, [open, anyRunning]);
 
-  const monthsFor = useCallback((id: string) => windowMonths[id] ?? 12, [windowMonths]);
+  const monthsFor = useCallback((id: string) => windowMonths[id] ?? 3, [windowMonths]);
   function lookbackFor(months: number): number {
-    return months === 0 ? ALL_HISTORY_MONTHS : months;
+    return Math.min(months || 3, 3);
   }
 
   async function connect() {

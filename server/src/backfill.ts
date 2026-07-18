@@ -14,12 +14,14 @@
 
 import { waitUntil } from "@vercel/functions";
 import {
+  capLookbackMonths,
   getConnectionWithCredential,
   updateConnection,
   type BackfillItem,
   type BackfillState,
 } from "./core/index.js";
 import { syncDriveConnection } from "./sync.js";
+import type { DriveMeetingItem } from "./connectors/google-drive-meetings.js";
 
 /** Transcripts per loop iteration. One keeps the live feed smooth (progress is
  *  written after each), and on a persistent host there's no timeout to beat. */
@@ -57,6 +59,36 @@ async function patchBackfill(
   await updateConnection(spaceId, connectionId, { settings: { ...conn.settings, backfill: next } });
 }
 
+/** Record a scheduler-tick sync's outcome on the connection so the UI feed
+ *  stays truthful between manual runs: per-transcript outcomes (including
+ *  errors) show up in the feed, and a stale error banner from an old run is
+ *  cleared once a newer sync succeeds. No-op while a backfill loop is running
+ *  (the loop maintains its own feed). */
+export async function recordTickOutcome(
+  spaceId: string,
+  connectionId: string,
+  items: DriveMeetingItem[],
+): Promise<void> {
+  const conn = await getConnectionWithCredential(spaceId, connectionId);
+  if (!conn) return;
+  const bf = conn.settings?.backfill;
+  if (!bf || bf.status === "running") return;
+  const staleError = bf.status === "error";
+  if (!items.length && !staleError) return;
+
+  const at = new Date().toISOString();
+  const justDone: BackfillItem[] = items.map((it) => ({ ...it, at }));
+  const next: BackfillState = {
+    ...bf,
+    status: staleError ? "done" : bf.status,
+    error: staleError ? undefined : bf.error,
+    recent: [...justDone, ...(bf.recent ?? [])].slice(0, RECENT_CAP),
+  };
+  await updateConnection(spaceId, connectionId, {
+    settings: { ...conn.settings, backfill: next },
+  });
+}
+
 /** Kick off a run and return its initial state. Counts the fresh candidates in
  *  the window, persists a `running` state, and launches the background loop.
  *  Idempotent per connection: a new call supersedes the old loop via a fresh
@@ -70,10 +102,15 @@ export async function startBackfill(
   const conn = await getConnectionWithCredential(spaceId, connectionId);
   if (!conn) throw new Error("connection not found");
 
+  const capped = capLookbackMonths(conn.settings ?? {}, lookbackMonths);
+  if (capped !== lookbackMonths) {
+    console.log(`[backfill] capped lookback ${lookbackMonths}→${capped}mo for ${connectionId}`);
+  }
+
   const preview = await syncDriveConnection(spaceId, connectionId, {
     mode,
     dryRun: true,
-    lookbackMonths,
+    lookbackMonths: capped,
     max: DISCOVER_MAX,
   });
   const total = preview.total ?? preview.candidates?.length ?? 0;
@@ -81,7 +118,7 @@ export async function startBackfill(
   const state: BackfillState = {
     status: total > 0 ? "running" : "done",
     mode,
-    lookbackMonths,
+    lookbackMonths: capped,
     done: 0,
     total,
     startedAt: now,
@@ -156,4 +193,28 @@ export async function runBackfillLoop(
     });
     return;
   }
+}
+
+/** Stop a running backfill loop (cost guard / admin). The in-flight iteration
+ *  finishes, then the loop exits on the next status check. */
+export async function stopBackfill(
+  spaceId: string,
+  connectionId: string,
+  reason = "Stopped",
+): Promise<BackfillState | null> {
+  const conn = await getConnectionWithCredential(spaceId, connectionId);
+  if (!conn) return null;
+  const bf = conn.settings?.backfill;
+  if (!bf || bf.status !== "running") return bf ?? null;
+  const next: BackfillState = {
+    ...bf,
+    status: "done",
+    finishedAt: new Date().toISOString(),
+    current: undefined,
+  };
+  await updateConnection(spaceId, connectionId, {
+    settings: { ...conn.settings, backfill: next, lookbackMonths: 3 },
+  });
+  console.log(`[backfill] stopped ${connectionId}: ${reason}`);
+  return next;
 }

@@ -16,8 +16,10 @@ import "../env.js";
 import {
   allowedVisibilities,
   buildCore,
+  ensureConceptPillar,
   getUserConfig,
   listActiveConnectionsForProvider,
+  listSelfSpaceIds,
   profileStaleConcepts,
   profileStalePeople,
 } from "../core/index.js";
@@ -46,9 +48,12 @@ async function main(): Promise<void> {
   let userIds: string[];
   if (only) {
     userIds = [only];
+  } else if (doConcepts && !doPeople) {
+    // Concepts live in self spaces; profile even without an active Drive connection.
+    userIds = await listSelfSpaceIds();
   } else {
     const conns = await listActiveConnectionsForProvider(GOOGLE_DRIVE_MEETINGS_PROVIDER);
-    userIds = Array.from(new Set(conns.map((c) => c.userId)));
+    userIds = Array.from(new Set(conns.map((c) => c.spaceId)));
   }
 
   const kinds = [doPeople && "people", doConcepts && "concepts"].filter(Boolean).join("+");

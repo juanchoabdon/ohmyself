@@ -141,6 +141,12 @@ export function MarkdownEditor({
 
   const repairFromVault = useCallback(
     (ed: Editor) => {
+      // Yjs owns the doc in collab mode; server hydrates from vault on room open.
+      // Client setContent here races the sync and appends duplicate blocks.
+      if (collabActive) {
+        repairAttemptedRef.current = true;
+        return;
+      }
       const vaultMd = collabInitialBodyRef.current ?? value;
       if (repairRichMarkdown(ed, vaultMd)) {
         repairAttemptedRef.current = true;
@@ -150,7 +156,7 @@ export function MarkdownEditor({
         if (modeRef.current !== "source") onChangeRef.current(fixed);
       }
     },
-    [value],
+    [value, collabActive],
   );
 
   const scheduleRepair = useCallback(
@@ -168,13 +174,13 @@ export function MarkdownEditor({
   );
 
   const seedIfEmpty = useCallback((ed: Editor) => {
-    if (ed.isDestroyed || seededRef.current) return;
+    if (ed.isDestroyed || seededRef.current || collabActive) return;
     const seed = collabInitialBodyRef.current ?? value;
     if (ed.isEmpty && seed.trim()) {
       ed.commands.setContent(seed, { contentType: "markdown" });
       seededRef.current = true;
     }
-  }, [value]);
+  }, [value, collabActive]);
 
   const signalReady = useCallback(
     (ed: Editor) => {
@@ -233,9 +239,11 @@ export function MarkdownEditor({
       setSourceMd(md);
       sourceMdRef.current = md;
     } else if (next === "visual" && ed && !ed.isDestroyed) {
-      const md = sourceMdRef.current;
-      ed.commands.setContent(md, { contentType: "markdown" });
-      onChangeRef.current(ed.getMarkdown());
+      if (!collabActive) {
+        const md = sourceMdRef.current;
+        ed.commands.setContent(md, { contentType: "markdown" });
+        onChangeRef.current(ed.getMarkdown());
+      }
     }
     modeRef.current = next;
     setMode(next);
@@ -247,7 +255,7 @@ export function MarkdownEditor({
     sourceMdRef.current = md;
     onChangeRef.current(md);
     const ed = editorRef.current;
-    if (!ed || ed.isDestroyed) return;
+    if (!ed || ed.isDestroyed || collabActive) return;
     if (collabSyncTimerRef.current) clearTimeout(collabSyncTimerRef.current);
     collabSyncTimerRef.current = setTimeout(() => {
       const current = editorRef.current;
@@ -256,7 +264,7 @@ export function MarkdownEditor({
         current.commands.setContent(md, { contentType: "markdown" });
       }
     }, 350);
-  }, []);
+  }, [collabActive]);
 
   useEffect(() => {
     return () => {

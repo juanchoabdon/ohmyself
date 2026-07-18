@@ -85,7 +85,16 @@ function pickRepairSource(editor: Editor, vaultMarkdown: string): string | null 
   return null;
 }
 
-/** Re-parse when the live doc has stale/unparsed rich blocks (incl. Yjs collab drift). */
+/** True when the open doc should be re-parsed from markdown (non-collab repair path). */
+export function richMarkdownNeedsRepair(editor: Editor, vaultMarkdown: string): boolean {
+  if (editor.isDestroyed) return false;
+  return pickRepairSource(editor, vaultMarkdown) !== null;
+}
+
+/**
+ * Re-parse when the live doc has stale/unparsed rich blocks.
+ * Collab callers must skip this — setContent races Yjs sync and duplicates content.
+ */
 export function repairRichMarkdown(editor: Editor, vaultMarkdown: string): boolean {
   if (editor.isDestroyed) return false;
   const source = pickRepairSource(editor, vaultMarkdown);

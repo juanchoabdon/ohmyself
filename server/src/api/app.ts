@@ -52,7 +52,9 @@ import {
   verifyState,
 } from "../connectors/google-auth.js";
 import {
+  capLookbackMonths,
   deleteConnection,
+  getConnectionWithCredential,
   listConnections,
   upsertConnection,
   type ConnectionSettings,
@@ -601,6 +603,11 @@ export function createApp(): Hono<Env> {
     const allowed = effectiveAllowed(auth);
     const patch = await c.req.json<{ summary?: string } & Record<string, unknown>>();
     const { summary, ...notePatch } = patch;
+    if (typeof notePatch.body === "string") {
+      const { repairCollabBody } = await import("../core/dedupeBody.js");
+      const { body, deduped } = repairCollabBody(notePatch.body);
+      if (deduped) notePatch.body = body;
+    }
     const attr = attributionFromAuth(auth, summary);
     const note = await brain.updateNote(auth.spaceId, c.req.param("path"), notePatch, allowed, attr);
     return c.json({ path: note.path, meta: note.meta, body: note.body });
@@ -715,16 +722,22 @@ export function createApp(): Hono<Env> {
   app.post("/v1/connections/:id/sync", async (c) => {
     const auth = c.get("auth");
     requireSpaceAdmin(auth);
+    const conn = await getConnectionWithCredential(auth.spaceId, c.req.param("id"));
+    if (!conn) throw new BadRequestError("connection not found");
     const body = (await c.req.json().catch(() => ({}))) as {
       mode?: string;
       dryRun?: boolean;
       lookbackMonths?: number;
       batchSize?: number;
     };
+    const lookbackMonths =
+      body.lookbackMonths != null
+        ? capLookbackMonths(conn.settings ?? {}, body.lookbackMonths)
+        : undefined;
     const result = await syncDriveConnection(auth.spaceId, c.req.param("id"), {
       mode: body.mode === "light" ? "light" : "full",
       dryRun: Boolean(body.dryRun),
-      lookbackMonths: body.lookbackMonths,
+      lookbackMonths,
       batchSize: body.batchSize,
     });
     return c.json(result);
@@ -738,11 +751,16 @@ export function createApp(): Hono<Env> {
   app.post("/v1/connections/:id/backfill", async (c) => {
     const auth = c.get("auth");
     requireSpaceAdmin(auth);
+    const conn = await getConnectionWithCredential(auth.spaceId, c.req.param("id"));
+    if (!conn) throw new BadRequestError("connection not found");
     const body = (await c.req.json().catch(() => ({}))) as {
       lookbackMonths?: number;
       mode?: string;
     };
-    const months = Number(body.lookbackMonths ?? 12) || 12;
+    const months = capLookbackMonths(
+      conn.settings ?? {},
+      Number(body.lookbackMonths ?? 3) || 3,
+    );
     const mode = body.mode === "full" ? "full" : "light";
     const state = await startBackfill(auth.spaceId, c.req.param("id"), months, mode);
     return c.json(state);

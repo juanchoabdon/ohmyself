@@ -242,3 +242,24 @@ export async function removeMember(spaceId: string, userId: string): Promise<voi
   const { error } = await sb.from("space_members").delete().eq("space_id", spaceId).eq("user_id", userId);
   if (error) throw new Error(error.message);
 }
+
+/** All self-space ids (personal brains). Paginated; optional single-id filter. */
+export async function listSelfSpaceIds(only?: string): Promise<string[]> {
+  if (only) return [only];
+  const sb = serviceClient();
+  const ids: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from("spaces")
+      .select("id")
+      .eq("kind", "self")
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`listSelfSpaceIds: ${error.message}`);
+    const batch = (data as { id: string }[] | null) ?? [];
+    ids.push(...batch.map((r) => r.id));
+    if (batch.length < PAGE) break;
+  }
+  return ids;
+}

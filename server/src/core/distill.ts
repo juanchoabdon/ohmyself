@@ -2,28 +2,42 @@
  * Distill: the LLM extraction step of the ingest pipeline.
  *
  * Given a raw meeting/transcript text and grounding context (known people,
- * projects, and open commitments), extract structured signal: a summary,
- * durable entity facts, action items, project updates, and reconciliation
- * (`resolves`) of prior open commitments. The raw text is never persisted —
- * only this distilled output is written to the wiki.
+ * projects, and open commitments), extract structured signal: summary,
+ * insights, decisions, conceptual models, durable entity facts, action items,
+ * project updates, and reconciliation (`resolves`) of prior open commitments.
+ * The raw text is never persisted — only this distilled output is written.
  *
- * Reuses the same OPENAI_API_KEY the embeddings module uses; no new provider.
+ * Two tiers:
+ * - standard (mini, 48k chars): routine meetings — entity facts + tasks.
+ * - rich (escalate, 200k chars): long/strategic sessions — full synthesis +
+ *   coverage check + company-space routing hints.
  */
 
 import { z } from "zod";
+import { chatJSON, modelForTier } from "./llm.js";
 
-const MODEL = () => process.env.OPENAI_MODEL || "gpt-4o-mini";
-const apiKey = () => process.env.OPENAI_API_KEY ?? "";
 const DISTILL_TIMEOUT_MS = 60000;
-/** Hard cap on characters sent to the model (protects cost + context window). */
+const RICH_DISTILL_TIMEOUT_MS = 120000;
+const COVERAGE_TIMEOUT_MS = 45000;
+/** Hard cap on characters sent to the standard model. */
 const MAX_INPUT_CHARS = 48000;
+/** Rich pass can use more context for long transcripts. */
+const MAX_RICH_INPUT_CHARS = 200000;
 
 export function distillEnabled(): boolean {
-  return Boolean(apiKey());
+  return Boolean(process.env.OPENAI_API_KEY ?? "");
 }
 
 export type IngestKind = "meeting" | "workshop" | "note" | string;
 export type IngestMode = "light" | "full";
+export type DistillTier = "standard" | "rich";
+
+export interface CompanySpaceHint {
+  slug: string;
+  name: string;
+  /** One-line description to help routing (e.g. "AI-native messaging company"). */
+  blurb?: string;
+}
 
 export interface GroundingContext {
   /** Who the wiki owner is (role, company, focus) — anchors role inference. */
@@ -40,6 +54,8 @@ export interface GroundingContext {
   /** Existing concept headwords (the glossary) — match these, don't duplicate. */
   concepts?: string[];
   openCommitments: { id: string; text: string }[];
+  /** Company spaces the owner belongs to — used for meeting routing. */
+  companySpaces?: CompanySpaceHint[];
 }
 
 export const EntityUpdateSchema = z.object({
@@ -71,22 +87,54 @@ export const ResolveSchema = z.object({
 
 export const SuggestedLinkSchema = z.object({ a: z.string(), b: z.string() });
 
+export const DecisionSchema = z.object({
+  text: z.string(),
+  status: z.enum(["decided", "exploratory"]),
+});
+
+export const ConceptualModelSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+});
+
+export const RoutingSchema = z.object({
+  target_space: z.enum(["self", "company"]),
+  company_slug: z.string().optional(),
+  confidence: z.number().min(0).max(1),
+  reason: z.string(),
+});
+
+export const CoverageSchema = z.object({
+  score: z.number().min(0).max(1),
+  missing_topics: z.array(z.string()).default([]),
+});
+
 export const DistillResultSchema = z.object({
   title: z.string(),
   date: z.string().optional(),
   attendees: z.array(z.string()).default([]),
   summary: z.string().default(""),
+  insights: z.array(z.string()).default([]),
+  decisions: z.array(DecisionSchema).default([]),
+  open_questions: z.array(z.string()).default([]),
+  conceptual_models: z.array(ConceptualModelSchema).default([]),
   entity_updates: z.array(EntityUpdateSchema).default([]),
   action_items: z.array(ActionItemSchema).default([]),
   project_updates: z.array(ProjectUpdateSchema).default([]),
   resolves: z.array(ResolveSchema).default([]),
   suggested_links: z.array(SuggestedLinkSchema).default([]),
   is_noise: z.boolean().default(false),
+  routing: RoutingSchema.optional(),
+  coverage: CoverageSchema.optional(),
+  /** Which tier produced the synthesis fields (insights/decisions/models). */
+  distill_tier: z.enum(["standard", "rich"]).default("standard"),
 });
 
 export type DistillResult = z.infer<typeof DistillResultSchema>;
 export type EntityUpdate = z.infer<typeof EntityUpdateSchema>;
 export type ActionItem = z.infer<typeof ActionItemSchema>;
+export type MeetingRouting = z.infer<typeof RoutingSchema>;
+export type DistillCoverage = z.infer<typeof CoverageSchema>;
 
 export interface DistillInput {
   rawText: string;
@@ -95,25 +143,60 @@ export interface DistillInput {
   title?: string;
   date?: string;
   grounding: GroundingContext;
+  /** Force rich tier (eval / reprocess). */
+  forceRich?: boolean;
 }
 
-function kindHints(kind: IngestKind, mode: IngestMode): string {
+/** Long or strategic meetings get the rich synthesis pass. */
+export function shouldRichDistill(input: DistillInput): boolean {
+  if (input.mode === "light") return false;
+  if (input.forceRich) return true;
+  if (input.rawText.length >= 25000) return true;
+  const title = (input.title ?? "").toLowerCase();
+  if (/\b(design|strategy|thesis|architecture|planning|review|wow|dw|workshop|offsite)\b/i.test(title)) {
+    return true;
+  }
+  return false;
+}
+
+function clipText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max) + "\n\n[...truncated...]";
+}
+
+function kindHints(kind: IngestKind, mode: IngestMode, tier: DistillTier): string {
   const meeting =
-    "This is a meeting transcript / meeting notes. Extract: a concise summary, " +
-    "durable facts about PEOPLE (their POV, how they work, what they care about), " +
-    "decisions and project status changes, and action items (who owns each: " +
-    'use "me" for the note owner, otherwise the person\'s name).';
+    "This is a meeting transcript / meeting notes. Extract durable signal — not just a generic recap.";
   const light =
     " MODE=light (historical backfill): ONLY extract durable person facts and " +
-    "reusable concepts. Do NOT extract action_items or project_updates (that " +
-    "context is stale). Leave those arrays empty.";
+    "reusable concepts. Do NOT extract action_items, project_updates, insights, " +
+    "decisions, open_questions, or conceptual_models. Leave those arrays empty.";
   const full =
     " MODE=full: extract everything including action_items and project_updates.";
+  const rich =
+    tier === "rich"
+      ? "\n\nRICH SYNTHESIS (required for this meeting): go beyond a generic summary.\n" +
+        "- `summary`: 2-4 paragraphs capturing the arc of the conversation, not bullet fluff.\n" +
+        "- `insights`: durable takeaways, thesis shifts, and 'aha' moments (each a complete sentence).\n" +
+        "- `decisions`: explicit or strongly aligned choices. status=decided when committed; " +
+        "status=exploratory when still being explored.\n" +
+        "- `open_questions`: unresolved product/strategy questions worth revisiting.\n" +
+        "- `conceptual_models`: named frameworks or interaction models discussed (e.g. " +
+        "'three-surface model: human chat / private AI / shared multiplayer interface', " +
+        "'relationship world', 'private intent → share → shared state → recall'). " +
+        "Include models even if not labeled as such — infer the architecture the team is designing.\n" +
+        "- Do NOT reduce the meeting to action items only — capture the thinking.\n" +
+        "- `routing`: if COMPANY SPACES are listed below and the meeting content clearly " +
+        "belongs to one company wiki (product/design/strategy for that company), set " +
+        "target_space=company with the slug and confidence 0-1. Use self when personal/mixed " +
+        "or confidence < 0.85. Never guess a company without clear signals."
+      : "\n\nFor short routine meetings: insights/decisions/conceptual_models may be empty. " +
+        "Still separate summary from action items.";
   const base = kind === "note" ? "This is a source document." : meeting;
-  return base + (mode === "light" ? light : full);
+  return base + (mode === "light" ? light : full + rich);
 }
 
-function buildPrompt(input: DistillInput): { system: string; user: string } {
+function buildPrompt(input: DistillInput, tier: DistillTier): { system: string; user: string } {
   const g = input.grounding;
   const system = [
     "You are the ingest engine of a personal LLM-Wiki (Karpathy pattern).",
@@ -121,7 +204,7 @@ function buildPrompt(input: DistillInput): { system: string; user: string } {
     "You never invent facts. Prefer matching mentions to KNOWN entities below",
     "(use their exact slug/name) instead of creating near-duplicates.",
     "Mark is_noise=true for pure status/logistics meetings with no durable signal.",
-    kindHints(input.kind, input.mode),
+    kindHints(input.kind, input.mode, tier),
     "",
     "PEOPLE — for every person the source is about, first work out WHO THEY ARE,",
     "not just an insight. Set `role`: their function + team/area, INFERRED from",
@@ -173,23 +256,28 @@ function buildPrompt(input: DistillInput): { system: string; user: string } {
     ...(g.projectContext?.length ? ["Project notes:", ...g.projectContext.map((p) => `  - ${p}`)] : []),
     "KNOWN CONCEPTS (the existing glossary — reuse these exact names, don't dupe): " +
       (g.concepts?.length ? g.concepts.join(", ") : "(none yet)"),
+    ...(g.companySpaces?.length
+      ? [
+          "",
+          "COMPANY SPACES (route meetings here when content is clearly about that company):",
+          ...g.companySpaces.map(
+            (s) => `  - slug=${s.slug} name=${s.name}${s.blurb ? ` — ${s.blurb}` : ""}`,
+          ),
+        ]
+      : []),
     "Open commitments:",
     ...(g.openCommitments.length
       ? g.openCommitments.map((c) => `  - [${c.id}] ${c.text}`)
       : ["  (none)"]),
   ].join("\n");
 
-  const clipped =
-    input.rawText.length > MAX_INPUT_CHARS
-      ? input.rawText.slice(0, MAX_INPUT_CHARS) + "\n\n[...truncated...]"
-      : input.rawText;
-
+  const maxChars = tier === "rich" ? MAX_RICH_INPUT_CHARS : MAX_INPUT_CHARS;
   const user = [
     input.title ? `Title: ${input.title}` : "",
     input.date ? `Date: ${input.date}` : "",
     "",
     "Source:",
-    clipped,
+    clipText(input.rawText, maxChars),
   ]
     .filter(Boolean)
     .join("\n");
@@ -197,45 +285,70 @@ function buildPrompt(input: DistillInput): { system: string; user: string } {
   return { system, user };
 }
 
-/** The JSON shape we ask the model to return (kept in sync with the schema). */
 const JSON_INSTRUCTIONS =
   'Return ONLY a JSON object with keys: title (string), date (string, ISO, optional), ' +
-  "attendees (string[]), summary (string), entity_updates " +
+  "attendees (string[]), summary (string), insights (string[]), " +
+  "decisions ({text, status:'decided'|'exploratory'})[], open_questions (string[]), " +
+  "conceptual_models ({name, description})[], entity_updates " +
   "({entityType:'person'|'project'|'concept', slugOrName, fact, role?, relationship?})[], " +
   "action_items ({text, owner, due?, project?})[], " +
   "project_updates ({project, update})[], resolves ({item_id, reason})[], " +
-  "suggested_links ({a, b})[], is_noise (boolean).";
+  "suggested_links ({a, b})[], is_noise (boolean), " +
+  "routing ({target_space:'self'|'company', company_slug?, confidence, reason}) optional.";
 
-async function callOpenAI(system: string, user: string): Promise<unknown | null> {
-  const key = apiKey();
-  if (!key) return null;
-  const ac = new AbortController();
-  const to = setTimeout(() => ac.abort(), DISTILL_TIMEOUT_MS);
-  try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL(),
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: `${system}\n\n${JSON_INSTRUCTIONS}` },
-          { role: "user", content: user },
-        ],
-      }),
-      signal: ac.signal,
-    });
-    if (!res.ok) throw new Error(`OpenAI error ${res.status}: ${await res.text()}`);
-    const data = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) return null;
-    return JSON.parse(content);
-  } finally {
-    clearTimeout(to);
-  }
+async function callDistillModel(
+  system: string,
+  user: string,
+  tier: DistillTier,
+): Promise<unknown | null> {
+  return chatJSON({
+    tier: tier === "rich" ? "escalate" : "route",
+    system: `${system}\n\n${JSON_INSTRUCTIONS}`,
+    user,
+    timeoutMs: tier === "rich" ? RICH_DISTILL_TIMEOUT_MS : DISTILL_TIMEOUT_MS,
+  });
+}
+
+/** Cheap second pass: did we miss major themes from the transcript? */
+async function checkCoverage(
+  rawText: string,
+  result: DistillResult,
+): Promise<DistillCoverage | null> {
+  const excerpt = clipText(rawText, 12000);
+  const distilled = [
+    result.summary,
+    ...result.insights,
+    ...result.decisions.map((d) => d.text),
+    ...result.conceptual_models.map((m) => `${m.name}: ${m.description}`),
+    ...result.action_items.map((a) => a.text),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const system = [
+    "You audit meeting distillation quality. Compare the transcript excerpt to the",
+    "distilled note. Return JSON: score (0-1, how well major themes are captured),",
+    "missing_topics (string[] of important themes/decisions/models in the source",
+    "but absent or too thin in the distill). Be strict on strategic meetings —",
+    "action items alone is NOT sufficient coverage.",
+  ].join("\n");
+
+  const user = [`TRANSCRIPT EXCERPT:\n${excerpt}`, "", `DISTILLED OUTPUT:\n${distilled.slice(0, 8000)}`].join(
+    "\n",
+  );
+
+  const raw = await chatJSON<{ score?: number; missing_topics?: string[] }>({
+    tier: "route",
+    system,
+    user,
+    timeoutMs: COVERAGE_TIMEOUT_MS,
+  });
+  if (!raw || typeof raw.score !== "number") return null;
+  const parsed = CoverageSchema.safeParse({
+    score: raw.score,
+    missing_topics: raw.missing_topics ?? [],
+  });
+  return parsed.success ? parsed.data : null;
 }
 
 /** Run distillation. Returns a validated DistillResult, or throws if the LLM
@@ -244,17 +357,38 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
   if (!distillEnabled()) {
     throw new Error("distill: OPENAI_API_KEY is not configured");
   }
-  const { system, user } = buildPrompt(input);
-  const raw = await callOpenAI(system, user);
+
+  const tier: DistillTier = shouldRichDistill(input) ? "rich" : "standard";
+  const { system, user } = buildPrompt(input, tier);
+  const raw = await callDistillModel(system, user, tier);
   if (raw == null) throw new Error("distill: empty response from model");
-  const parsed = DistillResultSchema.safeParse(raw);
+
+  const parsed = DistillResultSchema.safeParse({ ...(raw as object), distill_tier: tier });
   if (!parsed.success) {
     throw new Error(`distill: response failed validation: ${parsed.error.message}`);
   }
-  // In light mode, hard-drop action items / project updates even if the model emitted them.
+
+  // In light mode, hard-drop ephemeral fields even if the model emitted them.
   if (input.mode === "light") {
     parsed.data.action_items = [];
     parsed.data.project_updates = [];
+    parsed.data.insights = [];
+    parsed.data.decisions = [];
+    parsed.data.open_questions = [];
+    parsed.data.conceptual_models = [];
+    parsed.data.routing = undefined;
   }
+
+  // Coverage check on rich passes (skip noise).
+  if (tier === "rich" && !parsed.data.is_noise && input.mode === "full") {
+    const coverage = await checkCoverage(input.rawText, parsed.data);
+    if (coverage) parsed.data.coverage = coverage;
+  }
+
   return parsed.data;
+}
+
+/** Expose model id used for a tier (eval scripts / logging). */
+export function distillModelForTier(tier: DistillTier): string {
+  return modelForTier(tier === "rich" ? "escalate" : "route");
 }

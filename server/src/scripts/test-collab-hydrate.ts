@@ -16,9 +16,14 @@ async function main(): Promise<void> {
   const docName = roomName(spaceId, path);
 
   const conn = await server.openDirectConnection(docName, { test: true });
+  const doc = conn.document;
+  if (!doc) {
+    console.error("no document on direct connection");
+    process.exit(1);
+  }
   const field = collabFieldName();
-  const empty = conn.document.isEmpty(field);
-  const len = conn.document.getXmlFragment(field).length;
+  const empty = doc.isEmpty(field);
+  const len = doc.getXmlFragment(field).length;
   console.log({ docName, empty, fragmentLength: len });
   await conn.disconnect();
   process.exit(empty || len === 0 ? 1 : 0);

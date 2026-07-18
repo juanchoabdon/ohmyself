@@ -70,9 +70,6 @@ function Authorize() {
     };
   }, [clientId, redirectUri]);
 
-  const invalid =
-    !clientId || !redirectUri || !codeChallenge || responseType !== "code" || redirectOk === false;
-
   const appHost = (() => {
     try {
       const h = new URL(redirectUri).hostname;
@@ -127,15 +124,59 @@ function Authorize() {
     }
   }
 
-  if (!ready || redirectOk === null) return <Centered>Loading…</Centered>;
+  if (!ready || (clientId && redirectUri && redirectOk === null)) return <Centered>Loading…</Centered>;
 
-  if (invalid) {
+  const missingParams =
+    !clientId || !redirectUri || !codeChallenge || responseType !== "code";
+  const redirectRejected = !missingParams && redirectOk === false;
+
+  if (missingParams || redirectRejected) {
     return (
-      <Centered>
-        <p className="text-sm text-vis-secret">
-          Invalid authorization request — missing or malformed parameters.
-        </p>
-      </Centered>
+      <main className="grid min-h-screen place-items-center px-5">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-surface p-7 shadow-sm">
+          <a href="/" className="font-display text-[1.6rem] font-semibold leading-none tracking-tight">
+            <span className="brand-gradient">ohmyself!</span>
+          </a>
+          <h1 className="mt-6 text-lg font-semibold text-ink">Link de conexión incompleto</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            {missingParams
+              ? "Esta página solo funciona cuando una app (ChatGPT, Claude, Cursor…) abre el flujo de autorización con un link completo. Llegaste acá con parámetros faltantes — suele pasar por un bookmark, un retry en loop, o Safari en iPhone que pierde parte de la URL."
+              : "La app que intenta conectar no pasó la validación de seguridad (redirect no registrado)."}
+          </p>
+          <div className="mt-5 space-y-2 rounded-xl border border-border bg-bg p-4 text-sm text-ink">
+            <p className="font-medium">Qué hacer:</p>
+            <ol className="list-decimal space-y-1.5 pl-4 text-muted">
+              <li>
+                <strong className="font-medium text-ink">Cierra esta pestaña</strong> — no va a
+                arreglarse sola.
+              </li>
+              <li>
+                Si conectaste ohmyself en <strong className="text-ink">ChatGPT o Claude</strong>:
+                quita el connector y vuelve a agregarlo desde la app (mejor en desktop).
+              </li>
+              <li>
+                Si solo quieres <strong className="text-ink">Google Drive / meetings</strong>: entra
+                a la app web → Settings → Connect Google. No necesitas esta página.
+              </li>
+              <li>Borra cualquier bookmark a <code className="text-xs">/authorize</code>.</li>
+            </ol>
+          </div>
+          <div className="mt-6 flex flex-col gap-2">
+            <a
+              href="/app"
+              className="rounded-lg bg-brand px-4 py-2.5 text-center text-sm font-medium text-white hover:opacity-95"
+            >
+              Ir a ohmyself (app web)
+            </a>
+            <a
+              href="/"
+              className="rounded-lg border border-border px-4 py-2.5 text-center text-sm font-medium text-ink hover:bg-bg"
+            >
+              Volver al inicio
+            </a>
+          </div>
+        </div>
+      </main>
     );
   }
 

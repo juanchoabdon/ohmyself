@@ -34,39 +34,12 @@ import { collabUserFromSupabase, agentCollabUser, type CollabUser } from "@/lib/
 import type { PresencePeer } from "@/components/editor/PresenceBar";
 import type { OutlineItem } from "@/lib/outline";
 import type { ScrollToHeadingTarget } from "@/components/editor/MarkdownEditor";
+import { buildNoteShareUrl, readNoteDeepLink, writeNoteDeepLink } from "@/lib/noteUrl";
 
 /** localStorage key holding the last note opened in a given space, so a page
  *  refresh (or coming back to a space) reopens where you left off. */
 function openNoteKey(spaceId: string): string {
   return `oms-note:${spaceId}`;
-}
-
-/** One-shot deep link from preview_url (?note= & ?space=). */
-type DeepLinkTarget = { note?: string; space?: string };
-
-function readDeepLinkFromUrl(): DeepLinkTarget | null {
-  if (typeof window === "undefined") return null;
-  const params = new URLSearchParams(window.location.search);
-  const note = params.get("note")?.trim();
-  const space = params.get("space")?.trim();
-  if (!note && !space) return null;
-  const url = new URL(window.location.href);
-  url.searchParams.delete("note");
-  url.searchParams.delete("space");
-  window.history.replaceState({}, "", url.toString());
-  return { note: note || undefined, space: space || undefined };
-}
-
-function slugify(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "untitled"
-  );
 }
 
 export default function Dashboard() {
@@ -121,7 +94,21 @@ export default function Dashboard() {
   const [collabUser, setCollabUser] = useState<CollabUser | null>(null);
   const [activityAuthorFilter, setActivityAuthorFilter] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<HistoryEntry[]>([]);
-  const deepLinkRef = useRef<DeepLinkTarget | null>(readDeepLinkFromUrl());
+  const urlSyncRef = useRef(false);
+
+  const slugify = (s: string): string =>
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "untitled";
+
+  const shareUrl = useMemo(() => {
+    if (!selected || !activeSpaceId) return null;
+    return buildNoteShareUrl(selected, activeSpaceId);
+  }, [selected, activeSpaceId]);
 
   const agentPresence = useMemo((): PresencePeer[] => {
     if (!selected) return [];
@@ -159,6 +146,29 @@ export default function Dashboard() {
       active = false;
     };
   }, [token, activityRefreshKey]);
+
+  // Browser back/forward: open the note encoded in the URL.
+  useEffect(() => {
+    if (!token || !ready) return;
+    const onPop = () => {
+      if (urlSyncRef.current) return;
+      const { note, space } = readNoteDeepLink(window.location.search);
+      if (space && space !== activeSpaceId) {
+        setActiveSpaceId(space);
+        return;
+      }
+      if (note && note !== selectedRef.current) {
+        void openNote(note, { fromUrl: true });
+      } else if (!note && selectedRef.current) {
+        setSelected(null);
+        setFullNote(null);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // openNote is stable enough for popstate; selected read via ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, ready, activeSpaceId]);
 
   // Remember the last chosen tab (Notes / Map). Read after mount to avoid a
   // hydration mismatch; persisted on every change.
@@ -297,9 +307,9 @@ export default function Dashboard() {
             return null;
           }
         })();
-        const deep = deepLinkRef.current;
+        const deep = readNoteDeepLink(window.location.search);
         const pick =
-          (deep?.space && list.find((s) => s.id === deep.space)) ||
+          (deep.space && list.find((s) => s.id === deep.space)) ||
           list.find((s) => s.id === saved) ||
           list.find((s) => s.kind === "self") ||
           list[0] ||
@@ -367,16 +377,14 @@ export default function Dashboard() {
       // Reopen the note that was open in this space before the refresh, and
       // expand its pillar so the sidebar highlights it.
       if (active && activeSpaceId) {
-        const deep = deepLinkRef.current;
-        let saved: string | null = deep?.note ?? null;
+        const deep = readNoteDeepLink(window.location.search);
+        let saved: string | null = deep.note ?? null;
         if (!saved) {
           try {
             saved = localStorage.getItem(openNoteKey(activeSpaceId));
           } catch {
             /* storage unavailable — fine */
           }
-        } else {
-          deepLinkRef.current = null;
         }
         if (saved) {
           const tabTitle =
@@ -507,7 +515,7 @@ export default function Dashboard() {
     return notes;
   };
 
-  async function openNote(path: string) {
+  async function openNote(path: string, opts?: { fromUrl?: boolean }) {
     if (!token) return;
     if (selected && selected !== path) {
       await noteViewRef.current?.flush();
@@ -528,6 +536,14 @@ export default function Dashboard() {
         localStorage.setItem(openNoteKey(activeSpaceId), path);
       } catch {
         /* storage unavailable — fine */
+      }
+      if (!opts?.fromUrl) {
+        urlSyncRef.current = true;
+        const current = readNoteDeepLink(window.location.search);
+        const mode =
+          current.note === path && current.space === activeSpaceId ? "replace" : "push";
+        writeNoteDeepLink(path, activeSpaceId, mode);
+        urlSyncRef.current = false;
       }
     }
     try {
@@ -568,6 +584,9 @@ export default function Dashboard() {
           } catch {
             /* storage unavailable */
           }
+          urlSyncRef.current = true;
+          writeNoteDeepLink(null, activeSpaceId);
+          urlSyncRef.current = false;
         }
       }
     }
@@ -668,6 +687,9 @@ export default function Dashboard() {
           } catch {
             /* storage unavailable — fine */
           }
+          urlSyncRef.current = true;
+          writeNoteDeepLink(null, activeSpaceId);
+          urlSyncRef.current = false;
         }
       }
     }
@@ -1026,6 +1048,7 @@ export default function Dashboard() {
                     onDelete={async () => {
                       if (selected) setConfirm({ kind: "note", path: selected });
                     }}
+                    shareUrl={shareUrl}
                   />
                 </div>
                 {docPanelOpen && selected && (

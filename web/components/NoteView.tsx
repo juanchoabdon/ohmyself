@@ -14,10 +14,13 @@ import remarkGfm from "remark-gfm";
 import type { FullNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
 import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
+import { EditorModeToggle, loadEditorModePreference } from "./editor/EditorModeToggle";
 import type { PresencePeer } from "./editor/PresenceBar";
 import type { CollabUser } from "@/lib/collabUser";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
+import { dedupeExactDoubleBody, stripRedundantTitleH1 } from "@/lib/dedupeBody";
 import { cn } from "@/lib/utils";
+import { ShareNoteButton } from "./ShareNoteButton";
 
 /** Pause after last keystroke before autosave — tuned to feel like Docs/OK. */
 const AUTOSAVE_MS = 400;
@@ -56,6 +59,8 @@ type NoteViewProps = {
   collabUser?: CollabUser | null;
   agentPresence?: PresencePeer[];
   onSelectPresencePeer?: (peer: PresencePeer) => void;
+  /** Canonical share URL for this note (deep link with space). */
+  shareUrl?: string | null;
 };
 
 export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteView(
@@ -74,10 +79,14 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     collabUser,
     agentPresence,
     onSelectPresencePeer,
+    shareUrl,
   },
   ref,
 ) {
   const editable = Boolean(onSave);
+  /** Yjs owns the body: the collab server persists it (onStoreDocument), so
+   *  REST autosave must not PATCH body — only title/tags/visibility. */
+  const collabActive = Boolean(collab?.enabled && collab.token && collab.spaceId);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("private");
@@ -128,7 +137,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     Boolean(note) &&
     editable &&
     (title.trim() !== lastPersistedRef.current.title ||
-      body !== lastPersistedRef.current.body ||
+      (!collabActive && body !== lastPersistedRef.current.body) ||
       visibility !== lastPersistedRef.current.visibility ||
       tags !== lastPersistedRef.current.tags);
 
@@ -145,7 +154,9 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     setError(null);
     const patch = {
       title: titleRefVal.current.trim(),
-      body: bodyRefVal.current,
+      // In collab mode the Hocuspocus server persists the body from the Y doc;
+      // PATCHing it here would race that single writer.
+      ...(collabActive ? {} : { body: bodyRefVal.current }),
       visibility: visibilityRefVal.current,
       tags: tagsRefVal.current.split(",").map((t) => t.trim()).filter(Boolean),
     };
@@ -153,12 +164,14 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
       const saved = await onSave(patch);
       if (saved) {
         setTitle(saved.meta.title);
-        setBody(saved.body);
+        // In collab mode the vault body may lag the live Y doc — don't pull it
+        // back over the editor state.
+        if (!collabActive) setBody(saved.body);
         setVisibility(saved.meta.visibility);
         setTags(saved.meta.tags.join(", "));
         lastPersistedRef.current = {
           title: saved.meta.title,
-          body: saved.body,
+          body: collabActive ? bodyRefVal.current : saved.body,
           visibility: saved.meta.visibility,
           tags: saved.meta.tags.join(", "),
         };
@@ -176,7 +189,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
         saveTimerRef.current = setTimeout(() => void persist(), 150);
       }
     }
-  }, [onSave, note]);
+  }, [onSave, note, collabActive]);
 
   const scheduleSave = useCallback(() => {
     if (!dirtyRef.current || !onSave || !titleRefVal.current.trim()) return;
@@ -241,8 +254,10 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const titleDisplay = fetching ? (previewTitle ?? title) : title;
   const titleClassName =
     "oms-inline-edit w-full resize-none overflow-hidden bg-transparent text-[1.7rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-muted/50";
-  const vaultBody = note?.body ?? "";
-  const hasEditorBody = Boolean(body.trim());
+  const noteTitle = note?.meta.title ?? "";
+  const vaultBody = stripRedundantTitleH1(note?.body ?? "", noteTitle);
+  const editorBody = stripRedundantTitleH1(body, noteTitle);
+  const hasEditorBody = Boolean(editorBody.trim());
   const hasVaultBody = Boolean(vaultBody.trim());
 
   if (!activePath && !ready && !fetching) {
@@ -296,21 +311,24 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               </>
             )}
           </div>
-          {note && onDelete && (
+          {note && (onDelete || shareUrl) && (
             <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await onDelete();
-                  } catch {
-                    /* parent handles */
-                  }
-                }}
-                className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret"
-              >
-                Delete
-              </button>
+              {shareUrl ? <ShareNoteButton url={shareUrl} /> : null}
+              {onDelete ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await onDelete();
+                    } catch {
+                      /* parent handles */
+                    }
+                  }}
+                  className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-vis-secret hover:border-vis-secret"
+                >
+                  Delete
+                </button>
+              ) : null}
             </div>
           )}
         </div>
@@ -374,19 +392,28 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
 
       <div className="relative min-h-[8rem]">
         {fetching ? (
-          <EditorBodySkeleton />
+          <>
+            {/* Reserve the toggle row so the body doesn't jump when the editor mounts. */}
+            {editable && <ModeTogglePlaceholder />}
+            <EditorBodySkeleton />
+          </>
         ) : ready && editable ? (
           <div className="relative min-h-[8rem]">
             {/* Show the vault markdown until the live editor is ready, so the body
-                is never blank (Yjs can take a moment to sync). */}
-            {!editorLive &&
-              (hasVaultBody || hasEditorBody ? (
-                <div className="prose min-h-[8rem]">
-                  <ReadOnlyBody body={body || vaultBody} onOpenLink={onOpenLink} />
-                </div>
-              ) : (
-                <EditorBodySkeleton />
-              ))}
+                is never blank (Yjs can take a moment to sync). The placeholder
+                toggle keeps the layout identical to the live editor's chrome. */}
+            {!editorLive && (
+              <>
+                <ModeTogglePlaceholder />
+                {hasVaultBody || hasEditorBody ? (
+                  <div className="prose min-h-[8rem]">
+                    <ReadOnlyBody body={editorBody || vaultBody} onOpenLink={onOpenLink} />
+                  </div>
+                ) : (
+                  <EditorBodySkeleton />
+                )}
+              </>
+            )}
             <div
               className={
                 editorLive
@@ -398,13 +425,14 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               <MarkdownEditor
                 key={note!.path}
                 noteKey={note!.path}
-                value={body || vaultBody}
+                value={editorBody || vaultBody}
                 onChange={(md) => {
                   // Yjs sync can transiently empty the doc before the seed lands.
                   // Never let that propagate into state/autosave and wipe the vault.
                   if (!md.trim() && !editorLive) return;
-                  setBody(md);
-                  onBodyChange?.(md);
+                  const { body: cleaned } = dedupeExactDoubleBody(md);
+                  setBody(cleaned);
+                  onBodyChange?.(cleaned);
                 }}
                 onBlur={() => void flush()}
                 onOpenLink={onOpenLink}
@@ -416,7 +444,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                         token: collab.token,
                         spaceId: collab.spaceId,
                         path: note!.path,
-                        initialBody: note!.body,
+                        initialBody: stripRedundantTitleH1(note!.body, noteTitle),
                       }
                     : null
                 }
@@ -462,6 +490,16 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     </article>
   );
 });
+
+/** Disabled Visual/Source toggle occupying the exact space of the live one, so
+ *  the body never shifts down when the editor chrome mounts. */
+function ModeTogglePlaceholder() {
+  return (
+    <div aria-hidden className="pointer-events-none select-none opacity-60">
+      <EditorModeToggle mode={loadEditorModePreference()} onChange={() => {}} disabled />
+    </div>
+  );
+}
 
 function ReadOnlyBody({ body, onOpenLink }: { body: string; onOpenLink: (path: string) => void }) {
   return (
