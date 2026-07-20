@@ -94,15 +94,18 @@ async function generateFollowups(
 
   const sys =
     lang === "es"
-      ? `Generas sugerencias de preguntas de seguimiento para la web personal de ${PERSON_SHORT_NAME}. Devuelve SOLO un array JSON con EXACTAMENTE 3 preguntas cortas (máx ~7 palabras cada una), en español, escritas como las escribiría un visitante curioso refiriéndose a ${PERSON_SHORT_NAME} en tercera persona. Que sean variadas, naturales y que inviten a seguir explorando temas distintos a los ya respondidos. Sin numeración, sin comillas extra, sin texto adicional. Ejemplo de formato: ["¿Qué lo motiva?","¿Cómo empezó en Rappi?","¿Qué hobbies tiene?"]`
-      : `You generate follow-up question suggestions for ${PERSON_SHORT_NAME}'s personal website. Return ONLY a JSON array of EXACTLY 3 short questions (max ~7 words each), in English, written as a curious visitor would, referring to ${PERSON_SHORT_NAME} in the third person. Make them varied and natural, nudging toward topics not already answered. No numbering, no extra quotes, no extra text. Format example: ["What drives him?","How did he start at Rappi?","What are his hobbies?"]`;
+      ? `Generas sugerencias de preguntas de seguimiento para la web personal de ${PERSON_SHORT_NAME}, donde el visitante chatea DIRECTAMENTE con él (su second self responde en primera persona). Devuelve SOLO un array JSON con EXACTAMENTE 3 preguntas cortas (máx ~7 palabras cada una), en español, dirigidas a él EN SEGUNDA PERSONA (de tú). Que sean variadas, naturales y que inviten a seguir explorando temas distintos a los ya respondidos. Sin numeración, sin comillas extra, sin texto adicional. Ejemplo de formato: ["¿Qué te motiva?","¿Cómo empezaste en Rappi?","¿Qué hobbies tienes?"]`
+      : `You generate follow-up question suggestions for ${PERSON_SHORT_NAME}'s personal website, where the visitor chats DIRECTLY with him (his second self answers in the first person). Return ONLY a JSON array of EXACTLY 3 short questions (max ~7 words each), in English, addressed to him in the SECOND person. Make them varied and natural, nudging toward topics not already answered. No numbering, no extra quotes, no extra text. Format example: ["What drives you?","How did you start at Rappi?","What are your hobbies?"]`;
 
   const raw = await completeOnce(
     [
       { role: "system", content: sys },
       { role: "user", content: convo },
     ],
-    { temperature: 0.85, maxTokens: 120 },
+    // Short timeout: this call runs AFTER the visible reply has fully
+    // streamed but before the stream closes (which re-enables the input) —
+    // it must never hold the conversation hostage.
+    { temperature: 0.85, maxTokens: 120, timeoutMs: 6000 },
   );
   if (!raw) return [];
   try {

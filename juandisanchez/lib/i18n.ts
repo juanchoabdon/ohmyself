@@ -42,6 +42,13 @@ export interface Strings {
   placeholder: string;
   send: string;
   thinking: string;
+  /** Instant, in-voice micro-status shown the moment a question is sent,
+   *  picked by topic — so the site "reacts" at 0ms even while the model
+   *  is still working. */
+  statusProjects: string;
+  statusWork: string;
+  statusPersonal: string;
+  statusDefault: string;
   suggestionsLabel: string;
   suggestions: Suggestion[];
   disclaimer: string;
@@ -58,18 +65,22 @@ export interface Strings {
 
 const STRINGS: Record<Lang, Strings> = {
   es: {
-    tagline: "second self · pregúntame lo que sea",
-    placeholder: "Pregúntale a mi second self…",
+    tagline: "second self · siempre online",
+    placeholder: "Pregúntame lo que quieras…",
     send: "Enviar",
     thinking: "Pensando…",
+    statusProjects: "dame un sec, repaso mis proyectos…",
+    statusWork: "un momento, pienso cómo contarte lo del trabajo…",
+    statusPersonal: "jaja buena — dame un sec…",
+    statusDefault: "dame un sec, reviso mis notas…",
     suggestionsLabel: "Prueba con:",
     suggestions: [
-      { icon: "🚀", text: "¿Qué proyectos ha construido?" },
-      { icon: "🍔", text: "¿Qué ha hecho dentro de Rappi?" },
-      { icon: "🎧", text: "¿Qué música, deportes o pelis le gustan?" },
-      { icon: "🔮", text: "¿Qué piensa sobre el futuro?" },
+      { icon: "🚀", text: "¿Qué estás construyendo?" },
+      { icon: "🍔", text: "¿Qué haces en Rappi?" },
+      { icon: "🎧", text: "¿Qué te gusta fuera del trabajo?" },
+      { icon: "🔮", text: "¿Cómo ves el futuro?" },
     ],
-    disclaimer: "Respondo solo con lo que Juan Diego ha compartido públicamente.",
+    disclaimer: "Solo cuento lo que he compartido públicamente.",
     errorGeneric: "Uy, algo falló. Intenta de nuevo en un momento.",
     errorRate: "Vas muy rápido 😅 Espera unos segundos y vuelve a intentar.",
     newChat: "Nueva conversación",
@@ -109,18 +120,22 @@ const STRINGS: Record<Lang, Strings> = {
     },
   },
   en: {
-    tagline: "second self · ask me anything",
-    placeholder: "Ask my second self…",
+    tagline: "second self · always online",
+    placeholder: "Ask me anything…",
     send: "Send",
     thinking: "Thinking…",
+    statusProjects: "one sec, going through my projects…",
+    statusWork: "one sec, thinking how to tell you about work…",
+    statusPersonal: "ha, good one — give me a sec…",
+    statusDefault: "one sec, checking my notes…",
     suggestionsLabel: "Try asking:",
     suggestions: [
-      { icon: "🚀", text: "What has he built?" },
-      { icon: "🍔", text: "What does he do at Rappi?" },
-      { icon: "🎧", text: "What music, sports or movies is he into?" },
-      { icon: "🔮", text: "What does he think about the future?" },
+      { icon: "🚀", text: "What are you building?" },
+      { icon: "🍔", text: "What do you do at Rappi?" },
+      { icon: "🎧", text: "What are you into outside work?" },
+      { icon: "🔮", text: "How do you see the future?" },
     ],
-    disclaimer: "I only answer with what Juan Diego has chosen to share publicly.",
+    disclaimer: "I only talk about what I've shared publicly.",
     errorGeneric: "Oops, something went wrong. Please try again in a moment.",
     errorRate: "Whoa, slow down a sec 😅 Try again shortly.",
     newChat: "New chat",

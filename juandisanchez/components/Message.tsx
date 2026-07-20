@@ -20,10 +20,15 @@ export function MessageBubble({
   message,
   streaming,
   lang = "en",
+  status,
 }: {
   message: ChatMessage;
   streaming?: boolean;
   lang?: Lang;
+  /** In-voice micro-status ("one sec, checking my notes…") shown instantly
+   *  while this message is still empty — makes the wait feel like a person
+   *  reacting, not a bot buffering. */
+  status?: string;
 }) {
   const isUser = message.role === "user";
 
@@ -49,19 +54,20 @@ export function MessageBubble({
             {streaming && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-brand align-middle" />}
           </div>
         ) : (
-          <TypingDots />
+          <TypingDots status={status} />
         )}
       </div>
     </div>
   );
 }
 
-function TypingDots() {
+function TypingDots({ status }: { status?: string }) {
   return (
-    <div className="flex items-center gap-1.5 py-1.5" aria-label="Thinking">
+    <div className="flex items-center gap-1.5 py-1.5" aria-label={status || "Thinking"}>
       <span className="typing-dot" />
       <span className="typing-dot" style={{ animationDelay: "0.15s" }} />
       <span className="typing-dot" style={{ animationDelay: "0.3s" }} />
+      {status && <span className="msg-in ml-1 text-sm italic text-muted">{status}</span>}
     </div>
   );
 }

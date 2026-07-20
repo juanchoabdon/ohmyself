@@ -76,14 +76,16 @@ export const getCachedIntro = unstable_cache(
     const rawReply = await complete(messages);
     const fallback =
       lang === "es"
-        ? `¡Hola! Soy el second self de ${PERSON_SHORT_NAME}. Pregúntame lo que quieras sobre él.`
-        : `Hey! I'm ${PERSON_SHORT_NAME}'s second self. Ask me anything about him.`;
+        ? `¡Hey! Soy ${PERSON_SHORT_NAME} — bueno, mi second self, la versión de mí que siempre está online. Pregúntame lo que quieras.`
+        : `Hey! I'm ${PERSON_SHORT_NAME} — well, my second self, the always-online me. Ask me anything.`;
     const reply = rawReply ?? fallback;
     const allowed = new Set(ground.links.map((l) => l.url.replace(/\/$/, "")));
     const urlToLabel = new Map(ground.links.map((l) => [l.url.replace(/\/$/, ""), l.label]));
     const clean = enforceCardOwnership(sanitizeLinks(reply, allowed), urlToLabel);
     return { reply: clean, links: ground.links };
   },
-  ["intro-reply-v1"],
+  // v2: first-person voice — bumping the key drops the cached third-person
+  // greeting immediately instead of waiting out its revalidate window.
+  ["intro-reply-v2"],
   { revalidate: INTRO_REVALIDATE_S },
 );

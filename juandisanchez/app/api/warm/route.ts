@@ -1,9 +1,27 @@
 import { getCachedIntro } from "@/lib/intro";
-import { listPublicNotes, publicSemanticEdges, readPublicNote } from "@/lib/brain";
+import { listPublicNotes, publicSemanticEdges, readPublicNote, recall } from "@/lib/brain";
 import { translateNoteBody, translateTexts, type NoteLang } from "@/lib/translate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** The curated starter questions (must mirror `suggestions` in lib/i18n.ts).
+ *  These are what most first-time visitors tap, so pre-warming their recall
+ *  (topic retrieval) shaves the retrieval wait off the very first answer. */
+const CHIP_QUESTIONS = [
+  "¿Qué estás construyendo?",
+  "¿Qué haces en Rappi?",
+  "¿Qué te gusta fuera del trabajo?",
+  "¿Cómo ves el futuro?",
+  "What are you building?",
+  "What do you do at Rappi?",
+  "What are you into outside work?",
+  "How do you see the future?",
+];
+
+async function warmChipRecalls(): Promise<void> {
+  await Promise.all(CHIP_QUESTIONS.map((q) => recall(q)));
+}
 
 /** Warm the translated notes list (titles + excerpts) for one language. */
 async function warmNotesList(lang: NoteLang): Promise<void> {
@@ -48,6 +66,7 @@ export async function GET() {
     warmNotesList("es"),
     warmBio("en"),
     warmBio("es"),
+    warmChipRecalls(),
   ]);
 
   const labels = [
@@ -60,6 +79,7 @@ export async function GET() {
     "notes-translated:es",
     "bio-translated:en",
     "bio-translated:es",
+    "chip-recalls",
   ];
   const status = results.map((r, i) => ({
     task: labels[i],

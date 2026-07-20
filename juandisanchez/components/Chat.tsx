@@ -37,12 +37,27 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/** Pick the in-voice micro-status for a just-sent question — shown at 0ms,
+ *  before any network work, so the site reacts like a person instantly. */
+function pickStatus(question: string, t: ReturnType<typeof strings>): string {
+  const q = question.toLowerCase();
+  if (/(proyect|project|build|built|construy|constru|creado|created|shipped|lanz)/.test(q)) {
+    return t.statusProjects;
+  }
+  if (/(rappi|trabajo|work|job|career|carrera)/.test(q)) return t.statusWork;
+  if (/(music|música|deporte|sport|peli|movie|serie|hobb|gusta|like|fuera del trabajo|outside work|fun)/.test(q)) {
+    return t.statusPersonal;
+  }
+  return t.statusDefault;
+}
+
 export function Chat({ intro }: { intro: Record<Lang, EmbeddedIntro> }) {
   const [lang, setLang] = useState<Lang>("en");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -172,6 +187,7 @@ export function Chat({ intro }: { intro: Record<Lang, EmbeddedIntro> }) {
       } finally {
         setBusy(false);
         setStreamingId(null);
+        setPendingStatus(null);
         scrollToBottom();
       }
     },
@@ -186,6 +202,7 @@ export function Chat({ intro }: { intro: Record<Lang, EmbeddedIntro> }) {
       const assistantId = uid();
       const next = [...messages, userMsg, { id: assistantId, role: "assistant" as const, content: "" }];
       setMessages(next);
+      setPendingStatus(pickStatus(q, strings(langRef.current)));
       setInput("");
       if (taRef.current) taRef.current.style.height = "auto";
       scrollToBottom();
@@ -278,7 +295,13 @@ export function Chat({ intro }: { intro: Record<Lang, EmbeddedIntro> }) {
         style={{ scrollbarGutter: "stable" }}
       >
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} streaming={streamingId === m.id} lang={lang} />
+          <MessageBubble
+            key={m.id}
+            message={m}
+            streaming={streamingId === m.id}
+            lang={lang}
+            status={streamingId === m.id && hasUserMsg ? pendingStatus ?? undefined : undefined}
+          />
         ))}
 
         {/* Curated starters — shown only before the visitor asks anything */}
