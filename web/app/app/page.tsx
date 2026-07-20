@@ -357,28 +357,12 @@ export default function Dashboard() {
     setLoadedFolders(new Set());
     setLoadingFolders(new Set());
     (async () => {
-      try {
-        await api.onboard(token);
-      } catch {
-        /* non-fatal */
-      }
-      try {
-        const { categories } = await api.structure(token);
-        if (active) setCategories(categories);
-      } catch {
-        /* non-fatal */
-      }
-      try {
-        const { folders } = await api.folders(token);
-        if (active) setFolderCounts(folders);
-      } finally {
-        if (active) setReady(true);
-      }
-      // Reopen the note that was open in this space before the refresh, and
-      // expand its pillar so the sidebar highlights it.
-      if (active && activeSpaceId) {
+      // Resolve the note to restore FIRST so its fetch starts immediately —
+      // the content pane shouldn't wait on sidebar scaffolding.
+      let saved: string | null = null;
+      if (activeSpaceId) {
         const deep = readNoteDeepLink(window.location.search);
-        let saved: string | null = deep.note ?? null;
+        saved = deep.note ?? null;
         if (!saved) {
           try {
             saved = localStorage.getItem(openNoteKey(activeSpaceId));
@@ -391,15 +375,42 @@ export default function Dashboard() {
             loadEditorTabs(activeSpaceId).find((t) => t.path === saved)?.title ??
             saved.split("/").pop()?.replace(/\.md$/, "") ??
             saved;
-          // Prime selection + loading shell before ensureFolder so refresh never
-          // flashes "Pick an entry" while the saved note is being restored.
+          // Prime selection + loading shell so refresh never flashes "Pick an entry".
           setSelected(saved);
           setNoteLoading(true);
           setNotePreviewTitle(tabTitle);
-          await ensureFolder(saved.split("/")[0]!);
-          if (active) await openNote(saved);
         }
       }
+
+      // Everything below is independent — run in parallel instead of serially
+      // (each call is a full proxy round trip; serial = seconds of skeleton).
+      // Onboard is a no-op for existing accounts, so it doesn't gate anything.
+      await Promise.all([
+        api.onboard(token).catch(() => {
+          /* non-fatal */
+        }),
+        api
+          .structure(token)
+          .then(({ categories }) => {
+            if (active) setCategories(categories);
+          })
+          .catch(() => {
+            /* non-fatal */
+          }),
+        api
+          .folders(token)
+          .then(({ folders }) => {
+            if (active) setFolderCounts(folders);
+          })
+          .catch(() => {
+            /* non-fatal */
+          })
+          .finally(() => {
+            if (active) setReady(true);
+          }),
+        saved ? openNote(saved) : Promise.resolve(),
+        saved ? ensureFolder(saved.split("/")[0]!) : Promise.resolve(),
+      ]);
     })();
     return () => {
       active = false;

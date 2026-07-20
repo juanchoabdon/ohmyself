@@ -54,8 +54,8 @@ function encPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-async function call<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(base() + path, {
+function doFetch(path: string, token: string, init?: RequestInit): Promise<Response> {
+  return fetch(base() + path, {
     ...init,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -64,6 +64,31 @@ async function call<T>(path: string, token: string, init?: RequestInit): Promise
       ...(init?.headers ?? {}),
     },
   });
+}
+
+/** On 401 the Supabase JWT probably just expired — grab a fresh session token
+ *  and retry once, so a background token refresh doesn't strand the whole UI. */
+async function freshToken(stale: string): Promise<string | null> {
+  try {
+    const { supabase } = await import("@/lib/supabaseClient");
+    const { data } = await supabase.auth.getSession();
+    let t = data.session?.access_token ?? null;
+    if (!t || t === stale) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      t = refreshed.session?.access_token ?? null;
+    }
+    return t && t !== stale ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+async function call<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+  let res = await doFetch(path, token, init);
+  if (res.status === 401) {
+    const fresh = await freshToken(token);
+    if (fresh) res = await doFetch(path, fresh, init);
+  }
   if (!res.ok) {
     let msg = `${res.status}`;
     try {
