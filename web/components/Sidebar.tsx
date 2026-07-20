@@ -452,6 +452,9 @@ export function Sidebar({
                     toggle(pillarKey);
                     if (willOpen && !loaded) onExpandFolder(rootName);
                   }}
+                  onMouseEnter={() => {
+                    if (!filtering && !loaded) onExpandFolder(rootName);
+                  }}
                   disabled={filtering}
                   aria-label={open ? "Collapse" : "Expand"}
                   className="flex min-w-0 flex-1 items-center gap-1 text-left disabled:cursor-default"
@@ -506,7 +509,7 @@ export function Sidebar({
           e.preventDefault();
           setDragging(true);
         }}
-        onDoubleClick={() => setWidth(288)}
+        onDoubleClick={() => setWidth(DEFAULT_W)}
         title="Drag to resize · double-click to reset"
         className="group absolute inset-y-0 -right-1 z-30 w-2 cursor-col-resize"
       >

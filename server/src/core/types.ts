@@ -81,6 +81,8 @@ export interface ListOptions {
   limit?: number;
   /** Restrict to notes whose path starts with this prefix (e.g. "goals/"). */
   prefix?: string;
+  /** Include full note body in index rows (default false — much faster for listings). */
+  includeContent?: boolean;
 }
 
 export interface SearchOptions extends ListOptions {}

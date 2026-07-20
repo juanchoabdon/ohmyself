@@ -42,6 +42,8 @@ function toIndexed(r: Row): IndexedNote {
 }
 
 const SELECT = "path, note_id, title, type, visibility, tags, links, created, updated, content";
+/** Metadata only — skips the heavy `content` blob (sidebar / map listing). */
+const SELECT_META = "path, note_id, title, type, visibility, tags, links, created, updated";
 
 /** Turn a free-text query into a prefix `to_tsquery` string ("amal:* & mob:*").
  *  Prefix matching makes as-you-type search work (websearch/plainto only match
@@ -121,19 +123,35 @@ export class SupabaseIndex implements BrainIndex {
 
   async list(spaceId: string, opts: ListOptions): Promise<IndexedNote[]> {
     const sb = serviceClient();
-    let q = sb
-      .from("note_index")
-      .select(SELECT)
-      .eq("space_id", spaceId)
-      .in("visibility", opts.allowed);
+    const limit = opts.limit ?? 200;
+    const prefixFilter = opts.prefix
+      ? `${opts.prefix.replace(/[%_]/g, "\\$&")}%`
+      : undefined;
+
+    if (opts.includeContent) {
+      let q = sb.from("note_index").select(SELECT).eq("space_id", spaceId).in("visibility", opts.allowed);
+      if (opts.types?.length) q = q.in("type", opts.types);
+      if (opts.excludeTypes?.length) q = q.not("type", "in", `(${opts.excludeTypes.join(",")})`);
+      if (opts.tags?.length) q = q.overlaps("tags", opts.tags);
+      if (prefixFilter) q = q.like("path", prefixFilter);
+      const { data, error } = await q
+        .order("updated", { ascending: false, nullsFirst: false })
+        .limit(limit);
+      if (error || !data) return [];
+      return (data as Row[]).map(toIndexed);
+    }
+
+    type MetaRow = Omit<Row, "content">;
+    let q = sb.from("note_index").select(SELECT_META).eq("space_id", spaceId).in("visibility", opts.allowed);
     if (opts.types?.length) q = q.in("type", opts.types);
     if (opts.excludeTypes?.length) q = q.not("type", "in", `(${opts.excludeTypes.join(",")})`);
     if (opts.tags?.length) q = q.overlaps("tags", opts.tags);
-    if (opts.prefix) q = q.like("path", `${opts.prefix.replace(/[%_]/g, "\\$&")}%`);
-    q = q.order("updated", { ascending: false, nullsFirst: false }).limit(opts.limit ?? 200);
-    const { data, error } = await q;
+    if (prefixFilter) q = q.like("path", prefixFilter);
+    const { data, error } = await q
+      .order("updated", { ascending: false, nullsFirst: false })
+      .limit(limit);
     if (error || !data) return [];
-    return (data as Row[]).map(toIndexed);
+    return (data as MetaRow[]).map((r) => toIndexed({ ...r, content: "" }));
   }
 
   async folderCounts(spaceId: string, allowed: Visibility[]): Promise<FolderCount[]> {

@@ -430,7 +430,7 @@ async function mergePass(
   type Pair = { type: string; a: IndexedNote; b: IndexedNote; score: number };
   const pairs: Pair[] = [];
   for (const type of ["person", "concept"] as const) {
-    const pages = await brain.listNotes(userId, { types: [type], allowed, limit: 5000 });
+    const pages = await brain.listNotes(userId, { types: [type], allowed, limit: 5000, includeContent: true });
     report.pagesScanned += pages.length;
     if (pages.length < 2) continue;
     const vecs = await embedTexts(pages.map((p) => `${p.title}\n${p.excerpt ?? ""}`));
