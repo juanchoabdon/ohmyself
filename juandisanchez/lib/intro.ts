@@ -84,8 +84,9 @@ export const getCachedIntro = unstable_cache(
     const clean = enforceCardOwnership(sanitizeLinks(reply, allowed), urlToLabel);
     return { reply: clean, links: ground.links };
   },
-  // v2: first-person voice — bumping the key drops the cached third-person
-  // greeting immediately instead of waiting out its revalidate window.
-  ["intro-reply-v2"],
+  // v3: first-person voice ("JD's second self", never "your second self") —
+  // bumping the key drops the previously cached greeting immediately instead
+  // of waiting out its revalidate window.
+  ["intro-reply-v3"],
   { revalidate: INTRO_REVALIDATE_S },
 );
