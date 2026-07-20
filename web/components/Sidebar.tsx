@@ -151,11 +151,17 @@ export function Sidebar({
   // Resizable width (drag the right edge). Persisted so it survives reloads.
   const MIN_W = 240;
   const MAX_W = 640;
-  const [width, setWidth] = useState(288); // w-72
+  const DEFAULT_W = 360;
+  const [width, setWidth] = useState(DEFAULT_W);
   const [dragging, setDragging] = useState(false);
   const asideRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const saved = Number(localStorage.getItem("oms-sidebar-w"));
+    // Upgrade users still on the old default width so titles stay readable.
+    if (saved === 288) {
+      setWidth(DEFAULT_W);
+      return;
+    }
     if (saved >= MIN_W && saved <= MAX_W) setWidth(saved);
   }, []);
   useEffect(() => {

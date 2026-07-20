@@ -84,7 +84,7 @@ export default function Dashboard() {
   const [view, setView] = useState<"notes" | "map">("notes");
   const [openTabs, setOpenTabs] = useState<EditorTab[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [docPanelOpen, setDocPanelOpen] = useState(true);
+  const [docPanelOpen, setDocPanelOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [docPanelTab, setDocPanelTab] = useState<"outline" | "links" | "timeline">("outline");
