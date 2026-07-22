@@ -114,8 +114,8 @@ function sortNodes(nodes: TreeNode[]): TreeNode[] {
         return 1;
       }
     }
-    const an = a.isFolder ? a.name : a.note?.title ?? a.name;
-    const bn = b.isFolder ? b.name : b.note?.title ?? b.name;
+    const an = a.isFolder ? a.name : rawFileLabel(a.name);
+    const bn = b.isFolder ? b.name : rawFileLabel(b.name);
     return an.localeCompare(bn);
   });
 }
@@ -128,6 +128,11 @@ function countFiles(node: TreeNode): number {
 
 function prettyFolder(name: string): string {
   return name.replace(/[-_]/g, " ");
+}
+
+/** Leaf filename for sidebar rows — slug/path segment, not frontmatter title. */
+function rawFileLabel(name: string): string {
+  return name.endsWith(".md") ? name.slice(0, -3) : name;
 }
 
 function titleCase(name: string): string {
@@ -291,7 +296,7 @@ export function Sidebar({
             >
               <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
                 {date && <span className="shrink-0 tabular-nums text-[0.7rem] text-muted/70">{date}</span>}
-                <span className="truncate">{node.note?.title ?? node.name}</span>
+                <span className="truncate">{rawFileLabel(node.name)}</span>
               </span>
               {node.note && <span className="shrink-0 pl-1"><VisibilityBadge visibility={node.note.visibility} /></span>}
             </button>
