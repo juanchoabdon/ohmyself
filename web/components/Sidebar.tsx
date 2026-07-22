@@ -37,6 +37,17 @@ interface Props {
 // follow-ups, surfaced during daily/weekly planning — not a folder to scroll.
 const HIDDEN_PILLARS = new Set(["commitments"]);
 
+/** Sidebar tree indentation — folders have a chevron column files don't. */
+const ROW_PAD = 8;
+const DEPTH_INDENT = 16;
+const CHEVRON_W = 16;
+const TREE_GUIDE = "ml-2 border-l border-border/50 pl-1.5";
+
+function rowPad(depth: number, kind: "folder" | "file"): number {
+  const base = ROW_PAD + depth * DEPTH_INDENT;
+  return kind === "file" ? base + CHEVRON_W : base;
+}
+
 interface TreeNode {
   name: string; // path segment (folder) — files use their note title for display
   path: string; // folder path, or the note path for files
@@ -267,14 +278,13 @@ export function Sidebar({
 
   function renderNodes(nodes: TreeNode[], depth: number): React.ReactNode {
     return sortNodes(nodes).map((node) => {
-      const pad = 8 + depth * 14;
       if (!node.isFolder) {
         const date = fileDate(node);
         return (
           <li key={node.path}>
             <button
               onClick={() => onSelect(node.path)}
-              style={{ paddingLeft: pad }}
+              style={{ paddingLeft: rowPad(depth, "file") }}
               className={`group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-sm transition-colors duration-100 ${
                 selected === node.path ? "bg-brand-weak text-ink" : "text-ink/80 hover:bg-bg"
               }`}
@@ -293,7 +303,7 @@ export function Sidebar({
       return (
         <li key={node.path}>
           <div
-            style={{ paddingLeft: pad }}
+            style={{ paddingLeft: rowPad(depth, "folder") }}
             className="group relative flex w-full items-center gap-1 rounded-md py-1.5 pr-2 text-sm text-ink/90 hover:bg-bg"
           >
             <button
@@ -323,7 +333,9 @@ export function Sidebar({
               />
             )}
           </div>
-          {open && node.children.length > 0 && <ul>{renderNodes(node.children, depth + 1)}</ul>}
+          {open && node.children.length > 0 && (
+            <ul className={TREE_GUIDE}>{renderNodes(node.children, depth + 1)}</ul>
+          )}
         </li>
       );
     });
@@ -496,7 +508,7 @@ export function Sidebar({
                 ) : !loaded && !filtering ? (
                   <PillarLoading rows={Math.min(Math.max(displayCount, 1), 4)} />
                 ) : (
-                  <ul className="pl-3">{renderNodes(items, 0)}</ul>
+                  <ul className={TREE_GUIDE}>{renderNodes(items, 0)}</ul>
                 ))}
             </div>
           );
@@ -526,9 +538,9 @@ export function Sidebar({
 /** Skeleton rows shown while a pillar's notes stream in on first expand. */
 function PillarLoading({ rows }: { rows: number }) {
   return (
-    <ul className="pl-3" aria-busy="true">
+    <ul className={TREE_GUIDE} aria-busy="true">
       {Array.from({ length: rows }).map((_, i) => (
-        <li key={i} className="flex items-center py-1.5" style={{ paddingLeft: 8 }}>
+        <li key={i} className="flex items-center py-1.5" style={{ paddingLeft: rowPad(0, "file") }}>
           <span className="skeleton h-3.5 rounded" style={{ width: `${55 + ((i * 13) % 35)}%` }} />
         </li>
       ))}
