@@ -573,6 +573,23 @@ export default function Dashboard() {
           /* storage unavailable — fine */
         }
       }
+      let nextTab: string | null = null;
+      setOpenTabs((prev) => {
+        const remaining = closeTab(prev, path);
+        nextTab = remaining[remaining.length - 1]?.path ?? null;
+        return remaining;
+      });
+      if (nextTab) {
+        void openNote(nextTab);
+      } else {
+        setSelected(null);
+        if (activeSpaceId) {
+          urlSyncRef.current = true;
+          writeNoteDeepLink(null, activeSpaceId);
+          urlSyncRef.current = false;
+        }
+        setBanner("That note couldn't be loaded — it may have been moved or deleted.");
+      }
     } finally {
       if (seq !== openNoteSeqRef.current) return;
       setNoteLoading(false);

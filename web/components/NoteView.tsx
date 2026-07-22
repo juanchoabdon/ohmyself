@@ -248,7 +248,8 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
 
   const pendingNote =
     Boolean(activePath) && (!note || note.path !== activePath);
-  const fetching = pendingNote || (Boolean(activePath) && loading);
+  const loadFailed = Boolean(activePath) && !loading && pendingNote;
+  const fetching = pendingNote && !loadFailed && (loading || !note);
   const ready = Boolean(note && note.path === activePath && !fetching);
   /** One stable title control — preview while fetching, then editable state (no h1↔textarea swap). */
   const titleDisplay = fetching ? (previewTitle ?? title) : title;
@@ -260,13 +261,26 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const hasEditorBody = Boolean(editorBody.trim());
   const hasVaultBody = Boolean(vaultBody.trim());
 
-  if (!activePath && !ready && !fetching) {
+  if (!activePath && !ready && !fetching && !loadFailed) {
     return (
       <Centered>
         <div className="max-w-sm text-center">
           <h2 className="text-lg font-semibold text-ink">Pick an entry</h2>
           <p className="mt-1 text-sm text-muted">
             Choose something from your second self on the left, or create a new entry.
+          </p>
+        </div>
+      </Centered>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <Centered>
+        <div className="max-w-sm text-center">
+          <h2 className="text-lg font-semibold text-ink">Couldn&apos;t load this note</h2>
+          <p className="mt-1 text-sm text-muted">
+            It may have been moved or deleted. Pick another entry from the sidebar or close this tab.
           </p>
         </div>
       </Centered>
