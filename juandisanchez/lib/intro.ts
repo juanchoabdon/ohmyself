@@ -84,9 +84,9 @@ export const getCachedIntro = unstable_cache(
     const clean = enforceCardOwnership(sanitizeLinks(reply, allowed), urlToLabel);
     return { reply: clean, links: ground.links };
   },
-  // v3: first-person voice ("JD's second self", never "your second self") —
-  // bumping the key drops the previously cached greeting immediately instead
-  // of waiting out its revalidate window.
-  ["intro-reply-v3"],
+  // v4: the greeting now explains what Rappi is (most visitors outside
+  // Latam don't know it). Bumping the key drops the previously cached
+  // greeting immediately instead of waiting out its revalidate window.
+  ["intro-reply-v4"],
   { revalidate: INTRO_REVALIDATE_S },
 );
