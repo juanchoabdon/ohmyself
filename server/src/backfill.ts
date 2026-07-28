@@ -173,6 +173,12 @@ export async function runBackfillLoop(
     const justDone: BackfillItem[] = (result.items ?? []).map((it) => ({ ...it, at }));
     const recent = [...justDone, ...(bf.recent ?? [])].slice(0, RECENT_CAP);
 
+    // Admin/user may have stopped the run while this batch was in flight — don't
+    // clobber a terminal status back to "running".
+    const fresh = await getConnectionWithCredential(spaceId, connectionId);
+    const live = fresh?.settings?.backfill;
+    if (!live || live.status !== "running" || (runToken && live.startedAt !== runToken)) return;
+
     if (remaining > 0 && processed > 0) {
       await patchBackfill(spaceId, connectionId, {
         status: "running",
@@ -209,6 +215,7 @@ export async function stopBackfill(
   const next: BackfillState = {
     ...bf,
     status: "done",
+    startedAt: new Date().toISOString(),
     finishedAt: new Date().toISOString(),
     current: undefined,
   };
