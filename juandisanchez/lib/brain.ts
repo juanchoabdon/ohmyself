@@ -139,8 +139,8 @@ const identitySections = unstable_cache(
     });
     return sections;
   },
-  ["ohmyself-identity-sections"],
-  { revalidate: 300 },
+  ["ohmyself-identity-sections-v3"],
+  { revalidate: 120 },
 );
 
 // Public project overviews change rarely too — cache alongside identity.
@@ -511,8 +511,8 @@ const getPublicNoteCached = unstable_cache(
       updated: data.meta?.updated,
     };
   },
-  ["ohmyself-public-note"],
-  { revalidate: NOTE_BODY_TTL_S },
+  ["ohmyself-public-note-v3"],
+  { revalidate: 60 },
 );
 
 /** A single public note's full body, for the second-brain reader view. */
