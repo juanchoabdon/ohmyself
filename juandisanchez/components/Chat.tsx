@@ -48,6 +48,9 @@ function pickStatus(question: string, t: ReturnType<typeof strings>): string {
   if (/(music|música|deporte|sport|peli|movie|serie|hobb|gusta|like|fuera del trabajo|outside work|fun)/.test(q)) {
     return t.statusPersonal;
   }
+  if (/(despu[eé]s de rappi|after rappi|post.?rappi|apasion|passion|futuro|future|millones|millions|consumer.*ai|ai.*consumer|escala|scale)/.test(q)) {
+    return t.statusFuture;
+  }
   return t.statusDefault;
 }
 

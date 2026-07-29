@@ -48,6 +48,7 @@ export interface Strings {
   statusProjects: string;
   statusWork: string;
   statusPersonal: string;
+  statusFuture: string;
   statusDefault: string;
   suggestionsLabel: string;
   suggestions: Suggestion[];
@@ -72,13 +73,14 @@ const STRINGS: Record<Lang, Strings> = {
     statusProjects: "dame un sec, repaso mis proyectos…",
     statusWork: "un momento, pienso cómo contarte lo del trabajo…",
     statusPersonal: "jaja buena — dame un sec…",
+    statusFuture: "dame un sec, esto me apasiona — te cuento…",
     statusDefault: "dame un sec, reviso mis notas…",
     suggestionsLabel: "Prueba con:",
     suggestions: [
       { icon: "🚀", text: "¿Qué estás construyendo?" },
       { icon: "🍔", text: "¿Qué haces en Rappi?" },
       { icon: "🎧", text: "¿Qué te gusta fuera del trabajo?" },
-      { icon: "🔮", text: "¿Cómo ves el futuro?" },
+      { icon: "🧠", text: "¿Qué te apasiona construir después de Rappi?" },
     ],
     disclaimer: "Solo cuento lo que he compartido públicamente.",
     errorGeneric: "Uy, algo falló. Intenta de nuevo en un momento.",
@@ -127,13 +129,14 @@ const STRINGS: Record<Lang, Strings> = {
     statusProjects: "one sec, going through my projects…",
     statusWork: "one sec, thinking how to tell you about work…",
     statusPersonal: "ha, good one — give me a sec…",
+    statusFuture: "one sec — this one's close to my heart…",
     statusDefault: "one sec, checking my notes…",
     suggestionsLabel: "Try asking:",
     suggestions: [
       { icon: "🚀", text: "What are you building?" },
       { icon: "🍔", text: "What do you do at Rappi?" },
       { icon: "🎧", text: "What are you into outside work?" },
-      { icon: "🔮", text: "How do you see the future?" },
+      { icon: "🧠", text: "What do you want to build after Rappi?" },
     ],
     disclaimer: "I only talk about what I've shared publicly.",
     errorGeneric: "Oops, something went wrong. Please try again in a moment.",

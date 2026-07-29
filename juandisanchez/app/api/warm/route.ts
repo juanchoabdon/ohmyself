@@ -12,11 +12,11 @@ const CHIP_QUESTIONS = [
   "¿Qué estás construyendo?",
   "¿Qué haces en Rappi?",
   "¿Qué te gusta fuera del trabajo?",
-  "¿Cómo ves el futuro?",
+  "¿Qué te apasiona construir después de Rappi?",
   "What are you building?",
   "What do you do at Rappi?",
   "What are you into outside work?",
-  "How do you see the future?",
+  "What do you want to build after Rappi?",
 ];
 
 async function warmChipRecalls(): Promise<void> {
