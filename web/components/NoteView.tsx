@@ -25,6 +25,7 @@ import {
   notePathFromHref,
   wikiLinksToMarkdownLinks,
 } from "./editor/wikiLinkMarkdown";
+import { handleReadOnlyLinkClick } from "./editor/internalLinkNavigation";
 import { AssetImage, AssetVideo, EmbedFrame } from "./editor/MediaRender";
 import { HtmlPreview, MermaidDiagram, languageFromClassName } from "./editor/RichCodeRender";
 import { isHtmlPreviewLanguage } from "./editor/htmlPreview";
@@ -646,7 +647,12 @@ function CommentableBody({
 
 function ReadOnlyMarkdown({ text, onOpenLink }: { text: string; onOpenLink: (path: string) => void }) {
   return (
-    <ReactMarkdown
+    <div
+      onClickCapture={(e) => {
+        handleReadOnlyLinkClick(e, onOpenLink);
+      }}
+    >
+      <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
         a: ({ href, children }) => {
@@ -677,6 +683,7 @@ function ReadOnlyMarkdown({ text, onOpenLink }: { text: string; onOpenLink: (pat
     >
       {wikiLinksToMarkdownLinks(text)}
     </ReactMarkdown>
+    </div>
   );
 }
 

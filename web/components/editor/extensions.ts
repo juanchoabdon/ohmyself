@@ -15,6 +15,7 @@ import type * as Y from "yjs";
 import type { CollabUser } from "@/lib/collabUser";
 import { WikiLink } from "./WikiLink";
 import { InternalLinkClick } from "./InternalLinkClick";
+import { isAllowedNoteUri } from "./internalLinkNavigation";
 import { OmsCodeBlock } from "./OmsCodeBlock";
 import { Callout } from "./Callout";
 import { Tabs, Tab } from "./Tabs";
@@ -54,6 +55,7 @@ export function buildEditorExtensions(
       openOnClick: false,
       autolink: true,
       HTMLAttributes: { class: "oms-md-link" },
+      isAllowedUri: (url, ctx) => isAllowedNoteUri(url, ctx.defaultValidate),
     }),
     WikiLink,
     InternalLinkClick.configure({ onOpenLink }),

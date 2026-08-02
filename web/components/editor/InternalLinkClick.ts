@@ -1,6 +1,6 @@
 import { Extension } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
-import { isInternalNoteHref, notePathFromHref } from "./wikiLinkMarkdown";
+import { handleInternalLinkClick } from "./internalLinkNavigation";
 
 export interface InternalLinkClickOptions {
   onOpenLink?: (path: string) => void;
@@ -8,8 +8,7 @@ export interface InternalLinkClickOptions {
 
 /**
  * Opens wiki links and internal markdown links on click in the TipTap editor.
- * Uses the DOM target — ProseMirror's position-based mark lookup misses clicks
- * on `<a>` boundaries when the wikiLink mark is non-inclusive.
+ * Falls back to ProseMirror marks when TipTap strips relative hrefs from the DOM.
  */
 export const InternalLinkClick = Extension.create<InternalLinkClickOptions>({
   name: "internalLinkClick",
@@ -26,28 +25,9 @@ export const InternalLinkClick = Extension.create<InternalLinkClickOptions>({
     return [
       new Plugin({
         props: {
-          handleClick(_view, _pos, event) {
-            if (!(event instanceof MouseEvent) || event.button !== 0) return false;
-            const target = event.target;
-            if (!(target instanceof Element)) return false;
-
-            const wiki = target.closest("a[data-wiki-link]");
-            if (wiki) {
-              const path = wiki.getAttribute("data-path");
-              if (path) {
-                event.preventDefault();
-                onOpen(path);
-                return true;
-              }
-            }
-
-            const anchor = target.closest("a[href]");
-            if (!anchor) return false;
-            const href = anchor.getAttribute("href");
-            if (!href || !isInternalNoteHref(href)) return false;
-            event.preventDefault();
-            onOpen(notePathFromHref(href));
-            return true;
+          handleClick(view, pos, event) {
+            if (!(event instanceof MouseEvent)) return false;
+            return handleInternalLinkClick(view, event, pos, onOpen);
           },
         },
       }),

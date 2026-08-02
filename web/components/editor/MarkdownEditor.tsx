@@ -8,6 +8,7 @@ import { MessageSquarePlus } from "lucide-react";
 import * as Y from "yjs";
 import "tippy.js/dist/tippy.css";
 import { buildEditorExtensions } from "./extensions";
+import { handleInternalLinkClick } from "./internalLinkNavigation";
 import { scrollEditorToHeading } from "./scrollToHeading";
 import {
   EditorModeToggle,
@@ -275,6 +276,13 @@ export function MarkdownEditor({
           blur: () => {
             onBlurRef.current?.();
             return false;
+          },
+          click: (view, event) => {
+            const onOpen = onOpenLinkRef.current;
+            if (!onOpen || !(event instanceof MouseEvent)) return false;
+            const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+            if (pos === undefined) return false;
+            return handleInternalLinkClick(view, event, pos, onOpen);
           },
         },
       },
