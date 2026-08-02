@@ -1,15 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { Copy, Eye, EyeOff, Code2, GitBranch, Trash2 } from "lucide-react";
-import {
-  buildHtmlPreviewSrcDoc,
-  isHtmlPreviewLanguage,
-  pingHtmlPreviewIframe,
-} from "./htmlPreview";
-import { isMermaidLanguage, renderMermaidSvg } from "./mermaidPreview";
+import { isHtmlPreviewLanguage } from "./htmlPreview";
+import { isMermaidLanguage } from "./mermaidPreview";
+import { HtmlPreview, MermaidDiagram } from "./RichCodeRender";
 import { cn } from "@/lib/utils";
 import { deleteRichBlockAt } from "./markdownRichContent";
 
@@ -21,53 +18,6 @@ export function CodeBlockView({ node, editor, getPos }: NodeViewProps) {
   const code = node.textContent;
   const [showPreview, setShowPreview] = useState(isRich);
   const [showSource, setShowSource] = useState(!isRich);
-  const [mermaidSvg, setMermaidSvg] = useState<string | null>(null);
-  const [mermaidError, setMermaidError] = useState<string | null>(null);
-  const [previewHeight, setPreviewHeight] = useState<number | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const mermaidId = useId().replace(/:/g, "");
-
-  useEffect(() => {
-    if (!isPreview) return;
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.type !== "oms-html-preview:resize") return;
-      const height = Number(event.data.height);
-      if (Number.isFinite(height) && height > 0) {
-        setPreviewHeight(Math.min(Math.max(height + 8, 120), 720));
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [isPreview]);
-
-  useEffect(() => {
-    if (!isPreview || !showPreview) return;
-    const t = window.setTimeout(() => pingHtmlPreviewIframe(iframeRef.current), 60);
-    return () => window.clearTimeout(t);
-  }, [isPreview, showPreview, code]);
-
-  useEffect(() => {
-    if (!isMermaid || !showPreview) {
-      setMermaidSvg(null);
-      setMermaidError(null);
-      return;
-    }
-    let cancelled = false;
-    setMermaidError(null);
-    void renderMermaidSvg(code, `oms-mermaid-${mermaidId}`)
-      .then((svg) => {
-        if (!cancelled) setMermaidSvg(svg);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setMermaidSvg(null);
-          setMermaidError(err instanceof Error ? err.message : "Could not render diagram");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isMermaid, showPreview, code, mermaidId]);
 
   async function copyCode() {
     try {
@@ -81,10 +31,6 @@ export function CodeBlockView({ node, editor, getPos }: NodeViewProps) {
     const pos = getPos();
     if (typeof pos === "number") deleteRichBlockAt(editor, pos);
   }
-
-  const previewFrameStyle = previewHeight
-    ? { height: `${previewHeight}px` }
-    : { height: "min(420px, 50vh)" };
 
   return (
     <NodeViewWrapper className={cn("group relative my-3", isRich && "oms-rich-code-block")}>
@@ -120,33 +66,9 @@ export function CodeBlockView({ node, editor, getPos }: NodeViewProps) {
         </span>
       </div>
 
-      {isPreview && showPreview && (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <iframe
-            ref={iframeRef}
-            title="HTML preview"
-            sandbox="allow-scripts"
-            srcDoc={buildHtmlPreviewSrcDoc(code)}
-            className="block min-h-[120px] w-full border-0 bg-bg"
-            style={previewFrameStyle}
-          />
-        </div>
-      )}
+      {isPreview && showPreview && <HtmlPreview html={code} />}
 
-      {isMermaid && showPreview && (
-        <div className="overflow-x-auto rounded-lg border border-border bg-surface p-3">
-          {mermaidError ? (
-            <p className="text-sm text-muted">{mermaidError}</p>
-          ) : mermaidSvg ? (
-            <div
-              className="oms-mermaid-preview flex justify-center [&_svg]:max-w-full"
-              dangerouslySetInnerHTML={{ __html: mermaidSvg }}
-            />
-          ) : (
-            <p className="text-sm text-muted">Rendering diagram…</p>
-          )}
-        </div>
-      )}
+      {isMermaid && showPreview && <MermaidDiagram code={code} />}
 
       {showSource && (
         <pre

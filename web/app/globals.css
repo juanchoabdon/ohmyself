@@ -394,13 +394,19 @@ main {
   margin: 1em 0;
 }
 
-/* Task lists */
-.prose ul[data-type="taskList"] {
+/* Task lists.
+   Two markups reach these rules: the editor's (TipTap, `data-type`) and the
+   read-only renderer's (remark-gfm, `.contains-task-list`). They must look
+   identical, so every rule matches both. */
+.prose ul[data-type="taskList"],
+.prose ul.contains-task-list {
   list-style: none;
   padding-left: 0;
 }
-.prose li[data-type="taskItem"] {
+.prose li[data-type="taskItem"],
+.prose li.task-list-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.45rem;
 }
@@ -408,8 +414,51 @@ main {
   margin-top: 0.2em;
   user-select: none;
 }
-.prose li[data-type="taskItem"] > div {
+.prose li[data-type="taskItem"] > div,
+.prose li.task-list-item > p {
   flex: 1;
+  margin: 0;
+}
+/* Keep both markups equally tight, without collapsing a multi-paragraph item. */
+.prose li[data-type="taskItem"] > div > p:first-child {
+  margin-top: 0;
+}
+.prose li[data-type="taskItem"] > div > p:last-child {
+  margin-bottom: 0;
+}
+/* A nested list belongs under the row, not beside the label — and its items
+   carry their own checked state, so a struck-out parent must not bleed in. */
+.prose li[data-type="taskItem"] > ul,
+.prose li[data-type="taskItem"] > ol,
+.prose li.task-list-item > ul,
+.prose li.task-list-item > ol {
+  flex-basis: 100%;
+  margin: 0.25em 0 0;
+  padding-left: 1.55em;
+  color: var(--ink);
+  text-decoration: none;
+}
+.prose li[data-type="taskItem"] input[type="checkbox"],
+.prose li.task-list-item > input[type="checkbox"] {
+  /* Native control, themed — keeps keyboard and screen-reader behaviour. */
+  accent-color: var(--brand);
+  width: 0.95em;
+  height: 0.95em;
+  margin: 0;
+  flex: none;
+  cursor: pointer;
+}
+.prose li.task-list-item > input[type="checkbox"] {
+  /* Read-only checkboxes are disabled by remark-gfm; don't imply otherwise. */
+  margin-top: 0.28em;
+  cursor: default;
+}
+/* A checked item reads as done. */
+.prose li[data-type="taskItem"][data-checked="true"] > div,
+.prose li.task-list-item:has(> input[type="checkbox"]:checked) {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--muted) 55%, transparent);
 }
 
 /* Wiki links + in-editor links */

@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MessageSquare, MessageSquarePlus } from "lucide-react";
@@ -21,6 +22,9 @@ import type { PresencePeer } from "./editor/PresenceBar";
 import type { CollabUser } from "@/lib/collabUser";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
 import { AssetImage, AssetVideo, EmbedFrame } from "./editor/MediaRender";
+import { HtmlPreview, MermaidDiagram, languageFromClassName } from "./editor/RichCodeRender";
+import { isHtmlPreviewLanguage } from "./editor/htmlPreview";
+import { isMermaidLanguage } from "./editor/mermaidPreview";
 import { hasMediaBlocks, splitMediaBlocks } from "@/lib/mediaSegments";
 import { dedupeExactDoubleBody, stripRedundantTitleH1 } from "@/lib/dedupeBody";
 import { cn } from "@/lib/utils";
@@ -659,11 +663,46 @@ function ReadOnlyMarkdown({ text, onOpenLink }: { text: string; onOpenLink: (pat
             </a>
           );
         },
+        // A mermaid or html-preview fence is a rendered block, not source. The
+        // editor already does this; without it, reading a note showed raw code.
+        pre: ({ children, ...props }) => {
+          const rich = richCodeBlock(children);
+          return rich ?? <pre {...props}>{children}</pre>;
+        },
       }}
     >
       {wikiLinksToMarkdownLinks(text)}
     </ReactMarkdown>
   );
+}
+
+/** The rendered form of a fenced block, or null when it's ordinary code. */
+function richCodeBlock(children: ReactNode): ReactNode | null {
+  const code = Children.toArray(children).find(isValidElement) as
+    | ReactElement<{ className?: string; children?: ReactNode }>
+    | undefined;
+  if (!code) return null;
+
+  const lang = languageFromClassName(code.props.className);
+  const source = codeSourceOf(code.props.children);
+  if (!source.trim()) return null;
+
+  if (isMermaidLanguage(lang)) {
+    return <MermaidDiagram code={source} fallback={<pre>{children}</pre>} />;
+  }
+  if (isHtmlPreviewLanguage(lang)) return <HtmlPreview html={source} />;
+  return null;
+}
+
+function codeSourceOf(children: ReactNode): string {
+  return Children.toArray(children)
+    .map((child) => {
+      if (typeof child === "string") return child;
+      if (typeof child === "number") return String(child);
+      if (isValidElement<{ children?: ReactNode }>(child)) return codeSourceOf(child.props.children);
+      return "";
+    })
+    .join("");
 }
 
 /** Media fences render as real media here too, not as literal `:::image` text —
