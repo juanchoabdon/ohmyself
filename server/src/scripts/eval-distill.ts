@@ -13,13 +13,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  allowedVisibilities,
   distill,
   distillEnabled,
   distillModelForTier,
   getConnectionWithCredential,
   shouldRichDistill,
-  listSpacesForUser,
 } from "../core/index.js";
 import { refreshAccessToken } from "../connectors/google-auth.js";
 import { exportDocText } from "../connectors/google-drive-meetings.js";
@@ -32,7 +30,6 @@ interface DistillCase {
   title: string;
   date: string;
   drive_doc_id?: string;
-  expected_space: string;
   expected_concepts: string[] | string[][];
   expected_decisions_min: number;
   expected_insights_min: number;
@@ -107,16 +104,10 @@ async function loadRawText(c: DistillCase): Promise<string> {
   );
 }
 
-async function runCase(c: DistillCase, ownerUserId: string): Promise<void> {
+async function runCase(c: DistillCase): Promise<void> {
   console.log(`\n=== CASE: ${c.id.toUpperCase()} (${c.title}) ===`);
   const rawText = await loadRawText(c);
   console.log(`raw chars: ${rawText.length}`);
-
-  const allowed = allowedVisibilities("secret");
-  const spaces = await listSpacesForUser(ownerUserId);
-  const companySpaces = spaces
-    .filter((s) => s.kind === "company" && s.slug)
-    .map((s) => ({ slug: s.slug!, name: s.name }));
 
   const input = {
     rawText,
@@ -132,7 +123,6 @@ async function runCase(c: DistillCase, ownerUserId: string): Promise<void> {
       projects: ["Bonds"],
       concepts: [],
       openCommitments: [],
-      companySpaces,
     },
   };
 
@@ -144,10 +134,6 @@ async function runCase(c: DistillCase, ownerUserId: string): Promise<void> {
   console.log(`distill: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
   const concepts = scoreConcepts(result, c.expected_concepts);
-  const routingOk =
-    result.routing?.target_space === "company" &&
-    result.routing.company_slug === c.expected_space &&
-    (result.routing.confidence ?? 0) >= 0.85;
 
   console.log("\n--- synthesis ---");
   console.log("summary:", result.summary.slice(0, 280) + (result.summary.length > 280 ? "…" : ""));
@@ -158,9 +144,6 @@ async function runCase(c: DistillCase, ownerUserId: string): Promise<void> {
     console.log("\nmodels:");
     for (const m of result.conceptual_models) console.log(`  - ${m.name}`);
   }
-
-  console.log("\n--- routing ---");
-  console.log(result.routing ?? "(none)");
 
   console.log("\n--- coverage ---");
   console.log(result.coverage ?? "(none)");
@@ -175,7 +158,6 @@ async function runCase(c: DistillCase, ownerUserId: string): Promise<void> {
     { name: "decisions_min", ok: result.decisions.length >= c.expected_decisions_min },
     { name: "models_min", ok: result.conceptual_models.length >= c.expected_models_min },
     { name: "concept_recall_60", ok: concepts.rate >= 0.6 },
-    { name: "routing_bonds", ok: routingOk },
     { name: "coverage_70", ok: (result.coverage?.score ?? 0) >= 0.7 },
   ];
 
@@ -199,7 +181,6 @@ async function main(): Promise<void> {
   const cases = JSON.parse(readFileSync(CASES_PATH, "utf8")) as DistillCase[];
   const caseId = argFor("--case");
   const all = process.argv.includes("--all");
-  const ownerUserId = argFor("--owner") ?? "50e99419-6adb-45bf-9e49-9235c990444e";
 
   const selected = all ? cases : cases.filter((c) => c.id === caseId);
   if (!selected.length) {
@@ -209,7 +190,7 @@ async function main(): Promise<void> {
   }
 
   for (const c of selected) {
-    await runCase(c, ownerUserId);
+    await runCase(c);
   }
 }
 

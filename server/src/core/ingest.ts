@@ -7,12 +7,15 @@
  * raw source), reconciliation of prior open commitments, and a log entry.
  *
  * The raw text is a parameter only — it is never written to the vault.
+ *
+ * Everything lands in the space that owns the connection. Ingest cannot write
+ * across spaces: a personal Drive account never reaches a company wiki, so
+ * company knowledge only ever arrives through a deliberate write.
  */
 
 import type { Brain } from "./brain.js";
 import { slugify } from "./brain.js";
 import type { UserConfig } from "./config.js";
-import { getSpaceConfig } from "./config-store.js";
 import { addCommitment, listCommitments, setCommitmentStatus } from "./actions.js";
 import { listConnections } from "./connections.js";
 import {
@@ -22,9 +25,7 @@ import {
   type GroundingContext,
   type IngestKind,
   type IngestMode,
-  type MeetingRouting,
 } from "./distill.js";
-import { listSpacesForUser } from "./spaces.js";
 import { todayISO } from "./frontmatter.js";
 import { appendPersonFact, personPath, setPersonHeadline } from "./people.js";
 import { projectIndexPath, upsertProject } from "./projects.js";
@@ -44,10 +45,6 @@ export interface IngestResult {
   ok: true;
   isNoise: boolean;
   meetingPath?: string;
-  /** Space the meeting note was written to (may differ from connection space). */
-  targetSpaceId?: string;
-  routed?: boolean;
-  routingReview?: boolean;
   touched: string[];
   commitments: string[];
   resolved: string[];
@@ -75,14 +72,13 @@ async function buildGrounding(
   userId: string,
   allowed: Visibility[],
 ): Promise<GroundingContext & { commitmentPathById: Map<string, string> }> {
-  const [identity, people, projects, concepts, openCommitments, connections, spaces] = await Promise.all([
+  const [identity, people, projects, concepts, openCommitments, connections] = await Promise.all([
     brain.listNotes(userId, { types: ["identity"], allowed, limit: 30 }),
     brain.listNotes(userId, { types: ["person"], allowed, limit: 500 }),
     brain.listNotes(userId, { types: ["project"], allowed, limit: 500 }),
     brain.listNotes(userId, { types: ["concept"], allowed, limit: 500 }),
     listCommitments(brain, userId, { status: "open", allowed, limit: 300 }),
     listConnections(userId).catch(() => []),
-    listSpacesForUser(userId).catch(() => []),
   ]);
 
   // Owner identity: a compact "who I am" block so the model can place people in
@@ -123,10 +119,6 @@ async function buildGrounding(
     .slice(0, 30)
     .map((p) => `${p.title} — ${firstLine(p.excerpt) || "(no notes yet)"}`);
 
-  const companySpaces = spaces
-    .filter((s) => s.kind === "company" && s.slug)
-    .map((s) => ({ slug: s.slug!, name: s.name }));
-
   return {
     owner: owner.trim() || undefined,
     ownerNames,
@@ -137,34 +129,7 @@ async function buildGrounding(
     projectContext,
     openCommitments: openList,
     commitmentPathById,
-    companySpaces: companySpaces.length ? companySpaces : undefined,
   };
-}
-
-const ROUTE_CONFIDENCE_AUTO = 0.85;
-const ROUTE_CONFIDENCE_REVIEW = 0.5;
-
-/** Resolve where the meeting note should land: self or a company space. */
-async function resolveIngestTarget(
-  ownerUserId: string,
-  routing: MeetingRouting | undefined,
-): Promise<{ spaceId: string; routed: boolean; routingReview: boolean }> {
-  if (!routing || routing.target_space !== "company" || !routing.company_slug) {
-    return { spaceId: ownerUserId, routed: false, routingReview: false };
-  }
-  if (routing.confidence < ROUTE_CONFIDENCE_REVIEW) {
-    return { spaceId: ownerUserId, routed: false, routingReview: false };
-  }
-  const spaces = await listSpacesForUser(ownerUserId).catch(() => []);
-  const company = spaces.find((s) => s.kind === "company" && s.slug === routing.company_slug);
-  if (!company) {
-    return { spaceId: ownerUserId, routed: false, routingReview: true };
-  }
-  if (routing.confidence >= ROUTE_CONFIDENCE_AUTO) {
-    return { spaceId: company.id, routed: true, routingReview: false };
-  }
-  // Ambiguous — keep in self but flag for human review.
-  return { spaceId: ownerUserId, routed: false, routingReview: true };
 }
 
 function formatMeetingBody(
@@ -284,12 +249,6 @@ export async function ingest(
     grounding,
   });
 
-  const { spaceId: targetSpaceId, routed, routingReview } = await resolveIngestTarget(
-    userId,
-    distilled.routing,
-  );
-  const writeConfig = routed ? await getSpaceConfig(targetSpaceId) : config;
-
   // Never treat the owner as one of the people they met with: drop any person
   // entity the model emitted for the owner, and re-attribute the owner's tasks
   // to "me" (belt-and-suspenders on top of the prompt instruction).
@@ -315,20 +274,20 @@ export async function ingest(
     if (u.entityType === "person") {
       if (isOwner(u.slugOrName)) continue;
       if (u.role || u.relationship) {
-        await setPersonHeadline(brain, targetSpaceId, writeConfig, allowed, u.slugOrName, {
+        await setPersonHeadline(brain, userId, config, allowed, u.slugOrName, {
           role: u.role,
           relationship: u.relationship,
           visibility: vis,
         });
       }
-      const r = await appendPersonFact(brain, targetSpaceId, writeConfig, allowed, u.slugOrName, u.fact, {
+      const r = await appendPersonFact(brain, userId, config, allowed, u.slugOrName, u.fact, {
         date,
         sourceUrl: input.sourceUrl,
         visibility: vis,
       });
       touched.push(r.path);
     } else if (u.entityType === "project") {
-      const r = await upsertProject(brain, targetSpaceId, writeConfig, allowed, {
+      const r = await upsertProject(brain, userId, config, allowed, {
         name: u.slugOrName,
         summary: `- [${date}] ${u.fact}`,
         append: true,
@@ -339,7 +298,7 @@ export async function ingest(
     } else {
       const path = `concepts/${slugify(u.slugOrName)}.md`;
       const { note } = await brain.upsertNote(
-        targetSpaceId,
+        userId,
         path,
         {
           type: "concept",
@@ -349,7 +308,7 @@ export async function ingest(
           tags: ["concept"],
           visibility: vis,
         },
-        writeConfig,
+        config,
         allowed,
       );
       touched.push(note.path);
@@ -358,7 +317,7 @@ export async function ingest(
 
   // 2. Project status updates (full mode only; distill already clears these in light).
   for (const p of distilled.project_updates) {
-    const r = await upsertProject(brain, targetSpaceId, writeConfig, allowed, {
+    const r = await upsertProject(brain, userId, config, allowed, {
       name: p.project,
       summary: `- [${date}] ${p.update}`,
       append: true,
@@ -370,7 +329,7 @@ export async function ingest(
   // 3. Action items -> commitments (full mode only).
   for (const a of distilled.action_items) {
     const owner = isOwner(a.owner) ? "me" : a.owner;
-    const r = await addCommitment(brain, targetSpaceId, writeConfig, allowed, {
+    const r = await addCommitment(brain, userId, config, allowed, {
       text: a.text,
       owner,
       due: a.due,
@@ -388,7 +347,7 @@ export async function ingest(
     const path = grounding.commitmentPathById.get(r.item_id);
     if (!path) continue;
     try {
-      await setCommitmentStatus(brain, targetSpaceId, allowed, path, "resolved", { reason: r.reason });
+      await setCommitmentStatus(brain, userId, allowed, path, "resolved", { reason: r.reason });
       resolved.push(path);
     } catch {
       /* skip if the commitment disappeared */
@@ -398,8 +357,7 @@ export async function ingest(
   // 5. Meeting note (full mode only) with a link back to the raw source.
   if (mode === "full" && meetingPath) {
     const body = formatMeetingBody(distilled, input, isOwner);
-    const tags = ["meeting", input.kind];
-    if (routingReview) tags.push("routing-review");
+    const tags = [...new Set(["meeting", input.kind])];
     const extra: Record<string, unknown> = { date };
     if (input.sourceUrl) extra.source_url = input.sourceUrl;
     if (distilled.distill_tier) extra.distill_tier = distilled.distill_tier;
@@ -407,14 +365,9 @@ export async function ingest(
       extra.coverage_score = distilled.coverage.score;
       if (distilled.coverage.score < 0.7) extra.coverage_partial = true;
     }
-    if (routed && distilled.routing?.company_slug) {
-      extra.routed_space = distilled.routing.company_slug;
-    } else if (routingReview && distilled.routing?.company_slug) {
-      extra.suggested_space = distilled.routing.company_slug;
-    }
 
     const { note } = await brain.upsertNote(
-      targetSpaceId,
+      userId,
       meetingPath,
       {
         type: "meeting",
@@ -424,7 +377,7 @@ export async function ingest(
         visibility: vis,
         extra,
       },
-      writeConfig,
+      config,
       allowed,
     );
     touched.push(note.path);
@@ -432,34 +385,31 @@ export async function ingest(
     for (const u of distilled.entity_updates) {
       if (u.entityType === "person") {
         if (isOwner(u.slugOrName)) continue;
-        await safeLink(brain, targetSpaceId, meetingPath, personPath(u.slugOrName), allowed);
+        await safeLink(brain, userId, meetingPath, personPath(u.slugOrName), allowed);
       } else if (u.entityType === "project") {
-        await safeLink(brain, targetSpaceId, meetingPath, projectIndexPath(u.slugOrName), allowed);
+        await safeLink(brain, userId, meetingPath, projectIndexPath(u.slugOrName), allowed);
       }
     }
     for (const p of distilled.project_updates) {
-      await safeLink(brain, targetSpaceId, meetingPath, projectIndexPath(p.project), allowed);
+      await safeLink(brain, userId, meetingPath, projectIndexPath(p.project), allowed);
     }
   }
 
   // 6. Suggested links between existing notes (best-effort).
   for (const l of distilled.suggested_links) {
-    await safeLink(brain, targetSpaceId, l.a, l.b, allowed);
+    await safeLink(brain, userId, l.a, l.b, allowed);
   }
 
-  // 7. Log entry (Karpathy's greppable log) — always in the connection owner's space.
+  // 7. Log entry (Karpathy's greppable log).
   const summaryLine = `${touched.length} pages touched${
     resolved.length ? `, ${resolved.length} resolved` : ""
-  }${meetingPath ? `, meeting=${meetingPath}` : ""}${routed ? `, routed=${distilled.routing?.company_slug}` : ""}`;
+  }${meetingPath ? `, meeting=${meetingPath}` : ""}`;
   await appendLog(brain, userId, config, allowed, date, title, [summaryLine, ...touched.map((t) => `  - ${t}`)]);
 
   return {
     ok: true,
     isNoise: false,
     meetingPath,
-    targetSpaceId,
-    routed,
-    routingReview,
     touched,
     commitments,
     resolved,

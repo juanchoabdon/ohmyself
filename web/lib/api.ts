@@ -2,8 +2,10 @@ import type {
   ApiToken,
   BackfillState,
   Category,
+  CommentThread,
   Connection,
   FolderCount,
+  NoteComment,
   ContextResult,
   LinkContextResult,
   FriendVisibility,
@@ -11,6 +13,8 @@ import type {
   HistoryEntry,
   IndexedNote,
   Me,
+  NoteAsset,
+  ResolvedAsset,
   SharedByMe,
   SharedWithMe,
   Space,
@@ -54,12 +58,43 @@ function encPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-function doFetch(path: string, token: string, init?: RequestInit): Promise<Response> {
+/** Carries the HTTP status so callers can tell "session expired" apart from
+ *  "server is down" — a 401 means sign in again, anything else is retryable. */
+export class ApiError extends Error {
+  status: number | null;
+  constructor(message: string, status: number | null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** A 401 that survived the token refresh below — the session is really gone. */
+export function isSessionExpired(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401;
+}
+
+/** Nothing may hang forever: a stalled request has to reject so the UI can show
+ *  an error instead of an endless skeleton. Long server jobs opt out with
+ *  `timeoutMs: null`. */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+type CallOpts = { timeoutMs?: number | null };
+
+function doFetch(
+  path: string,
+  token: string,
+  init?: RequestInit,
+  timeoutMs?: number | null,
+): Promise<Response> {
   return fetch(base() + path, {
     ...init,
+    signal: init?.signal ?? (timeoutMs == null ? undefined : AbortSignal.timeout(timeoutMs)),
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
+      // A multipart body carries its own boundary in the content type, which
+      // only the browser can generate — setting it here would corrupt the upload.
+      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       ...(_activeSpaceId ? { "X-Brain-Space": _activeSpaceId } : {}),
       ...(init?.headers ?? {}),
     },
@@ -71,11 +106,20 @@ function doFetch(path: string, token: string, init?: RequestInit): Promise<Respo
 async function freshToken(stale: string): Promise<string | null> {
   try {
     const { supabase } = await import("@/lib/supabaseClient");
-    const { data } = await supabase.auth.getSession();
-    let t = data.session?.access_token ?? null;
+    const read = async (): Promise<string | null> =>
+      (await supabase.auth.getSession()).data.session?.access_token ?? null;
+
+    let t = await read();
     if (!t || t === stale) {
       const { data: refreshed } = await supabase.auth.refreshSession();
       t = refreshed.session?.access_token ?? null;
+    }
+    // Our refresh is a no-op when another tab (or the SDK's own timer) is already
+    // rotating the token, and it hands back the stale one. Give that a beat and
+    // re-read before declaring the session dead.
+    if (!t || t === stale) {
+      await new Promise((r) => setTimeout(r, 700));
+      t = await read();
     }
     return t && t !== stale ? t : null;
   } catch {
@@ -83,11 +127,26 @@ async function freshToken(stale: string): Promise<string | null> {
   }
 }
 
-async function call<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  let res = await doFetch(path, token, init);
-  if (res.status === 401) {
-    const fresh = await freshToken(token);
-    if (fresh) res = await doFetch(path, fresh, init);
+async function call<T>(
+  path: string,
+  token: string,
+  init?: RequestInit,
+  opts?: CallOpts,
+): Promise<T> {
+  const timeoutMs = opts?.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : opts.timeoutMs;
+  let res: Response;
+  try {
+    res = await doFetch(path, token, init, timeoutMs);
+    if (res.status === 401) {
+      const fresh = await freshToken(token);
+      if (fresh) res = await doFetch(path, fresh, init, timeoutMs);
+    }
+  } catch (e) {
+    const timedOut = e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError");
+    throw new ApiError(
+      timedOut ? "The server took too long to respond." : "Couldn't reach the server.",
+      null,
+    );
   }
   if (!res.ok) {
     let msg = `${res.status}`;
@@ -97,7 +156,7 @@ async function call<T>(path: string, token: string, init?: RequestInit): Promise
     } catch {
       /* ignore */
     }
-    throw new Error(msg);
+    throw new ApiError(msg, res.status);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -120,8 +179,10 @@ export const api = {
     return call<{ notes: IndexedNote[] }>(`/v1/notes?${q.toString()}`, token);
   },
 
-  /** Per-pillar note counts for the lazy sidebar (cheap; no note bodies). */
-  folders: (token: string) => call<{ folders: FolderCount[] }>("/v1/folders", token),
+  /** Per-pillar note counts for the lazy sidebar (cheap; no note bodies).
+   *  Gates the dashboard shell, so it fails fast rather than holding a skeleton. */
+  folders: (token: string) =>
+    call<{ folders: FolderCount[] }>("/v1/folders", token, undefined, { timeoutMs: 12_000 }),
 
   search: (token: string, q: string) =>
     call<{ results: IndexedNote[] }>(`/v1/search?q=${encodeURIComponent(q)}`, token),
@@ -160,6 +221,33 @@ export const api = {
       body: JSON.stringify({ from, to }),
     }),
 
+  /** Upload an image/video for a note body. Uploads have no timeout — a 100 MB
+   *  video on a slow uplink legitimately outlives the default 30s. */
+  uploadAsset: (
+    token: string,
+    file: File,
+    opts?: { path?: string | null; width?: number | null; height?: number | null },
+  ) => {
+    const form = new FormData();
+    form.set("file", file);
+    if (opts?.path) form.set("path", opts.path);
+    if (opts?.width) form.set("width", String(opts.width));
+    if (opts?.height) form.set("height", String(opts.height));
+    return call<{ asset: NoteAsset; url: string | null; expiresAt: number | null }>(
+      "/v1/assets",
+      token,
+      { method: "POST", body: form },
+      { timeoutMs: null },
+    );
+  },
+
+  /** Trade `oms-asset:` ids for short-lived signed URLs. */
+  resolveAssets: (token: string, ids: string[]) =>
+    call<{ assets: ResolvedAsset[] }>("/v1/assets/resolve", token, {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+
   noteHistory: (token: string, path: string, opts?: { limit?: number; offset?: number }) => {
     const q = new URLSearchParams({ path });
     if (opts?.limit != null) q.set("limit", String(opts.limit));
@@ -173,6 +261,50 @@ export const api = {
     const qs = q.toString();
     return call<{ entries: HistoryEntry[] }>(`/v1/activity${qs ? `?${qs}` : ""}`, token);
   },
+
+  comments: (token: string, path: string, opts?: { includeResolved?: boolean }) => {
+    const q = new URLSearchParams({ path });
+    if (opts?.includeResolved) q.set("include_resolved", "1");
+    return call<{ path: string; threads: CommentThread[] }>(`/v1/comments?${q.toString()}`, token);
+  },
+
+  /** Unresolved threads across the whole space — what still needs attention. */
+  openComments: (token: string, opts?: { limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return call<{ threads: CommentThread[] }>(`/v1/comments/open${qs ? `?${qs}` : ""}`, token);
+  },
+
+  commentCounts: (token: string, paths: string[]) =>
+    call<{ counts: Record<string, number> }>(
+      `/v1/comments/counts?paths=${encodeURIComponent(paths.join(","))}`,
+      token,
+    ),
+
+  addComment: (
+    token: string,
+    body: { path: string; body: string; quote?: string | null; quoteOffset?: number | null; replyTo?: string | null },
+  ) =>
+    call<{ comment: NoteComment; thread: string; anchored: boolean }>("/v1/comments", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  editComment: (token: string, id: string, body: string) =>
+    call<{ comment: NoteComment }>(`/v1/comments/${encodeURIComponent(id)}`, token, {
+      method: "PATCH",
+      body: JSON.stringify({ body }),
+    }),
+
+  resolveComment: (token: string, threadId: string, resolved: boolean) =>
+    call<{ thread: CommentThread }>(`/v1/comments/${encodeURIComponent(threadId)}/resolve`, token, {
+      method: "POST",
+      body: JSON.stringify({ resolved }),
+    }),
+
+  deleteComment: (token: string, id: string) =>
+    call<{ deleted: string }>(`/v1/comments/${encodeURIComponent(id)}`, token, { method: "DELETE" }),
 
   noteBacklinks: (token: string, path: string, opts?: { limit?: number }) => {
     const q = new URLSearchParams({ path });
@@ -220,7 +352,9 @@ export const api = {
 
   // ── Spaces (personal "self" + company brains) ─────────────────────────────
   listSpaces: (token: string) =>
-    call<{ spaces: Space[]; activeSpaceId: string }>("/v1/spaces", token),
+    call<{ spaces: Space[]; activeSpaceId: string }>("/v1/spaces", token, undefined, {
+      timeoutMs: 12_000,
+    }),
 
   createSpace: (
     token: string,
@@ -308,10 +442,12 @@ export const api = {
       batchSize?: number;
     },
   ) =>
-    call<SyncResult>(`/v1/connections/${id}/sync`, token, {
-      method: "POST",
-      body: JSON.stringify(opts ?? {}),
-    }),
+    call<SyncResult>(
+      `/v1/connections/${id}/sync`,
+      token,
+      { method: "POST", body: JSON.stringify(opts ?? {}) },
+      { timeoutMs: null }, // a full sync legitimately runs for minutes
+    ),
 
   /** Kick off a fire-and-forget server-side run. `light` = historical backfill
    *  (people/concepts); `full` = Sync now (meeting notes + commitments). Returns
@@ -322,8 +458,10 @@ export const api = {
     lookbackMonths: number,
     mode: "light" | "full" = "light",
   ) =>
-    call<BackfillState>(`/v1/connections/${id}/backfill`, token, {
-      method: "POST",
-      body: JSON.stringify({ lookbackMonths, mode }),
-    }),
+    call<BackfillState>(
+      `/v1/connections/${id}/backfill`,
+      token,
+      { method: "POST", body: JSON.stringify({ lookbackMonths, mode }) },
+      { timeoutMs: null },
+    ),
 };

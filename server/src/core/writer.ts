@@ -14,7 +14,7 @@
 
 import type { Brain } from "./brain.js";
 import { slugify } from "./brain.js";
-import type { UserConfig } from "./config.js";
+import { findType, folderForType, isPersonalBrain, type UserConfig } from "./config.js";
 import { chatJSON, llmEnabled } from "./llm.js";
 import { todayISO } from "./frontmatter.js";
 import type { IndexedNote, Visibility } from "./types.js";
@@ -26,7 +26,9 @@ export type WriteCategory =
   | "project"
   | "goal"
   | "journal"
-  | "note";
+  | "note"
+  /** A document filed under one of the space taxonomy's own types. */
+  | "doc";
 
 interface Classification {
   category: WriteCategory;
@@ -35,6 +37,8 @@ interface Classification {
   name?: string;
   period?: string;
   facet?: string;
+  /** For `doc`: which note type of the space taxonomy this belongs to. */
+  type?: string;
   visibility?: Visibility;
   tags?: string[];
   /** A short query to find possible existing duplicates. */
@@ -67,10 +71,8 @@ function clampVisibility(v: Visibility | undefined, allowed: Visibility[]): Visi
   return allowed[0] ?? "private";
 }
 
-async function classify(content: string, hint: string | undefined): Promise<Classification> {
-  const fallback: Classification = { category: "memory", dedupe_query: content.slice(0, 120) };
-  if (!llmEnabled()) return fallback;
-  const system = [
+function brainCategories(): string[] {
+  return [
     "You route a piece of content into a personal second-brain. Pick the ONE best",
     "destination category and extract the routing key.",
     "Categories:",
@@ -81,14 +83,68 @@ async function classify(content: string, hint: string | undefined): Promise<Clas
     '- "goal": an objective for a period. Set `period` ("2026", "2026-q3", or "2026-06").',
     '- "journal": a reflection about how a day/moment went.',
     '- "note": anything else worth keeping. Set `title`.',
+  ];
+}
+
+function wikiCategories(config: UserConfig): string[] {
+  const types = config.noteTypes.filter((t) => t.folder !== "people").map((t) => `${t.id} (→ ${t.folder}/)`);
+  return [
+    "You file a piece of content into a COMPANY wiki. Pick the ONE best destination.",
+    "Categories:",
+    '- "person": a fact about a specific person (teammate, investor, candidate). Set `name`.',
+    '- "doc": anything else. Set `type` to one of the wiki\'s document types below, and a',
+    "  short `title` (max 6 words — it becomes the filename, so name the subject,",
+    "  don't summarize the content).",
+    `Document types: ${types.join(", ")}.`,
+    "This wiki belongs to a company, not to a person: there is no memory log, no",
+    "journal, no identity page and no `projects/` folder. A strategy, doctrine,",
+    "plan or spec is a `doc` with the matching type — never a project.",
+  ];
+}
+
+async function classify(
+  content: string,
+  hint: string | undefined,
+  config: UserConfig,
+): Promise<Classification> {
+  const personal = isPersonalBrain(config);
+  const fallback: Classification = personal
+    ? { category: "memory", dedupe_query: content.slice(0, 120) }
+    : { category: "doc", type: "note", dedupe_query: content.slice(0, 120) };
+  if (!llmEnabled()) return fallback;
+  const system = [
+    ...(personal ? brainCategories() : wikiCategories(config)),
     "Set `visibility`: 'secret' for finances/health/sensitive, else 'private'.",
     "Set `dedupe_query`: a short query to find existing notes this might duplicate.",
-    'Return STRICT JSON: {"category","title"?,"name"?,"period"?,"facet"?,"visibility"?,"tags"?,"dedupe_query","reason"}.',
+    'Return STRICT JSON: {"category","title"?,"name"?,"period"?,"facet"?,"type"?,"visibility"?,"tags"?,"dedupe_query","reason"}.',
   ].join(" ");
   const user = hint ? `HINT: ${hint}\n\nCONTENT:\n${content}` : content;
   const out = await chatJSON<Classification>({ tier: "route", system, user, timeoutMs: 20000 });
   if (!out || !out.category) return fallback;
-  return out;
+  return coerce(out, config, fallback);
+}
+
+/** Keep the model inside the space's taxonomy. A category whose pillar this
+ *  space doesn't declare becomes a plain document — the destination is decided
+ *  by the taxonomy, never by the model insisting. */
+function coerce(c: Classification, config: UserConfig, fallback: Classification): Classification {
+  const pillar: Partial<Record<WriteCategory, string>> = {
+    memory: "identity",
+    identity: "identity",
+    person: "people",
+    project: "projects",
+    goal: "goals",
+    journal: "journal",
+    note: "notes",
+  };
+  const folder = pillar[c.category];
+  if (folder && !config.noteTypes.some((t) => t.folder === folder)) {
+    return { ...c, category: "doc", type: findType(config, c.type ?? "") ? c.type : "note" };
+  }
+  if (c.category === "doc" && !findType(config, c.type ?? "")) {
+    return findType(config, "note") ? { ...c, type: "note" } : fallback;
+  }
+  return c;
 }
 
 /** Classify + (optionally) write. */
@@ -104,7 +160,7 @@ export async function writeBrain(
   if (!text) throw new Error("write_brain: content is required");
   const apply = options?.apply ?? true;
 
-  const c = await classify(text, options?.hint);
+  const c = await classify(text, options?.hint, config);
   const visibility = clampVisibility(options?.visibility ?? c.visibility, allowed);
 
   // Dedupe candidates (so callers/users can catch near-duplicates).
@@ -174,6 +230,12 @@ export async function writeBrain(
       title = day;
       break;
     }
+    case "doc":
+      type = c.type ?? "note";
+      path = `${folderForType(config, type)}/${slugify(title)}.md`;
+      append = true;
+      operation = "append";
+      break;
     default:
       path = `notes/${slugify(title)}.md`;
       type = "note";

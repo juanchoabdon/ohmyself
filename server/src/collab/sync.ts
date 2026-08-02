@@ -4,7 +4,7 @@
  */
 import type { Doc } from "yjs";
 import { collabEnabled, getCollabServer, roomName } from "./index.js";
-import { applyMarkdownToYDoc } from "./hydrate.js";
+import { replaceYDocMarkdown } from "./hydrate.js";
 
 const AGENT_ORIGIN = "ohmyself-agent";
 
@@ -37,7 +37,7 @@ export async function pushAgentBodyToCollab(
     });
 
     await connection.transact((doc) => {
-      applyMarkdownToYDoc(doc as Doc, body, AGENT_ORIGIN);
+      replaceYDocMarkdown(doc as Doc, body, AGENT_ORIGIN);
     }, AGENT_ORIGIN);
   } catch (err) {
     console.warn("[collab] agent push failed:", documentName, err);

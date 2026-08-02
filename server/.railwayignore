@@ -1,0 +1,10 @@
+# Deploys run `railway up --no-gitignore` so that server/src/core/versions/ (real
+# TypeScript source) survives the root .gitignore rule for /versions/. The flag
+# is all-or-nothing, so without this file it also uploads node_modules — which
+# now carries sharp's macOS ARM binaries. Railway builds on linux x64 and would
+# load the wrong ones. Let the platform install dependencies itself.
+node_modules/
+.git/
+dist/
+*.log
+.DS_Store

@@ -87,6 +87,13 @@ export interface AddToProjectInput {
   tags?: string[];
 }
 
+/** Where a project sub-document lands, without writing it. */
+export function projectDocPath(project: string, kind: ProjectKind, title: string): string {
+  const k = PROJECT_KINDS[kind];
+  const base = `projects/${slugify(project)}/${k.folder}/${slugify(title)}`;
+  return k.index ? `${base}/_index.md` : `${base}.md`;
+}
+
 /** Add or update a document inside a project (PRD/spec/transcript/note/subproject). */
 export async function addToProject(
   brain: Brain,
@@ -96,8 +103,7 @@ export async function addToProject(
   input: AddToProjectInput,
 ): Promise<ProjectWriteResult> {
   const k = PROJECT_KINDS[input.kind];
-  const base = `projects/${slugify(input.project)}/${k.folder}/${slugify(input.title)}`;
-  const path = k.index ? `${base}/_index.md` : `${base}.md`;
+  const path = projectDocPath(input.project, input.kind, input.title);
   const { note, created } = await brain.upsertNote(
     userId,
     path,

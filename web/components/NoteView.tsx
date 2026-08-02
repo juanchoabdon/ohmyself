@@ -11,13 +11,17 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { FullNote, Visibility } from "@/lib/types";
+import { MessageSquare, MessageSquarePlus } from "lucide-react";
+import type { CommentThread, FullNote, Visibility } from "@/lib/types";
+import { applyCommentHighlights, clearCommentHighlights } from "@/lib/domHighlight";
 import { VisibilityBadge } from "./VisibilityBadge";
 import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
-import { EditorModeToggle, loadEditorModePreference } from "./editor/EditorModeToggle";
+import { EditorModeToggle, loadEditorModePreference, saveEditorModePreference, type EditorMode } from "./editor/EditorModeToggle";
 import type { PresencePeer } from "./editor/PresenceBar";
 import type { CollabUser } from "@/lib/collabUser";
 import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
+import { AssetImage, AssetVideo, EmbedFrame } from "./editor/MediaRender";
+import { hasMediaBlocks, splitMediaBlocks } from "@/lib/mediaSegments";
 import { dedupeExactDoubleBody, stripRedundantTitleH1 } from "@/lib/dedupeBody";
 import { cn } from "@/lib/utils";
 import { ShareNoteButton } from "./ShareNoteButton";
@@ -61,6 +65,12 @@ type NoteViewProps = {
   onSelectPresencePeer?: (peer: PresencePeer) => void;
   /** Canonical share URL for this note (deep link with space). */
   shareUrl?: string | null;
+  /** Comment threads on this note — highlighted inline in both edit and read modes. */
+  commentThreads?: CommentThread[];
+  activeThreadId?: string | null;
+  onSelectThread?: (threadId: string) => void;
+  onStartComment?: (quote: string, offset: number) => void;
+  onOpenComments?: () => void;
 };
 
 export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteView(
@@ -80,10 +90,16 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     agentPresence,
     onSelectPresencePeer,
     shareUrl,
+    commentThreads,
+    activeThreadId = null,
+    onSelectThread,
+    onStartComment,
+    onOpenComments,
   },
   ref,
 ) {
   const editable = Boolean(onSave);
+  const openThreadCount = (commentThreads ?? []).filter((t) => !t.resolvedAt).length;
   /** Yjs owns the body: the collab server persists it (onStoreDocument), so
    *  REST autosave must not PATCH body — only title/tags/visibility. */
   const collabActive = Boolean(collab?.enabled && collab.token && collab.spaceId);
@@ -92,6 +108,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const [visibility, setVisibility] = useState<Visibility>("private");
   const [tags, setTags] = useState("");
   const [editorLive, setEditorLive] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>("visual");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
@@ -115,8 +132,14 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   visibilityRefVal.current = visibility;
   tagsRefVal.current = tags;
 
+  const handleEditorModeChange = useCallback((next: EditorMode) => {
+    setEditorMode(next);
+    saveEditorModePreference(next);
+  }, []);
+
   useLayoutEffect(() => {
     setEditorLive(false);
+    setEditorMode(loadEditorModePreference());
     setError(null);
     setSaveStatus("idle");
     if (note) {
@@ -289,11 +312,11 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
 
   return (
     <article
-      className="mx-auto w-full max-w-3xl px-8 py-10"
+      className="mx-auto w-full max-w-3xl px-6 py-5 sm:px-8"
       aria-busy={fetching || !editorLive}
     >
-      <header className="mb-6 border-b border-border pb-5">
-        <div className="mb-2 flex items-center justify-between gap-2">
+      <header className="mb-4 border-b border-border pb-3">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted">
             {fetching ? (
               <>
@@ -325,8 +348,26 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               </>
             )}
           </div>
-          {note && (onDelete || shareUrl) && (
+          {(editable || (note && (onDelete || shareUrl || onOpenComments))) && (
             <div className="flex shrink-0 items-center gap-1.5">
+              {editable ? (
+                <EditorModeToggle
+                  mode={editorMode}
+                  onChange={handleEditorModeChange}
+                  disabled={fetching}
+                />
+              ) : null}
+              {onOpenComments && note ? (
+                <button
+                  type="button"
+                  onClick={onOpenComments}
+                  className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs font-medium text-muted hover:border-brand/40 hover:text-brand"
+                  title="Comments"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                  {openThreadCount > 0 ? openThreadCount : null}
+                </button>
+              ) : null}
               {shareUrl ? <ShareNoteButton url={shareUrl} /> : null}
               {onDelete ? (
                 <button
@@ -372,7 +413,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               tabIndex={fetching ? -1 : 0}
               aria-hidden={fetching}
               className={cn(
-                "oms-inline-edit mt-3 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50",
+                "oms-inline-edit mt-2 w-full bg-transparent text-xs text-muted outline-none placeholder:text-muted/50",
                 fetching && "invisible",
               )}
             />
@@ -381,7 +422,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
           <>
             <h1 className="text-[1.7rem] font-bold tracking-tight text-balance">{note!.meta.title}</h1>
             {note!.meta.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-1.5">
+              <div className="mt-2 flex flex-wrap gap-1.5">
                 {note!.meta.tags.map((t) => (
                   <span key={t} className="rounded-full bg-bg px-2 py-0.5 text-xs text-muted">
                     #{t}
@@ -399,28 +440,22 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
               aria-busy
               className={cn(titleClassName, "cursor-default")}
             />
-            <div className="mt-3 h-4" aria-hidden />
+            <div className="mt-2 h-4" aria-hidden />
           </>
         )}
       </header>
 
-      <div className="relative min-h-[8rem]">
+      <div className="relative">
         {fetching ? (
-          <>
-            {/* Reserve the toggle row so the body doesn't jump when the editor mounts. */}
-            {editable && <ModeTogglePlaceholder />}
-            <EditorBodySkeleton />
-          </>
+          <EditorBodySkeleton />
         ) : ready && editable ? (
-          <div className="relative min-h-[8rem]">
+          <div className="relative">
             {/* Show the vault markdown until the live editor is ready, so the body
-                is never blank (Yjs can take a moment to sync). The placeholder
-                toggle keeps the layout identical to the live editor's chrome. */}
+                is never blank (Yjs can take a moment to sync). */}
             {!editorLive && (
               <>
-                <ModeTogglePlaceholder />
                 {hasVaultBody || hasEditorBody ? (
-                  <div className="prose min-h-[8rem]">
+                  <div className="prose">
                     <ReadOnlyBody body={editorBody || vaultBody} onOpenLink={onOpenLink} />
                   </div>
                 ) : (
@@ -431,7 +466,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
             <div
               className={
                 editorLive
-                  ? "relative min-h-[8rem]"
+                  ? "relative"
                   : "pointer-events-none absolute inset-x-0 top-0 opacity-0"
               }
               aria-hidden={!editorLive}
@@ -440,6 +475,9 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 key={note!.path}
                 noteKey={note!.path}
                 value={editorBody || vaultBody}
+                mode={editorMode}
+                onModeChange={handleEditorModeChange}
+                hideModeToggle
                 onChange={(md) => {
                   // Yjs sync can transiently empty the doc before the seed lands.
                   // Never let that propagate into state/autosave and wipe the vault.
@@ -465,17 +503,27 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 collabUser={collabUser}
                 agentPresence={agentPresence}
                 onSelectPresencePeer={onSelectPresencePeer}
+                commentThreads={commentThreads}
+                activeThreadId={activeThreadId}
+                onSelectThread={onSelectThread}
+                onStartComment={onStartComment}
               />
             </div>
           </div>
         ) : ready && !editable ? (
-          <div className="prose min-h-[8rem]">
-            {note!.body.trim() ? (
-              <ReadOnlyBody body={note!.body} onOpenLink={onOpenLink} />
-            ) : (
+          note!.body.trim() ? (
+            <CommentableBody
+              body={note!.body}
+              onOpenLink={onOpenLink}
+              threads={commentThreads}
+              activeThreadId={activeThreadId}
+              onStartComment={onStartComment}
+            />
+          ) : (
+            <div className="prose">
               <p className="text-muted/70">Empty.</p>
-            )}
-          </div>
+            </div>
+          )
         ) : null}
       </div>
 
@@ -505,17 +553,90 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   );
 });
 
-/** Disabled Visual/Source toggle occupying the exact space of the live one, so
- *  the body never shifts down when the editor chrome mounts. */
-function ModeTogglePlaceholder() {
+/**
+ * Read-only body that can still be commented on. Members of a company space
+ * can't edit notes (and never join the collab socket), so this is the surface
+ * where they read highlights and start threads.
+ */
+function CommentableBody({
+  body,
+  onOpenLink,
+  threads,
+  activeThreadId,
+  onStartComment,
+}: {
+  body: string;
+  onOpenLink: (path: string) => void;
+  threads?: CommentThread[];
+  activeThreadId: string | null;
+  onStartComment?: (quote: string, offset: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [cue, setCue] = useState<{ top: number; left: number; quote: string; offset: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    applyCommentHighlights(containerRef.current, threads ?? [], activeThreadId);
+    return () => clearCommentHighlights();
+  }, [threads, activeThreadId, body]);
+
+  const readSelection = useCallback(() => {
+    const container = containerRef.current;
+    if (!container || !onStartComment) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setCue(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) {
+      setCue(null);
+      return;
+    }
+    const quote = range.toString().trim();
+    if (quote.length < 2) {
+      setCue(null);
+      return;
+    }
+    const before = range.cloneRange();
+    before.selectNodeContents(container);
+    before.setEnd(range.startContainer, range.startOffset);
+    const box = container.getBoundingClientRect();
+    const rect = range.getBoundingClientRect();
+    setCue({
+      top: rect.top - box.top - 34,
+      left: Math.max(0, rect.left - box.left),
+      quote,
+      offset: before.toString().length,
+    });
+  }, [onStartComment]);
+
   return (
-    <div aria-hidden className="pointer-events-none select-none opacity-60">
-      <EditorModeToggle mode={loadEditorModePreference()} onChange={() => {}} disabled />
+    <div className="relative" ref={containerRef} onMouseUp={readSelection} onKeyUp={readSelection}>
+      {cue && onStartComment && (
+        <button
+          type="button"
+          style={{ top: cue.top, left: cue.left }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onStartComment(cue.quote, cue.offset);
+            setCue(null);
+          }}
+          className="absolute z-20 flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-medium text-ink shadow-md hover:border-brand/40 hover:text-brand"
+        >
+          <MessageSquarePlus className="h-3 w-3" aria-hidden />
+          Comment
+        </button>
+      )}
+      <div className="prose">
+        <ReadOnlyBody body={body} onOpenLink={onOpenLink} />
+      </div>
     </div>
   );
 }
 
-function ReadOnlyBody({ body, onOpenLink }: { body: string; onOpenLink: (path: string) => void }) {
+function ReadOnlyMarkdown({ text, onOpenLink }: { text: string; onOpenLink: (path: string) => void }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -540,8 +661,50 @@ function ReadOnlyBody({ body, onOpenLink }: { body: string; onOpenLink: (path: s
         },
       }}
     >
-      {wikiLinksToMarkdownLinks(body)}
+      {wikiLinksToMarkdownLinks(text)}
     </ReactMarkdown>
+  );
+}
+
+/** Media fences render as real media here too, not as literal `:::image` text —
+ *  reading a note shouldn't require switching into the visual editor. */
+function ReadOnlyBody({ body, onOpenLink }: { body: string; onOpenLink: (path: string) => void }) {
+  if (!hasMediaBlocks(body)) return <ReadOnlyMarkdown text={body} onOpenLink={onOpenLink} />;
+
+  return (
+    <>
+      {splitMediaBlocks(body).map((segment) => {
+        if (segment.kind === "markdown") {
+            return <ReadOnlyMarkdown key={segment.key} text={segment.text} onOpenLink={onOpenLink} />;
+        }
+        if (segment.kind === "image") {
+          return segment.fields.src ? (
+            <figure key={segment.key} className="oms-image my-4">
+              <AssetImage src={segment.fields.src} alt={segment.fields.alt} caption={segment.fields.caption} />
+            </figure>
+          ) : null;
+        }
+        if (segment.kind === "video") {
+          return segment.fields.src ? (
+            <div key={segment.key} className="oms-video my-4">
+              <AssetVideo src={segment.fields.src} title={segment.fields.title} />
+              {segment.fields.title ? (
+                <p className="mt-2 text-xs text-muted">{segment.fields.title}</p>
+              ) : null}
+            </div>
+          ) : null;
+        }
+        return segment.fields.url ? (
+          <div key={segment.key} className="oms-embed my-4">
+            <EmbedFrame
+              url={segment.fields.url}
+              title={segment.fields.title}
+              height={Number(segment.fields.height) || 420}
+            />
+          </div>
+        ) : null;
+      })}
+    </>
   );
 }
 

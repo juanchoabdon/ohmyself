@@ -18,7 +18,7 @@ export function EditorModeToggle({
 }) {
   return (
     <div
-      className="flex items-center justify-end gap-1 px-1 pb-1 pt-0.5"
+      className="flex items-center justify-end gap-1"
       title={disabled ? disabledReason : undefined}
     >
       <div

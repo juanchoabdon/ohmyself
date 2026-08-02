@@ -1,7 +1,10 @@
 import { chunkNote, embedTextForChunk } from "./chunker.js";
+import { retargetComments } from "./comments.js";
 import {
   defaultVisibilityForType,
   folderForType,
+  undeclaredPillar,
+  undeclaredType,
   type UserConfig,
 } from "./config.js";
 import { embedQuery, embedTexts, embeddingsEnabled } from "./embeddings.js";
@@ -71,6 +74,9 @@ export interface UpsertNoteInput {
   /** Extra frontmatter keys; shallow-merged into existing extra on update. */
   extra?: Record<string, unknown>;
 }
+
+const declaredFolders = (config: UserConfig): string =>
+  [...new Set(config.noteTypes.map((t) => t.folder))].join(", ");
 
 /** Ties a content Vault + a derived BrainIndex together and enforces
  *  per-note visibility for a given set of allowed levels. */
@@ -177,6 +183,21 @@ export class Brain {
     const path =
       input.path?.trim().replace(/^\/+/, "") ??
       `${folderForType(config, type)}/${slugify(input.title)}.md`;
+
+    const foreign = undeclaredPillar(config, path);
+    if (foreign) {
+      throw new BadRequestError(
+        `this space has no "${foreign}/" — it belongs to a personal brain, not this taxonomy. ` +
+          `Use one of: ${declaredFolders(config)}`,
+      );
+    }
+    const foreignType = undeclaredType(config, type);
+    if (foreignType) {
+      throw new BadRequestError(
+        `"${foreignType}" is not a type in this space. Use one of: ` +
+          `${config.noteTypes.map((t) => t.id).join(", ")}`,
+      );
+    }
 
     const existing = await this.vault.read(userId, path);
     if (existing) throw new BadRequestError(`note already exists at ${path}`);
@@ -395,10 +416,17 @@ export class Brain {
     to: string,
     allowed: Visibility[],
     attr?: WriteAttribution,
+    config?: UserConfig,
   ): Promise<Note> {
     const dest = to.trim().replace(/^\/+/, "");
     if (!dest) throw new BadRequestError("destination path is required");
     if (!dest.endsWith(".md")) throw new BadRequestError("destination must end in .md");
+    const foreign = config ? undeclaredPillar(config, dest) : null;
+    if (foreign) {
+      throw new BadRequestError(
+        `this space has no "${foreign}/" folder. Use one of: ${declaredFolders(config!)}`,
+      );
+    }
     const current = await this.readNote(userId, from, allowed); // existence + visibility
     if (dest === from) return current;
     const collision = await this.vault.read(userId, dest);
@@ -414,6 +442,8 @@ export class Brain {
       author: attr?.author ?? "ohmyself",
       summary: attr?.summary ?? `move ${from} → ${dest}`,
     });
+    // Comment threads key off (space, path), so they have to follow the rename.
+    await retargetComments(userId, from, dest);
     emitBrainEvent({
       type: "note_moved",
       spaceId: userId,

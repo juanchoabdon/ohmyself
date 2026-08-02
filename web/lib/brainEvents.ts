@@ -1,11 +1,21 @@
 import { getActiveSpace } from "./api";
 
 export type BrainEvent = {
-  type: "note_created" | "note_updated" | "note_deleted" | "note_moved";
+  type:
+    | "note_created"
+    | "note_updated"
+    | "note_deleted"
+    | "note_moved"
+    | "comment_created"
+    | "comment_updated"
+    | "comment_resolved"
+    | "comment_deleted";
   spaceId: string;
   path: string;
   to?: string;
   updated?: string;
+  commentId?: string;
+  threadId?: string;
 };
 
 function apiBase(): string {

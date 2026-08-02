@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, setActiveSpace } from "@/lib/api";
+import { api, isSessionExpired, setActiveSpace } from "@/lib/api";
+import { clearAssetCache } from "@/lib/assets";
 import { supabase } from "@/lib/supabaseClient";
 import type { Category, FolderCount, FullNote, HistoryEntry, IndexedNote, Space, Visibility } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteView, type NoteViewHandle } from "@/components/NoteView";
 import { ActivityPanel } from "@/components/ActivityPanel";
+import { CommentsPanel, type CommentDraft } from "@/components/CommentsPanel";
+import { useComments } from "@/lib/useComments";
 import { BrainMap } from "@/components/BrainMap";
 import { Chat } from "@/components/Chat";
 import { Settings } from "@/components/Settings";
@@ -27,7 +30,7 @@ import {
   upsertTab,
   type EditorTab,
 } from "@/lib/editorTabs";
-import { Clock, PanelRight, Search } from "lucide-react";
+import { Clock, MessageSquare, PanelRight, Search } from "lucide-react";
 import { connectBrainEvents } from "@/lib/brainEvents";
 import { fetchCollabEnabled } from "@/lib/collab";
 import { collabUserFromSupabase, agentCollabUser, type CollabUser } from "@/lib/collabUser";
@@ -46,10 +49,17 @@ export default function Dashboard() {
   const router = useRouter();
   const [token, setToken] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  // Bootstrap can fail (backend cold, network blip). Surface it instead of
+  // sitting on a skeleton forever, and let the user retry without a reload.
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
 
   // Spaces: the personal "self" brain + any company wikis the user belongs to.
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
+  // Flips once the space list has settled — success or failure. The tree load
+  // waits on this, not on `activeSpaceId`, so a failed lookup still boots the UI.
+  const [spacesResolved, setSpacesResolved] = useState(false);
   const [createSpaceOpen, setCreateSpaceOpen] = useState(false);
   const [createSpaceBusy, setCreateSpaceBusy] = useState(false);
   const [createSpaceError, setCreateSpaceError] = useState<string | null>(null);
@@ -94,7 +104,33 @@ export default function Dashboard() {
   const [collabUser, setCollabUser] = useState<CollabUser | null>(null);
   const [activityAuthorFilter, setActivityAuthorFilter] = useState<string | null>(null);
   const [recentActivity, setRecentActivity] = useState<HistoryEntry[]>([]);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
+  const [commentDraft, setCommentDraft] = useState<CommentDraft>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const urlSyncRef = useRef(false);
+
+  // Threads live here (not in the panel) because the editor paints highlights
+  // from the same list. The SSE stream bumps `commentsRefreshKey`, so a comment
+  // from a teammate or an agent over MCP appears without a reload.
+  const comments = useComments({
+    token,
+    path: selected,
+    enabled: view === "notes",
+    refreshKey: commentsRefreshKey,
+  });
+
+  const openCommentCount = useMemo(
+    () => comments.threads.filter((t) => !t.resolvedAt).length,
+    [comments.threads],
+  );
+
+  const startComment = useCallback((quote: string, offset: number) => {
+    setCommentDraft({ quote, offset });
+    setCommentsOpen(true);
+    setDocPanelOpen(false);
+    setActivityOpen(false);
+  }, []);
 
   const slugify = (s: string): string =>
     s
@@ -315,14 +351,25 @@ export default function Dashboard() {
           list[0] ||
           null;
         setActiveSpaceId(pick?.id ?? null);
-      } catch {
-        /* non-fatal — fall back to the implicit self space */
+      } catch (e) {
+        if (!active) return;
+        if (isSessionExpired(e)) {
+          router.replace("/login");
+          return;
+        }
+        // Fall back to the implicit self space: a null id sends no
+        // X-Brain-Space header and the server resolves to the personal brain.
+        // The space switcher is degraded until a retry, but the brain loads.
+        setSpaces([]);
+        setActiveSpaceId(null);
+      } finally {
+        if (active) setSpacesResolved(true);
       }
     })();
     return () => {
       active = false;
     };
-  }, [token]);
+  }, [token, bootAttempt, router]);
 
   // Re-skin the whole UI from the active space's accent (revert to default coral
   // for a space with no chosen color).
@@ -334,17 +381,21 @@ export default function Dashboard() {
   // Onboard + load the lightweight tree scaffold (pillar counts) once we have a
   // token and an active space. Notes load lazily per folder — see ensureFolder.
   useEffect(() => {
-    if (!token || !activeSpaceId) return;
+    if (!token || !spacesResolved) return;
     let active = true;
     // Point every API call at the active brain, and reset the tree so we don't
     // show one space's notes while another loads.
     setActiveSpace(activeSpaceId);
-    try {
-      localStorage.setItem("oms-space", activeSpaceId);
-    } catch {
-      /* storage unavailable — fine */
+    clearAssetCache();
+    if (activeSpaceId) {
+      try {
+        localStorage.setItem("oms-space", activeSpaceId);
+      } catch {
+        /* storage unavailable — fine */
+      }
     }
     setReady(false);
+    setBootError(null);
     setBaseNotes([]);
     setSearchResults(null);
     setSelected(null);
@@ -397,16 +448,23 @@ export default function Dashboard() {
           .catch(() => {
             /* non-fatal */
           }),
+        // The only blocking call: without folder counts the sidebar would render
+        // an empty tree that looks like a wiped brain, so a failure here has to
+        // become a visible error rather than a silent "you have no notes".
         api
           .folders(token)
           .then(({ folders }) => {
-            if (active) setFolderCounts(folders);
+            if (!active) return;
+            setFolderCounts(folders);
+            setReady(true);
           })
-          .catch(() => {
-            /* non-fatal */
-          })
-          .finally(() => {
-            if (active) setReady(true);
+          .catch((e: unknown) => {
+            if (!active) return;
+            if (isSessionExpired(e)) {
+              router.replace("/login");
+              return;
+            }
+            setBootError(e instanceof Error ? e.message : "Couldn't load your brain.");
           }),
         saved ? openNote(saved) : Promise.resolve(),
         saved ? ensureFolder(saved.split("/")[0]!) : Promise.resolve(),
@@ -417,7 +475,7 @@ export default function Dashboard() {
     };
     // openNote/ensureFolder are stable within this render and intentionally omitted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, activeSpaceId]);
+  }, [token, activeSpaceId, spacesResolved, bootAttempt]);
 
   // Debounced server search
   useEffect(() => {
@@ -736,6 +794,12 @@ export default function Dashboard() {
           async (event) => {
             if (event.spaceId !== activeSpaceId) return;
 
+            // Comments don't touch the vault — refresh the threads, not the tree.
+            if (event.type.startsWith("comment_")) {
+              if (selectedRef.current === event.path) setCommentsRefreshKey((k) => k + 1);
+              return;
+            }
+
             if (event.type === "note_deleted" && selectedRef.current === event.path) {
               setBanner("This note was deleted elsewhere.");
               await refresh(null);
@@ -885,6 +949,20 @@ export default function Dashboard() {
     }
   }
 
+  if (bootError && !ready) {
+    return (
+      <DashboardError
+        message={bootError}
+        onRetry={() => {
+          setBootError(null);
+          setSpacesResolved(false);
+          setBootAttempt((n) => n + 1);
+        }}
+        onSignOut={signOut}
+      />
+    );
+  }
+
   if (!token || !ready) {
     return <DashboardSkeleton />;
   }
@@ -933,12 +1011,39 @@ export default function Dashboard() {
             <span>Search</span>
             <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">⌘K</kbd>
           </button>
+          {view === "notes" && selected && (
+            <button
+              type="button"
+              onClick={() => {
+                setCommentsOpen((v) => !v);
+                if (!commentsOpen) {
+                  setDocPanelOpen(false);
+                  setActivityOpen(false);
+                }
+              }}
+              aria-pressed={commentsOpen}
+              className={`relative rounded-lg border border-border p-1.5 transition-colors ${
+                commentsOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
+              }`}
+              title="Comments"
+            >
+              <MessageSquare className="h-4 w-4" />
+              {openCommentCount > 0 && (
+                <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[9px] font-semibold text-white">
+                  {openCommentCount}
+                </span>
+              )}
+            </button>
+          )}
           {view === "notes" && (
             <button
               type="button"
               onClick={() => {
                 setActivityOpen((v) => !v);
-                if (!activityOpen) setDocPanelOpen(false);
+                if (!activityOpen) {
+                  setDocPanelOpen(false);
+                  setCommentsOpen(false);
+                }
               }}
               aria-pressed={activityOpen}
               className={`rounded-lg border border-border p-1.5 transition-colors ${
@@ -954,7 +1059,10 @@ export default function Dashboard() {
               type="button"
               onClick={() => {
                 setDocPanelOpen((v) => !v);
-                if (!docPanelOpen) setActivityOpen(false);
+                if (!docPanelOpen) {
+                  setActivityOpen(false);
+                  setCommentsOpen(false);
+                }
               }}
               aria-pressed={docPanelOpen}
               className={`rounded-lg border border-border p-1.5 transition-colors ${
@@ -1072,11 +1180,20 @@ export default function Dashboard() {
                       setActivityAuthorFilter(peer.id);
                       setActivityOpen(true);
                       setDocPanelOpen(false);
+                      setCommentsOpen(false);
                     }}
                     onDelete={async () => {
                       if (selected) setConfirm({ kind: "note", path: selected });
                     }}
                     shareUrl={shareUrl}
+                    commentThreads={comments.threads}
+                    activeThreadId={activeThreadId}
+                    onSelectThread={(threadId) => {
+                      setActiveThreadId(threadId);
+                      setCommentsOpen(true);
+                    }}
+                    onStartComment={startComment}
+                    onOpenComments={() => setCommentsOpen(true)}
                   />
                 </div>
                 {docPanelOpen && selected && (
@@ -1111,6 +1228,22 @@ export default function Dashboard() {
                       }
                     />
                   )
+                )}
+                {selected && (
+                  <CommentsPanel
+                    open={commentsOpen}
+                    onClose={() => {
+                      setCommentsOpen(false);
+                      setCommentDraft(null);
+                    }}
+                    comments={comments}
+                    draft={commentDraft}
+                    onDraftChange={setCommentDraft}
+                    activeThreadId={activeThreadId}
+                    onFocusThread={setActiveThreadId}
+                    currentUserId={collabUser?.id ?? null}
+                    canComment={Boolean(token)}
+                  />
                 )}
                 <ActivityPanel
                   token={token}
@@ -1320,6 +1453,49 @@ function DocPanelSkeleton() {
         ))}
       </div>
     </aside>
+  );
+}
+
+/** Shown when the brain couldn't be loaded. Deliberately not an empty tree: a
+ *  blank sidebar reads as "my notes are gone", which is the wrong panic. */
+function DashboardError({
+  message,
+  onRetry,
+  onSignOut,
+}: {
+  message: string;
+  onRetry: () => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="grid h-dvh place-items-center bg-bg px-6">
+      <div className="max-w-md text-center">
+        <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl border border-border bg-surface text-2xl shadow-sm">
+          🌩️
+        </div>
+        <h2 className="font-heading text-2xl font-bold tracking-tight text-ink">
+          Couldn&apos;t reach your brain
+        </h2>
+        <p className="mx-auto mt-2 max-w-sm text-pretty text-sm leading-relaxed text-muted">
+          Your notes are safe — this is a connection problem, not a data problem.
+        </p>
+        <p className="mt-3 font-mono text-xs text-muted">{message}</p>
+        <div className="mt-7 flex items-center justify-center gap-3">
+          <button
+            onClick={onRetry}
+            className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-transform duration-200 hover:-translate-y-0.5 hover:opacity-95"
+          >
+            Try again
+          </button>
+          <button
+            onClick={onSignOut}
+            className="rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-muted hover:text-ink"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -13,6 +13,14 @@ function headerStr(v: string | string[] | undefined): string | null {
   return v ?? null;
 }
 
+/** Hard ceiling on a buffered request body. Bodies are held whole in memory
+ *  (see `readRaw`), so without this a single large upload could exhaust the
+ *  container. Sized just above the largest asset upload the API accepts, to
+ *  leave room for multipart framing. */
+const MAX_BODY_BYTES = 56 * 1024 * 1024;
+
+class PayloadTooLargeError extends Error {}
+
 /** Buffer the raw request body. We read it ourselves (rather than relying on
  *  `@hono/node-server`'s stream adapter) because on some serverless runtimes
  *  (notably Vercel) the adapter's body stream never emits `end`, hanging every
@@ -20,7 +28,17 @@ function headerStr(v: string | string[] | undefined): string | null {
 function readRaw(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    let size = 0;
+    req.on("data", (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buf.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new PayloadTooLargeError("request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(buf);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
@@ -192,6 +210,10 @@ export function dispatch(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   handleHono(req, res).catch((err) => {
+    if (err instanceof PayloadTooLargeError) {
+      if (!res.headersSent) sendJson(res, 413, { error: "file is too large to upload" });
+      return;
+    }
     console.error("[api] error:", err);
     if (!res.headersSent) sendJson(res, 500, { error: "internal error" });
   });

@@ -4,6 +4,7 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MessageSquarePlus } from "lucide-react";
 import * as Y from "yjs";
 import "tippy.js/dist/tippy.css";
 import { buildEditorExtensions } from "./extensions";
@@ -17,6 +18,8 @@ import {
 import { SourceEditor } from "./SourceEditor";
 import { collabRoomName, collabWsUrl } from "@/lib/collab";
 import type { CollabUser } from "@/lib/collabUser";
+import type { CommentThread } from "@/lib/types";
+import { CommentHighlight, syncCommentHighlights } from "./commentHighlight";
 import {
   PresenceBar,
   type CollabSyncStatus,
@@ -63,6 +66,13 @@ export function MarkdownEditor({
   agentPresence = [],
   onSelectPresencePeer,
   onReady,
+  mode: modeProp,
+  onModeChange: onModeChangeProp,
+  hideModeToggle,
+  commentThreads,
+  activeThreadId = null,
+  onSelectThread,
+  onStartComment,
 }: {
   value: string;
   onChange: (markdown: string) => void;
@@ -78,6 +88,17 @@ export function MarkdownEditor({
   onSelectPresencePeer?: (peer: PresencePeer) => void;
   /** Fires when the editor has content ready to display. */
   onReady?: () => void;
+  /** When set with `onModeChange`, mode is controlled by the parent (e.g. header toolbar). */
+  mode?: EditorMode;
+  onModeChange?: (mode: EditorMode) => void;
+  /** Hide the built-in toggle row — parent renders `EditorModeToggle` elsewhere. */
+  hideModeToggle?: boolean;
+  /** Threads to paint as highlights (anchors are re-found in the live doc). */
+  commentThreads?: CommentThread[];
+  activeThreadId?: string | null;
+  onSelectThread?: (threadId: string) => void;
+  /** Start a thread from the current selection. */
+  onStartComment?: (quote: string, offset: number) => void;
 }) {
   const onOpenLinkRef = useRef(onOpenLink);
   onOpenLinkRef.current = onOpenLink;
@@ -99,37 +120,72 @@ export function MarkdownEditor({
   const collabInitialBodyRef = useRef(collabInitialBody);
   collabInitialBodyRef.current = collabInitialBody;
 
-  const [mode, setMode] = useState<EditorMode>("visual");
+  const modeControlled = modeProp !== undefined && onModeChangeProp !== undefined;
+  const [internalMode, setInternalMode] = useState<EditorMode>("visual");
+  const mode = modeControlled ? modeProp! : internalMode;
   const [sourceMd, setSourceMd] = useState(value);
   const modeRef = useRef<EditorMode>("visual");
+  const controlledModeRef = useRef<EditorMode>(mode);
   const sourceMdRef = useRef(value);
   const editorRef = useRef<Editor | null>(null);
   const collabSyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const pref = loadEditorModePreference();
-    setMode(pref);
+    if (!modeControlled) setInternalMode(pref);
     modeRef.current = pref;
-  }, [noteKey]);
+    controlledModeRef.current = modeControlled ? modeProp ?? pref : pref;
+  }, [noteKey, modeControlled, modeProp]);
 
   useEffect(() => {
     setSourceMd(value);
     sourceMdRef.current = value;
   }, [noteKey]);
 
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  /** Parent toolbar toggles mode (header); mirror into TipTap without re-saving preference. */
+  useEffect(() => {
+    if (!modeControlled || controlledModeRef.current === mode) return;
+    controlledModeRef.current = mode;
+    const ed = editorRef.current;
+    if (!ed || ed.isDestroyed) return;
+    if (mode === "source") {
+      const md = ed.getMarkdown();
+      setSourceMd(md);
+      sourceMdRef.current = md;
+    } else if (!collabActive) {
+      const md = sourceMdRef.current;
+      ed.commands.setContent(md, { contentType: "markdown" });
+      onChangeRef.current(ed.getMarkdown());
+    }
+  }, [mode, modeControlled, collabActive]);
+
   const ydoc = useMemo(() => (collabActive ? new Y.Doc() : null), [noteKey, collabActive]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [syncStatus, setSyncStatus] = useState<CollabSyncStatus>("connecting");
   const seededRef = useRef(false);
 
+  // Kept in a ref so changing the handler never rebuilds the extension list
+  // (which would remount the editor and drop the collab session).
+  const onSelectThreadRef = useRef(onSelectThread);
+  onSelectThreadRef.current = onSelectThread;
+
   const extensions = useMemo(
-    () =>
-      buildEditorExtensions(
+    () => [
+      ...buildEditorExtensions(
         (path) => onOpenLinkRef.current?.(path),
         ydoc ?? undefined,
         provider,
         collabUser ?? null,
+        noteKey,
       ),
+      CommentHighlight.configure({
+        onSelectThread: (threadId: string) => onSelectThreadRef.current?.(threadId),
+      }),
+    ],
     [noteKey, collabActive, ydoc, provider, collabUser],
   );
 
@@ -212,7 +268,7 @@ export function MarkdownEditor({
       },
       editorProps: {
         attributes: {
-          class: "prose oms-editor-body min-h-[8rem] focus:outline-none",
+          class: "prose oms-editor-body min-h-[3rem] focus:outline-none",
           spellcheck: "true",
         },
         handleDOMEvents: {
@@ -232,23 +288,27 @@ export function MarkdownEditor({
 
   editorRef.current = editor ?? null;
 
-  const handleModeChange = useCallback((next: EditorMode) => {
-    const ed = editorRef.current;
-    if (next === "source" && ed && !ed.isDestroyed) {
-      const md = ed.getMarkdown();
-      setSourceMd(md);
-      sourceMdRef.current = md;
-    } else if (next === "visual" && ed && !ed.isDestroyed) {
-      if (!collabActive) {
-        const md = sourceMdRef.current;
-        ed.commands.setContent(md, { contentType: "markdown" });
-        onChangeRef.current(ed.getMarkdown());
+  const handleModeChange = useCallback(
+    (next: EditorMode) => {
+      const ed = editorRef.current;
+      if (next === "source" && ed && !ed.isDestroyed) {
+        const md = ed.getMarkdown();
+        setSourceMd(md);
+        sourceMdRef.current = md;
+      } else if (next === "visual" && ed && !ed.isDestroyed) {
+        if (!collabActive) {
+          const md = sourceMdRef.current;
+          ed.commands.setContent(md, { contentType: "markdown" });
+          onChangeRef.current(ed.getMarkdown());
+        }
       }
-    }
-    modeRef.current = next;
-    setMode(next);
-    saveEditorModePreference(next);
-  }, []);
+      modeRef.current = next;
+      if (modeControlled) onModeChangeProp!(next);
+      else setInternalMode(next);
+      saveEditorModePreference(next);
+    },
+    [collabActive, modeControlled, onModeChangeProp],
+  );
 
   const handleSourceChange = useCallback((md: string) => {
     setSourceMd(md);
@@ -367,6 +427,57 @@ export function MarkdownEditor({
   }, [editor, value, collabActive]);
 
   useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    syncCommentHighlights(editor.view, commentThreads ?? [], activeThreadId);
+  }, [editor, commentThreads, activeThreadId]);
+
+  // Floating "Comment" affordance over a text selection.
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [selectionCue, setSelectionCue] = useState<{
+    top: number;
+    left: number;
+    quote: string;
+    offset: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !onStartComment || mode !== "visual") {
+      setSelectionCue(null);
+      return;
+    }
+    const update = () => {
+      if (editor.isDestroyed) return;
+      const { from, to, empty } = editor.state.selection;
+      const wrapper = wrapperRef.current;
+      if (empty || !wrapper) {
+        setSelectionCue(null);
+        return;
+      }
+      const quote = editor.state.doc.textBetween(from, to, "\n").trim();
+      if (quote.length < 2) {
+        setSelectionCue(null);
+        return;
+      }
+      const coords = editor.view.coordsAtPos(from);
+      const box = wrapper.getBoundingClientRect();
+      setSelectionCue({
+        top: coords.top - box.top - 34,
+        left: Math.max(0, coords.left - box.left),
+        quote,
+        offset: editor.state.doc.textBetween(0, from, "\n").length,
+      });
+    };
+    editor.on("selectionUpdate", update);
+    return () => {
+      editor.off("selectionUpdate", update);
+    };
+  }, [editor, onStartComment, mode]);
+
+  useEffect(() => {
+    setSelectionCue(null);
+  }, [noteKey, mode]);
+
+  useEffect(() => {
     if (!editor || editor.isDestroyed || !scrollToHeading || mode !== "visual") return;
     scrollEditorToHeading(
       editor,
@@ -379,7 +490,23 @@ export function MarkdownEditor({
   if (!canMountEditor || !editor || editor.isDestroyed) return null;
 
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapperRef}>
+      {selectionCue && onStartComment && (
+        <button
+          type="button"
+          style={{ top: selectionCue.top, left: selectionCue.left }}
+          // Keep the editor selection alive through the click.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onStartComment(selectionCue.quote, selectionCue.offset);
+            setSelectionCue(null);
+          }}
+          className="absolute z-20 flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] font-medium text-ink shadow-md hover:border-brand/40 hover:text-brand"
+        >
+          <MessageSquarePlus className="h-3 w-3" aria-hidden />
+          Comment
+        </button>
+      )}
       {collabActive && provider && collabUser && (
         <PresenceBar
           provider={provider}
@@ -389,7 +516,7 @@ export function MarkdownEditor({
           onSelectPeer={onSelectPresencePeer}
         />
       )}
-      <EditorModeToggle mode={mode} onChange={handleModeChange} />
+      {!hideModeToggle ? <EditorModeToggle mode={mode} onChange={handleModeChange} /> : null}
       {mode === "source" ? (
         <p className="px-2 pb-2 pt-0.5 text-[11px] text-muted">
           Source mode — callouts, Mermaid, and embeds render in{" "}
@@ -421,7 +548,7 @@ const SKELETON_LINES = ["92%", "78%", "85%", "64%", "88%", "72%", "55%"];
 
 export function EditorBodySkeleton() {
   return (
-    <div className="min-h-[8rem] space-y-3 py-1" aria-hidden>
+    <div className="space-y-3 py-1" aria-hidden>
       {SKELETON_LINES.map((w, i) => (
         <span
           key={i}

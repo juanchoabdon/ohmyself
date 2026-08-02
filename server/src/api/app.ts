@@ -35,7 +35,19 @@ import {
   updateMemberRole,
   updateSpace,
   attributionFromAuth,
+  createAsset,
+  resolveAssets,
+  addComment,
+  deleteComment,
+  isSelfSpace,
+  isSpaceAdmin,
+  listCommentThreads,
+  listOpenThreads,
+  openThreadCounts,
+  setThreadResolved,
+  updateComment,
   type AuthContext,
+  type CommentActor,
   type Scope,
   type Visibility,
 } from "../core/index.js";
@@ -87,6 +99,17 @@ function requireJwt(auth: AuthContext) {
   if (auth.via !== "jwt") {
     throw new ForbiddenError("manage tokens from a signed-in session");
   }
+}
+
+/** Who is speaking in a comment thread — a signed-in person or an agent. */
+function commentActor(auth: AuthContext): CommentActor {
+  const human = auth.via === "jwt";
+  return {
+    userId: auth.userId,
+    kind: human ? "human" : "agent",
+    label: human ? null : `agent:${auth.via ?? "token"}`,
+    isAdmin: isSelfSpace(auth) || isSpaceAdmin(auth.role),
+  };
 }
 
 /** Decode a `data:<mime>;base64,<payload>` URL into its content type and bytes. */
@@ -566,6 +589,46 @@ export function createApp(): Hono<Env> {
     return c.json({ path: note.path, meta: note.meta, restored: body.version });
   });
 
+  // ── Note assets (images / video embedded in a note body) ──────────────────
+  // Bytes live in a private bucket; the body only ever stores `oms-asset:<id>`.
+  // Membership in the active space is already enforced by `resolveAuth`.
+  app.post("/v1/assets", async (c) => {
+    const auth = c.get("auth");
+    requireCompanyWrite(auth);
+    const form = await c.req.parseBody();
+    const file = form.file;
+    if (!(file instanceof File)) throw new BadRequestError("expected a `file` form field");
+    const num = (key: string): number | null => {
+      const raw = form[key];
+      const n = typeof raw === "string" ? Number(raw) : NaN;
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+    };
+    const asset = await createAsset({
+      spaceId: auth.spaceId,
+      path: typeof form.path === "string" ? form.path : null,
+      mime: file.type,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      width: num("width"),
+      height: num("height"),
+      originalName: file.name || null,
+      createdBy: auth.userId,
+    });
+    const [resolved] = await resolveAssets(auth.spaceId, [asset.id]);
+    return c.json({ asset, url: resolved?.url ?? null, expiresAt: resolved?.expiresAt ?? null }, 201);
+  });
+
+  // Batched because a note routinely embeds several images and one request per
+  // image would make opening a note crawl.
+  app.post("/v1/assets/resolve", async (c) => {
+    const auth = c.get("auth");
+    // The public agent answers questions in text and has no note-level context
+    // here to check an asset against — keep private bytes out of its reach.
+    if (auth.scope === "public") throw new ForbiddenError("read-only (public scope)");
+    const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown };
+    const ids = Array.isArray(body.ids) ? body.ids.filter((v): v is string => typeof v === "string") : [];
+    return c.json({ assets: await resolveAssets(auth.spaceId, ids) });
+  });
+
   app.post("/v1/notes", async (c) => {
     const auth = c.get("auth");
     requireCompanyWrite(auth);
@@ -626,7 +689,14 @@ export function createApp(): Hono<Env> {
     requireCompanyWrite(auth);
     const allowed = effectiveAllowed(auth);
     const { from, to, summary } = await c.req.json<{ from: string; to: string; summary?: string }>();
-    const note = await brain.moveNote(auth.spaceId, from, to, allowed, attributionFromAuth(auth, summary));
+    const note = await brain.moveNote(
+      auth.spaceId,
+      from,
+      to,
+      allowed,
+      attributionFromAuth(auth, summary),
+      await getUserConfig(auth.spaceId),
+    );
     return c.json({ path: note.path, meta: note.meta });
   });
 
@@ -646,6 +716,87 @@ export function createApp(): Hono<Env> {
     const { a, b } = await c.req.json<{ a: string; b: string }>();
     await brain.linkNotes(auth.spaceId, a, b, allowed);
     return c.json({ linked: [a, b] });
+  });
+
+  // ── Comments ─────────────────────────────────────────────────────────────
+  // Commenting is deliberately looser than editing: any member of a space may
+  // comment on a note they can read, including plain `member` roles that can't
+  // write notes. Hence requireWrite (blocks read-only public tokens) rather
+  // than requireCompanyWrite.
+
+  app.get("/v1/comments", async (c) => {
+    const auth = c.get("auth");
+    const allowed = effectiveAllowed(auth);
+    const path = c.req.query("path") ?? "";
+    if (!path.trim()) throw new BadRequestError("path is required");
+    const threads = await listCommentThreads(brain, auth.spaceId, path, allowed, {
+      includeResolved: c.req.query("include_resolved") === "1",
+    });
+    return c.json({ path, threads });
+  });
+
+  /** Unresolved threads across the space — the "needs my attention" inbox. */
+  app.get("/v1/comments/open", async (c) => {
+    const auth = c.get("auth");
+    const limit = Math.min(Number(c.req.query("limit") ?? 30) || 30, 200);
+    const threads = await listOpenThreads(auth.spaceId, effectiveAllowed(auth), { limit });
+    return c.json({ threads });
+  });
+
+  /** Per-note open-thread counts for badges. `paths` is comma separated. */
+  app.get("/v1/comments/counts", async (c) => {
+    const auth = c.get("auth");
+    const counts = await openThreadCounts(auth.spaceId, csv(c.req.query("paths")) ?? []);
+    return c.json({ counts });
+  });
+
+  app.post("/v1/comments", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    const allowed = effectiveAllowed(auth);
+    const body = await c.req.json<{
+      path?: string;
+      body?: string;
+      quote?: string | null;
+      quoteOffset?: number | null;
+      replyTo?: string | null;
+    }>();
+    const result = await addComment(brain, auth.spaceId, allowed, commentActor(auth), {
+      path: body.path ?? "",
+      body: body.body ?? "",
+      quote: body.quote ?? null,
+      quoteOffset: body.quoteOffset ?? null,
+      replyTo: body.replyTo ?? null,
+    });
+    return c.json(result, 201);
+  });
+
+  app.patch("/v1/comments/:id", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    const { body } = await c.req.json<{ body?: string }>();
+    const comment = await updateComment(auth.spaceId, c.req.param("id"), body ?? "", commentActor(auth));
+    return c.json({ comment });
+  });
+
+  app.post("/v1/comments/:id/resolve", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    const payload = await c.req.json<{ resolved?: boolean }>().catch(() => ({ resolved: true }));
+    const thread = await setThreadResolved(
+      auth.spaceId,
+      c.req.param("id"),
+      payload.resolved !== false,
+      commentActor(auth),
+    );
+    return c.json({ thread });
+  });
+
+  app.delete("/v1/comments/:id", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    await deleteComment(auth.spaceId, c.req.param("id"), commentActor(auth));
+    return c.json({ deleted: c.req.param("id") });
   });
 
   // Semantic "idea links" for the Brain Map: fuzzy edges between notes that are

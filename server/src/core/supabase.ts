@@ -31,3 +31,10 @@ export function brainBucket(): string {
 export function logoBucket(): string {
   return process.env.LOGO_BUCKET ?? "space-logos";
 }
+
+/** Private bucket for images/video embedded in notes. Unlike logos these carry
+ *  the note's own sensitivity, so they are only ever served through a
+ *  short-lived signed URL minted after a membership check. */
+export function assetBucket(): string {
+  return process.env.ASSET_BUCKET ?? "note-assets";
+}

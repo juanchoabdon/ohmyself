@@ -11,16 +11,16 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { Hocuspocus } from "@hocuspocus/server";
 import { WebSocketServer } from "ws";
-import { applyUpdate, encodeStateAsUpdate, Doc as YDoc } from "yjs";
+import { applyUpdate, encodeStateAsUpdate } from "yjs";
 import { resolveAuth } from "../auth.js";
 import { requireCompanyWrite } from "../core/authz.js";
-import { dedupeRepeatedBody, repairCollabBody } from "../core/dedupeBody.js";
+import { repairCollabBody } from "../core/dedupeBody.js";
 import { buildCore, parseNote } from "../core/index.js";
 import { stripRedundantTitleH1 } from "../core/titleBody.js";
 import type { Visibility } from "../core/types.js";
-import { applyMarkdownToYDoc } from "./hydrate.js";
+import { hydrateYDocOnce, replaceYDocMarkdown } from "./hydrate.js";
 import { collabFieldName, roundTripMarkdown, yDocToMarkdown } from "./schema.js";
-import { loadCollabState, saveCollabState, deleteCollabState } from "./state-store.js";
+import { loadCollabState, saveCollabState } from "./state-store.js";
 
 const ALL_VISIBILITIES: Visibility[] = ["public", "private", "secret"];
 
@@ -101,7 +101,9 @@ export function startCollabServer(): Hocuspocus | null {
             summary: "repair duplicated vault on collab load",
           })
           .catch((err) => console.warn(`[collab] vault repair failed for ${documentName}:`, err));
-        await deleteCollabState(room.spaceId, room.path).catch(() => {});
+        // The stored lineage is deliberately kept: the reconcile step below
+        // converges it to the repaired body. Dropping it here would re-seed a
+        // fresh lineage and let a stale client stack the note again.
         console.warn(
           `[collab] repaired duped vault for ${documentName} (${vaultBodyRaw.length} -> ${vaultBody.length})`,
         );
@@ -109,38 +111,40 @@ export function startCollabServer(): Hocuspocus | null {
 
       const vaultRound = vaultBody.trim() ? roundTripMarkdown(vaultBody).trim() : "";
 
+      // A room's Yjs state is a lineage of items. Seeding from markdown mints a
+      // NEW lineage, and any client still holding the old one merges it back —
+      // Yjs keeps both, which stacks the whole note. So the stored state is
+      // never discarded: it is restored, then converged toward the vault with a
+      // diff, which stays inside the same lineage and is merge-safe.
       const stored = await loadCollabState(room.spaceId, room.path).catch(() => null);
       let restored = false;
-      if (stored && vaultRound) {
-        const probe = new YDoc();
-        applyUpdate(probe, stored);
-        const storedMd = yDocToMarkdown(probe).trim();
-        const storedDup = repairCollabBody(storedMd);
-        const storedClean = storedDup.deduped ? storedDup.body.trim() : storedMd;
-        const vaultLen = vaultRound.length;
-        const storedLen = storedClean.length;
-        const corrupt =
-          storedDup.deduped ||
-          storedLen > vaultLen * 1.12 ||
-          (vaultLen > 400 && storedLen > vaultLen + 800);
-        if (!corrupt && storedClean === vaultRound) {
-          applyUpdate(document, stored, "ohmyself-state-store");
-          restored = true;
-          console.log(`[collab] restored Y state for ${documentName}`);
-        } else {
-          await deleteCollabState(room.spaceId, room.path).catch(() => {});
-          if (corrupt) {
-            console.warn(
-              `[collab] dropped corrupt Y state for ${documentName} (vault ${vaultLen} vs stored ${storedLen})`,
-            );
-          }
-        }
+      if (stored) {
+        applyUpdate(document, stored, "ohmyself-state-store");
+        restored = true;
+        console.log(`[collab] restored Y state for ${documentName}`);
       }
 
-      if (!restored && vaultBody.trim()) {
-        applyMarkdownToYDoc(document, vaultBody);
-        console.log(`[collab] hydrated ${documentName} from vault (${vaultBody.trim().length} chars)`);
+      if (!vaultBody.trim()) return;
+
+      if (!restored) {
+        const seeded = hydrateYDocOnce(document, vaultBody);
+        console.log(
+          seeded
+            ? `[collab] hydrated ${documentName} from vault (${vaultBody.trim().length} chars)`
+            : `[collab] skipped seeding ${documentName} — room already has content`,
+        );
+        return;
       }
+
+      // Restored lineage: reconcile it to the vault only when they actually
+      // differ, comparing through the same serializer to ignore normalization.
+      const liveRound = yDocToMarkdown(document).trim();
+      if (liveRound === vaultRound) return;
+
+      replaceYDocMarkdown(document, vaultBody);
+      console.log(
+        `[collab] reconciled ${documentName} to vault (${liveRound.length} -> ${vaultRound.length} chars)`,
+      );
     },
 
     // Vault persistence for live edits. Hocuspocus debounces this per document,
@@ -169,7 +173,7 @@ export function startCollabServer(): Hocuspocus | null {
         console.warn(`[collab] deduped repeated body for ${documentName} (${nextBody.length} -> ${cleaned.length})`);
         nextBody = cleaned;
         // Rewrite the live Y doc so reconnecting clients inherit the clean state.
-        applyMarkdownToYDoc(document, nextBody);
+        replaceYDocMarkdown(document, nextBody);
         await saveCollabState(room.spaceId, room.path, encodeStateAsUpdate(document)).catch(
           (err) => console.warn(`[collab] state save failed for ${documentName}:`, err),
         );

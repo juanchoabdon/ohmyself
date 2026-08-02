@@ -30,6 +30,9 @@ export const OmsImage = Node.create({
       src: { default: "" },
       alt: { default: "" },
       caption: { default: "" },
+      // In-flight upload key. Never rendered and never serialized to markdown —
+      // see `mediaUpload.ts`.
+      pending: { default: null, rendered: false },
     };
   },
 
@@ -78,6 +81,7 @@ export const OmsVideo = Node.create({
     return {
       src: { default: "" },
       title: { default: "Video" },
+      pending: { default: null, rendered: false },
     };
   },
 

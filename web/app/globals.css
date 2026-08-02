@@ -158,6 +158,9 @@ main {
   line-height: 1.62;
   color: var(--ink);
 }
+.prose > :first-child {
+  margin-top: 0;
+}
 .prose h1 {
   font-size: 1.6rem;
   font-weight: 680;
@@ -443,6 +446,22 @@ main {
 .oms-editor-body .ProseMirror {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* Inline comment anchors. In the editor they're ProseMirror decorations; in the
+   read-only body they're CSS Custom Highlights, so nothing is injected into the
+   React-rendered markup. Their ::highlight() rules live in lib/domHighlight.ts —
+   Turbopack's CSS parser rejects that pseudo-element at build time. */
+.oms-comment-mark {
+  background-color: color-mix(in oklab, var(--brand) 18%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--brand) 55%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.oms-comment-mark:hover,
+.oms-comment-mark.is-active {
+  background-color: color-mix(in oklab, var(--brand) 34%, transparent);
 }
 
 /* Collaboration carets (TipTap 3.27+ / @tiptap/y-tiptap) */

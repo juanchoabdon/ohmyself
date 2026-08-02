@@ -1,24 +1,42 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  addComment,
   addToProject,
+  agentImage,
   allowedVisibilities,
+  assetRefsInBody,
+  assetUri,
+  createAsset,
   effectiveAllowed,
   effectiveAllowedForRole,
   buildCore,
   buildFriendDirectory,
   canWrite,
   distillEnabled,
+  fetchRemoteMedia,
+  getAsset,
+  listAssets,
+  mediaBlockFor,
+  parseAssetRef,
+  resolveAssets,
+  MAX_VIDEO_BYTES,
+  folderForType,
+  isPersonalBrain,
   getDisplayName,
   getUserConfig,
+  projectDocPath,
   ingest,
+  listCommentThreads,
   listCommitments,
+  listOpenThreads,
   listSpacesForUser,
   profilePerson,
   profileStalePeople,
   researchBrain,
   serializeNote,
   setCommitmentStatus,
+  setThreadResolved,
   setUserConfig,
   slugify,
   stampFlowyaTaskId,
@@ -28,9 +46,12 @@ import {
   writeBrain,
   attributionFromAuth,
   type AuthContext,
+  type CommentActor,
+  type CommentThread,
   type CommitmentOwner,
   type CommitmentStatus,
   type FriendEntry,
+  type NoteAsset,
   type NoteType,
   type ProjectKind,
   type Space,
@@ -38,19 +59,31 @@ import {
   type UserConfig,
   type Visibility,
 } from "../core/index.js";
-import { ForbiddenError, NotFoundError } from "../core/errors.js";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../core/errors.js";
 import { buildPaletteResponse } from "../core/palette.js";
 import { buildPreviewUrl } from "../core/preview-url.js";
 import { getLinkContext } from "../core/link-intelligence.js";
 import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
+import {
+  isWorkDoc,
+  reviewDelete,
+  reviewDraft,
+  type DraftOperation,
+  type DraftPreview,
+  type DraftRequest,
+} from "./draft-gate.js";
 import { instrumentToolUsage } from "./telemetry.js";
 
 const VisibilityEnum = z.enum(["public", "private", "secret"]);
 
 /** The public MCP tool contract version. Bumped for the retrieval architecture
- *  (research_brain + graph primitives + write_brain + routing policy). Kept
- *  stable even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.8";
+ *  (research_brain + graph primitives + write_brain + routing policy), then for
+ *  the multiplayer comment tools, then for the work-doc draft gate + the `url`
+ *  every write now returns, then for the gate honoring a stored note's type,
+ *  then for move_space_note + delete_space_note, then for media (add_media /
+ *  get_media / list_media and the oms-asset: reference scheme). Kept stable
+ *  even as the embedding model / reranker / planner change underneath. */
+const CONTRACT_VERSION = "2.13";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -87,6 +120,32 @@ function skillPath(name: string): string {
   return `skills/${slugify(name)}/SKILL.md`;
 }
 
+/** Where things live, for the taxonomy of the space actually being addressed. A
+ *  company wiki has no identity page, journal or `projects/`; describing the
+ *  personal pillars to an agent writing into one is how company docs ended up
+ *  as `projects/<slug>/_index.md`. */
+function conventionsFor(cfg: UserConfig): Record<string, string> {
+  if (isPersonalBrain(cfg)) {
+    return {
+      identity: "identity/about-me.md (use update_identity)",
+      goals: "goals/<year>/yearly.md or goals/<year>/q<n>.md (use set_goal)",
+      projects:
+        "projects/<slug>/_index.md is the overview; nest docs in prds/, specs/, transcripts/, notes/, subprojects/<slug>/_index.md (use upsert_project, add_to_project)",
+      people: "people/<slug>.md (use add_person)",
+      journal: "journal/<year>/<date>.md (use log_journal)",
+      todos: "todos/<list>.md as checkbox lines (use add_todo)",
+      memory: "memory/log.md — quick durable facts learned in conversation (use remember)",
+    };
+  }
+  const folders = [...new Set(cfg.noteTypes.map((t) => t.folder))];
+  return {
+    documents: `<folder>/<slug>.md, one folder per category: ${folders.join(", ")}. Pick the category with create_space_note's \`type\`, or let write_space classify it.`,
+    people: "people/<slug>.md — a teammate, investor or candidate",
+    no_personal_pillars:
+      "this is a company wiki, not a brain: it has no identity page, no journal, no memory log and no `projects/`. A strategy, doctrine, plan or spec is a document under its own category (thesis, product, gtm, decisions), so upsert_project / add_to_project / log_journal / remember do not apply here.",
+  };
+}
+
 /** Build an MCP server whose tools operate on `auth`'s brain, scoped to its
  *  visibility level. Used by both the stdio and Streamable HTTP transports.
  *  Async because it lists the user's skills to expose them as MCP prompts. */
@@ -111,6 +170,12 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         "FRIENDS: brains shared with you (list_friends) mirror the same read routing via *_friend variants: recall_friend / search_friend_brain (fast), research_friend (deep), get_friend_neighbors / get_friend_backlinks / search_friend_by_entity / friend_timeline (navigate). Always read-only; capped at the visibility they granted. Never answer about a friend from your own brain.",
         "",
         "WRITING: prefer the specific tools (remember, add_person, upsert_project, add_to_project, set_goal, log_journal, update_identity) when you know the destination. Use write_brain to auto-route + dedupe when you don't. For a company wiki use the *_space write tools (create_space_note / update_space_note / append_space_note, or write_space to auto-route). Never invent facts; capture durable info in the moment.",
+        "",
+        "MEDIA: notes can embed images and video. In a body they appear as a `:::image` / `:::video` block whose `src` is `oms-asset:<id>` — that is a reference, not a URL, and you cannot read the picture from the markdown. To SEE one, call get_media with that reference; the image comes back as visual content you can reason about. Do that whenever the answer depends on what the image shows. To store one (the person shares a screenshot, a diagram, a photo), call add_media with base64 `data` or a `source_url`, plus `note_path` to embed it. list_media shows what exists. Never invent an oms-asset id.",
+        "",
+        "WORK DOCS NEED CONFIRMATION: specs, PRDs, plans, RFCs and design docs are never written on the first call — in the personal brain or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft and a `confirm_token`. Show the owner the whole draft in the conversation (and write it to the suggested `local_file` if you have filesystem access), ask for an explicit yes, and END YOUR TURN. Only after they approve, call the same tool again with the identical body plus `confirm_token`. Never confirm on the owner's behalf, and never chain the preview and the confirmed write in one turn. If they ask for edits, resend the new body without a token.",
+        "",
+        "AFTER WRITING: every write returns a `url` deep link to the note. Always surface that link to the owner so they can open what you just saved.",
       ].join("\n"),
     },
   );
@@ -134,6 +199,84 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     requireWrite();
     const { note, created } = await brain.upsertNote(auth.spaceId, path, input, await config(), allowed);
     return { ok: true, path: note.path, created, visibility: note.meta.visibility };
+  }
+
+  /** Attach the web deep link to a write result so the caller can hand the
+   *  owner a link without a second round-trip through preview_url. */
+  function withUrl<T extends object>(res: T, spaceId = auth.spaceId): T & { url?: string } {
+    const r = res as Record<string, unknown>;
+    // write_brain/write_space previews resolve a path they haven't written yet.
+    if (r.applied === false) return res;
+    const target = [r.path, r.created, r.updated, r.appended].find(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+    if (!target) return res;
+    return { ...res, url: buildPreviewUrl(target, spaceId) };
+  }
+
+  const confirmTokenSchema = z
+    .string()
+    .optional()
+    .describe(
+      "for specs/PRDs/plans only: the token from this tool's draft preview, sent back after the owner explicitly approved the draft. Omit it on the first call.",
+    );
+
+  /** Hold a work-doc write until the owner has seen the draft and approved it.
+   *  Returns the preview to hand back, or null when the write may proceed. */
+  async function gateWorkDoc(
+    req: Omit<DraftRequest, "operation" | "title"> & {
+      title?: string;
+      append?: boolean;
+      scope?: Visibility[];
+    },
+  ): Promise<DraftPreview | null> {
+    if (!req.body?.trim()) return null;
+    const declared = isWorkDoc({ type: req.type, path: req.path });
+    // Updates and appends only name a path, so the note's own type decides —
+    // Bonds files specs under engineering/ as well as under product/specs/.
+    if (!declared && req.type) return null;
+
+    const existing = await brain
+      .readNote(req.spaceId, req.path, req.scope ?? allowed)
+      .catch(() => null);
+    const type = req.type ?? existing?.meta.type;
+    if (!declared && !isWorkDoc({ type })) return null;
+
+    const operation: DraftOperation = req.append ? "append" : existing ? "overwrite" : "create";
+    return reviewDraft({
+      ...req,
+      type,
+      title: req.title ?? existing?.meta.title ?? req.path,
+      operation,
+    });
+  }
+
+  /**
+   * Notes come back as raw markdown, where an embedded image is just
+   * `src: oms-asset:<id>` — unreadable on its own. Append a short index so the
+   * agent knows those references are fetchable, and with what.
+   */
+  async function withMediaIndex(spaceId: string, markdown: string): Promise<string> {
+    const ids = assetRefsInBody(markdown);
+    if (ids.length === 0) return markdown;
+    const assets = await Promise.all(
+      ids.map((id) => getAsset(spaceId, id).catch(() => null)),
+    );
+    const lines = assets
+      .filter((a): a is NoteAsset => a !== null)
+      .map((a) => {
+        const size = a.width && a.height ? `, ${a.width}x${a.height}` : "";
+        return `- ${assetUri(a.id)} — ${a.kind} (${a.mime}${size})${a.originalName ? ` "${a.originalName}"` : ""}`;
+      });
+    if (lines.length === 0) return markdown;
+    return `${markdown}\n\n---\nMedia embedded above — call get_media with one of these to actually see it:\n${lines.join("\n")}\n`;
+  }
+
+  /** Where create_note / create_space_note will put a note, mirroring Brain.createNote. */
+  function derivedPath(cfg: UserConfig, type: string, title: string, explicit?: string): string {
+    const given = explicit?.trim().replace(/^\/+/, "");
+    if (given) return given;
+    return `${folderForType(cfg, type || "note")}/${slugify(title)}.md`;
   }
 
   // ── Read / recall ────────────────────────────────────────────────────────
@@ -185,13 +328,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     "read_note",
     {
       title: "Read a note",
-      description: "Read the full markdown (frontmatter + body) of a note by its path.",
+      description:
+        "Read the full markdown (frontmatter + body) of a note by its path. If it embeds images or video, the reply lists their `oms-asset:` references — pass one to get_media to actually see it.",
       annotations: { readOnlyHint: true },
       inputSchema: { path: z.string().describe("relative note path, e.g. projects/x/_index.md") },
     },
     async ({ path }) => {
       const note = await brain.readNote(auth.spaceId, path, allowed);
-      return text(serializeNote(note.meta, note.body));
+      return text(await withMediaIndex(auth.spaceId, serializeNote(note.meta, note.body)));
     },
   );
 
@@ -391,21 +535,27 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           deep_research: "research_brain — ambiguous, multi-hop, history/synthesis, or low coverage",
           navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
           write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version + activity for version timeline; palette (starters + component schemas) for rich embeds; preview_url for live web preview; link_context for graph hints",
+          work_docs:
+            "specs / PRDs / plans / RFCs / design docs are never written on the first call, in the self space or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft, a suggested `local_file`, and a `confirm_token`. Show the owner the draft, get an explicit yes, end the turn, then call again with the identical body + confirm_token. Editing the draft invalidates the token.",
+          links: "every write returns a `url` deep link — always give it to the owner after saving",
+          comments:
+            "list_comments / add_comment / resolve_comment (and list_space_comments / add_space_comment / resolve_space_comment for company wikis) — talk to the person on a note without editing it. `quote` anchors a comment to an exact span, which shows as a highlight in the app; list_comments with no path returns every open thread, i.e. what still needs attention. Any space member can comment, including roles that cannot write notes.",
           spaces:
             "company wikis (list_spaces) mirror the same routing via *_space variants: recall_space / search_space (fast), research_space (deep), get_space_neighbors / get_space_backlinks / search_space_by_entity / space_timeline (navigate), create_space_note / update_space_note / append_space_note / write_space (write, owner/admin)",
           friends:
             "shared brains (list_friends) mirror the same read routing via *_friend variants: recall_friend / search_friend_brain (fast), research_friend (deep), get_friend_neighbors / get_friend_backlinks / search_friend_by_entity / friend_timeline (navigate) — always read-only, capped at granted visibility",
+          media:
+            "add_media stores an image/video and returns an oms-asset:<id> reference; get_media returns an image as visual content you can actually look at; list_media enumerates what exists. All three take an optional `space` slug instead of having *_space twins.",
+        },
+        media: {
+          reference_scheme:
+            "note bodies embed media as a :::image or :::video block whose `src` is `oms-asset:<id>`. It is an opaque reference, not a URL — the bytes live in a private bucket and are only reachable through get_media or a short-lived signed url. Never fabricate an id.",
+          limits: "images up to 10 MB (png, jpeg, webp, gif, avif); video up to 50 MB (mp4, webm, mov)",
+          vision:
+            "get_media downscales images to at most 1568px before returning them, so reading one is cheap. Video is never returned as content — models can't watch it.",
         },
         categories: cfg.noteTypes,
-        conventions: {
-          identity: "identity/about-me.md (use update_identity)",
-          goals: "goals/<year>/yearly.md or goals/<year>/q<n>.md (use set_goal)",
-          projects: "projects/<slug>/_index.md is the overview; nest docs in prds/, specs/, transcripts/, notes/, subprojects/<slug>/_index.md (use upsert_project, add_to_project)",
-          people: "people/<slug>.md (use add_person)",
-          journal: "journal/<year>/<date>.md (use log_journal)",
-          todos: "todos/<list>.md as checkbox lines (use add_todo)",
-          memory: "memory/log.md — quick durable facts learned in conversation (use remember)",
-        },
+        conventions: conventionsFor(cfg),
       });
     },
   );
@@ -816,7 +966,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Read a company wiki note",
       description:
-        "Read the full markdown of one note in a company wiki you belong to by path — same as read_note, but scoped to that space. Read-only. Call list_spaces first for valid `space` values.",
+        "Read the full markdown of one note in a company wiki you belong to by path — same as read_note, but scoped to that space. Embedded media is listed as `oms-asset:` references; pass one to get_media (with the same `space`) to see it. Read-only. Call list_spaces first for valid `space` values.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -826,7 +976,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     async ({ space, path }) => {
       const s = findSpace(await companySpaces(), space);
       const note = await brain.readNote(s.id, path, s.allowed);
-      return text(serializeNote(note.meta, note.body));
+      return text(await withMediaIndex(s.id, serializeNote(note.meta, note.body)));
     },
   );
 
@@ -953,7 +1103,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Create a company wiki note",
       description:
-        "Create a note inside a company wiki selected by its stable space slug. Requires owner/admin role and a writable connection. Never writes to the personal brain.",
+        "Create a note inside a company wiki selected by its stable space slug. Requires owner/admin role and a writable connection. Never writes to the personal brain. Specs, PRDs and plans are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -964,16 +1114,30 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
         path: z.string().optional(),
+        confirm_token: confirmTokenSchema,
       },
     },
-    async ({ space, ...args }) => {
+    async ({ space, confirm_token, ...args }) => {
       const s = findSpace(await companySpaces(), space);
       requireCompanyWrite(s);
       if (args.visibility && !s.allowed.includes(args.visibility)) {
         throw new ForbiddenError("cannot create a company note above your scope");
       }
-      const note = await brain.createNote(s.id, args, await getUserConfig(s.id), s.allowed);
-      return text({ space: s.slug, created: note.path, meta: note.meta });
+      const cfg = await getUserConfig(s.id);
+      const pending = await gateWorkDoc({
+        spaceId: s.id,
+        space: s.slug,
+        path: derivedPath(cfg, args.type, args.title, args.path),
+        title: args.title,
+        body: args.body,
+        type: args.type,
+        visibility: args.visibility,
+        scope: s.allowed,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
+      const note = await brain.createNote(s.id, args, cfg, s.allowed);
+      return text(withUrl({ space: s.slug, created: note.path, meta: note.meta }, s.id));
     },
   );
 
@@ -982,7 +1146,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Update a company wiki note",
       description:
-        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection.",
+        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -992,16 +1156,28 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility: VisibilityEnum.optional(),
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
+        confirm_token: confirmTokenSchema,
       },
     },
-    async ({ space, path, ...patch }) => {
+    async ({ space, path, confirm_token, ...patch }) => {
       const s = findSpace(await companySpaces(), space);
       requireCompanyWrite(s);
       if (patch.visibility && !s.allowed.includes(patch.visibility)) {
         throw new ForbiddenError("cannot update a company note above your scope");
       }
+      const pending = await gateWorkDoc({
+        spaceId: s.id,
+        space: s.slug,
+        path,
+        title: patch.title,
+        body: patch.body,
+        visibility: patch.visibility,
+        scope: s.allowed,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
       const note = await brain.updateNote(s.id, path, patch, s.allowed);
-      return text({ space: s.slug, updated: note.path, meta: note.meta });
+      return text(withUrl({ space: s.slug, updated: note.path, meta: note.meta }, s.id));
     },
   );
 
@@ -1010,19 +1186,125 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Append to a company wiki note",
       description:
-        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection.",
+        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
         path: z.string(),
         text: z.string(),
+        confirm_token: confirmTokenSchema,
       },
     },
-    async ({ space, path, text: content }) => {
+    async ({ space, path, text: content, confirm_token }) => {
       const s = findSpace(await companySpaces(), space);
       requireCompanyWrite(s);
+      const pending = await gateWorkDoc({
+        spaceId: s.id,
+        space: s.slug,
+        path,
+        body: content,
+        append: true,
+        scope: s.allowed,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
       const note = await brain.appendToNote(s.id, path, content, s.allowed);
-      return text({ space: s.slug, appended: note.path });
+      return text(withUrl({ space: s.slug, appended: note.path }, s.id));
+    },
+  );
+
+  server.registerTool(
+    "move_space_note",
+    {
+      title: "Move or rename a company wiki note",
+      description:
+        "Move a note to a new path inside a company wiki, preserving its frontmatter, version history and comment threads. Use this to reorganize the wiki (e.g. into a pillar's specs/ folder) instead of recreating the note and leaving a redirect behind. Refuses a destination whose top-level folder doesn't exist in the space yet, so a typo can't invent a pillar — pass `allow_new_folder` when you really mean to create one. Returns `broken_backlinks`: notes that still link to the OLD path and need rewriting. Requires owner/admin role.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        from: z.string().describe("current note path"),
+        to: z.string().describe("destination path, must end in .md"),
+        summary: z.string().max(80).optional().describe("why, shown on the timeline"),
+        allow_new_folder: z
+          .boolean()
+          .optional()
+          .describe("permit a destination in a top-level folder the space doesn't have yet"),
+      },
+    },
+    async ({ space, from, to, summary, allow_new_folder }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      const cfg = await getUserConfig(s.id);
+      if (!allow_new_folder) {
+        const top = to.trim().replace(/^\/+/, "").split("/")[0] ?? "";
+        const existing = new Set(cfg.noteTypes.map((t) => t.folder));
+        for (const n of await brain.listNotes(s.id, { allowed: s.allowed, limit: 500 })) {
+          const seg = n.path.split("/")[0];
+          if (seg && n.path.includes("/")) existing.add(seg);
+        }
+        if (!existing.has(top)) {
+          throw new BadRequestError(
+            `"${top}/" is not a folder in this space. Existing: ${[...existing].sort().join(", ")}. ` +
+              `Pass allow_new_folder:true to create it.`,
+          );
+        }
+      }
+      // Read the incoming links before the move: they keep pointing at the old
+      // path, and the caller needs the list to repair them.
+      const backlinks = await brain
+        .getBacklinks(s.id, from, s.allowed, 50)
+        .catch(() => [] as { path: string }[]);
+      const note = await brain.moveNote(s.id, from, to, s.allowed, mcpAttr(summary), cfg);
+      return text(
+        withUrl(
+          {
+            space: s.slug,
+            moved: from,
+            to: note.path,
+            broken_backlinks: backlinks.map((b) => b.path),
+          },
+          s.id,
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    "delete_space_note",
+    {
+      title: "Delete a company wiki note",
+      description:
+        "Permanently remove a note from a company wiki. Gated: the first call deletes nothing and reports what would be lost plus which notes link to it (`breaks_backlinks`), with a `confirm_token`; only a second call carrying that token removes it. Use it to retire dead redirects and superseded stubs once their backlinks reach zero. Requires owner/admin role.",
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string(),
+        confirm_token: z
+          .string()
+          .optional()
+          .describe("the token from this tool's preview, sent back after the owner approved the deletion"),
+      },
+    },
+    async ({ space, path, confirm_token }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireCompanyWrite(s);
+      const note = await brain.readNote(s.id, path, s.allowed);
+      const backlinks = await brain
+        .getBacklinks(s.id, path, s.allowed, 50)
+        .catch(() => [] as { path: string }[]);
+      const pending = reviewDelete({
+        spaceId: s.id,
+        space: s.slug,
+        path,
+        title: note.meta.title,
+        type: note.meta.type,
+        body: note.body,
+        backlinks: backlinks.map((b) => b.path),
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
+      await brain.deleteNote(s.id, path, s.allowed, mcpAttr(`delete ${path}`));
+      return text({ space: s.slug, deleted: path });
     },
   );
 
@@ -1083,13 +1365,18 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         await getUserConfig(s.id),
         s.allowed,
       );
-      return text({
-        ok: true,
-        space: s.slug,
-        path: note.path,
-        created,
-        visibility: note.meta.visibility,
-      });
+      return text(
+        withUrl(
+          {
+            ok: true,
+            space: s.slug,
+            path: note.path,
+            created,
+            visibility: note.meta.visibility,
+          },
+          s.id,
+        ),
+      );
     },
   );
 
@@ -1119,7 +1406,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         apply,
         visibility,
       });
-      return text(res);
+      return text(withUrl(res, s.id));
     },
   );
 
@@ -1219,7 +1506,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility: visibility ?? "private",
         tags: ["memory", ...(tags ?? [])],
       });
-      return text({ ...res, remembered: t.trim() });
+      return text(withUrl({ ...res, remembered: t.trim() }));
     },
   );
 
@@ -1246,7 +1533,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         append,
         visibility,
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 
@@ -1273,7 +1560,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         append,
         visibility,
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 
@@ -1303,7 +1590,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         append,
         visibility,
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 
@@ -1312,7 +1599,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Add a document to a project",
       description:
-        "Add or update a document inside a project: a PRD, spec, meeting transcript, note, or a nested sub-project. Path is derived from the project + kind + title.",
+        "Add or update a document inside a project: a PRD, spec, meeting transcript, note, or a nested sub-project. Path is derived from the project + kind + title. PRDs and specs are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         project: z.string().describe("the parent project name"),
@@ -1322,10 +1609,22 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         append: z.boolean().optional(),
         visibility: VisibilityEnum.optional(),
         tags: z.array(z.string()).optional(),
+        confirm_token: confirmTokenSchema,
       },
     },
-    async ({ project, kind, title, body, append, visibility, tags }) => {
+    async ({ project, kind, title, body, append, visibility, tags, confirm_token }) => {
       requireWrite();
+      const pending = await gateWorkDoc({
+        spaceId: auth.spaceId,
+        path: projectDocPath(project, kind as ProjectKind, title),
+        title,
+        body,
+        type: kind,
+        append,
+        visibility,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
       const res = await addToProject(brain, auth.spaceId, await config(), allowed, {
         project,
         kind: kind as ProjectKind,
@@ -1335,7 +1634,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility,
         tags,
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 
@@ -1365,7 +1664,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility,
         tags,
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 
@@ -1424,7 +1723,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         append: true,
         visibility,
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 
@@ -1766,7 +2065,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Create a note",
       description:
-        "Create a new markdown note. Path is derived from type+title unless provided. Prefer the high-level tools (update_identity, upsert_project, …) when they fit.",
+        "Create a new markdown note. Path is derived from type+title unless provided. Prefer the high-level tools (update_identity, upsert_project, …) when they fit. Specs, PRDs and plans are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         type: z.string().describe("note type (identity, goal, project, person, journal, ...)"),
@@ -1777,6 +2076,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         links: z.array(z.string()).optional(),
         path: z.string().optional(),
         summary: z.string().max(80).optional().describe("intent shown on the timeline"),
+        confirm_token: confirmTokenSchema,
       },
     },
     async (args) => {
@@ -1784,10 +2084,21 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       if (args.visibility && !allowed.includes(args.visibility)) {
         throw new ForbiddenError("cannot create a note above your scope");
       }
-      const { summary, ...input } = args;
+      const { summary, confirm_token, ...input } = args;
+      const cfg = await config();
+      const pending = await gateWorkDoc({
+        spaceId: auth.spaceId,
+        path: derivedPath(cfg, input.type, input.title, input.path),
+        title: input.title,
+        body: input.body,
+        type: input.type,
+        visibility: input.visibility,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
       // Pass `allowed` so a note can't exceed scope via its type's default visibility.
-      const note = await brain.createNote(auth.spaceId, input, await config(), allowed, mcpAttr(summary));
-      return text({ created: note.path, meta: note.meta });
+      const note = await brain.createNote(auth.spaceId, input, cfg, allowed, mcpAttr(summary));
+      return text(withUrl({ created: note.path, meta: note.meta }));
     },
   );
 
@@ -1795,7 +2106,8 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     "update_note",
     {
       title: "Update a note",
-      description: "Update a note's body and/or frontmatter by path. Requires a writable scope.",
+      description:
+        "Update a note's body and/or frontmatter by path. Requires a writable scope. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         path: z.string(),
@@ -1805,12 +2117,22 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
         summary: z.string().max(80).optional().describe("intent shown on the timeline"),
+        confirm_token: confirmTokenSchema,
       },
     },
-    async ({ path, summary, ...patch }) => {
+    async ({ path, summary, confirm_token, ...patch }) => {
       requireWrite();
+      const pending = await gateWorkDoc({
+        spaceId: auth.spaceId,
+        path,
+        title: patch.title,
+        body: patch.body,
+        visibility: patch.visibility,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
       const note = await brain.updateNote(auth.spaceId, path, patch, allowed, mcpAttr(summary));
-      return text({ updated: note.path, meta: note.meta });
+      return text(withUrl({ updated: note.path, meta: note.meta }));
     },
   );
 
@@ -1818,14 +2140,28 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     "append_to_note",
     {
       title: "Append to a note",
-      description: "Append text to the end of a note's body by path.",
+      description:
+        "Append text to the end of a note's body by path. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false },
-      inputSchema: { path: z.string(), text: z.string(), summary: z.string().max(80).optional() },
+      inputSchema: {
+        path: z.string(),
+        text: z.string(),
+        summary: z.string().max(80).optional(),
+        confirm_token: confirmTokenSchema,
+      },
     },
-    async ({ path, text: t, summary }) => {
+    async ({ path, text: t, summary, confirm_token }) => {
       requireWrite();
+      const pending = await gateWorkDoc({
+        spaceId: auth.spaceId,
+        path,
+        body: t,
+        append: true,
+        confirmToken: confirm_token,
+      });
+      if (pending) return text(pending);
       const note = await brain.appendToNote(auth.spaceId, path, t, allowed, mcpAttr(summary));
-      return text({ appended: note.path });
+      return text(withUrl({ appended: note.path }));
     },
   );
 
@@ -1865,7 +2201,428 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         apply,
         visibility,
       });
-      return text(res);
+      return text(withUrl(res));
+    },
+  );
+
+  // ── Comments (multiplayer: agents and humans in the same threads) ─────────
+  // Comments live beside the note, never inside its markdown, and anchor to a
+  // quoted span so they survive edits. Commenting is looser than editing: any
+  // member of a space may comment on a note they can read.
+
+  /** Name the comment after the connected client ("Claude", "Cursor", ...). */
+  function agentLabel(): string {
+    try {
+      const client = server.server.getClientVersion();
+      if (client?.name) return client.name;
+    } catch {
+      /* client info is only available after initialize */
+    }
+    return `agent:${auth.via ?? "token"}`;
+  }
+  function mcpActor(role: SpaceRole = auth.role): CommentActor {
+    return {
+      userId: auth.userId,
+      kind: "agent",
+      label: agentLabel(),
+      isAdmin: role === "owner" || role === "admin",
+    };
+  }
+  /** Compact thread shape — anchors and ids in full are noise for a model. */
+  function threadOut(t: CommentThread) {
+    return {
+      thread_id: t.id,
+      path: t.path,
+      quote: t.anchor?.quote ?? null,
+      ...(t.orphaned ? { orphaned: true as const } : {}),
+      resolved: Boolean(t.resolvedAt),
+      comments: [t.root, ...t.replies].map((c) => ({
+        id: c.id,
+        author: c.author.label,
+        kind: c.author.kind,
+        at: c.createdAt,
+        body: c.body,
+      })),
+    };
+  }
+
+  server.registerTool(
+    "list_comments",
+    {
+      title: "List comments",
+      description:
+        "Read the comment threads on a note (pass `path`), or — with no path — every unresolved thread across the brain, i.e. what still needs attention. Each thread shows the quoted text it's anchored to, who said what (human or agent), and whether it's resolved. `orphaned: true` means the quoted text no longer exists in the note.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().optional().describe("note path; omit for all open threads in the brain"),
+        include_resolved: z.boolean().optional().describe("default false"),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ path, include_resolved, limit }) => {
+      const threads = path
+        ? await listCommentThreads(brain, auth.spaceId, path, allowed, {
+            includeResolved: include_resolved,
+          })
+        : await listOpenThreads(auth.spaceId, allowed, { limit });
+      return text(threads.map(threadOut));
+    },
+  );
+
+  server.registerTool(
+    "add_comment",
+    {
+      title: "Comment on a note",
+      description:
+        "Leave a comment on a note — the multiplayer channel between you and the person (and any other agent working the same note). Pass `quote` with text copied EXACTLY from the note to anchor the comment to that span (it shows as a highlight in the app); omit it for a comment about the note as a whole. Use `reply_to` with a comment id from list_comments to answer an existing thread instead of starting a new one. Comments never modify the note's content.",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: {
+        path: z.string().describe("note path, e.g. projects/x/_index.md"),
+        body: z.string().describe("the comment text"),
+        quote: z
+          .string()
+          .optional()
+          .describe("exact text from the note to anchor to; must appear verbatim"),
+        reply_to: z.string().optional().describe("comment id to reply to (from list_comments)"),
+      },
+    },
+    async ({ path, body, quote, reply_to }) => {
+      requireWrite();
+      const res = await addComment(brain, auth.spaceId, allowed, mcpActor(), {
+        path,
+        body,
+        quote,
+        replyTo: reply_to,
+      });
+      return text({
+        comment_id: res.comment.id,
+        thread_id: res.thread,
+        path,
+        anchored: res.anchored,
+      });
+    },
+  );
+
+  server.registerTool(
+    "resolve_comment",
+    {
+      title: "Resolve a comment thread",
+      description:
+        "Mark a comment thread as resolved once it's been handled (or reopen it with `reopen: true`). Takes a `thread_id` from list_comments.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        thread_id: z.string().describe("thread id from list_comments"),
+        reopen: z.boolean().optional().describe("true to reopen a resolved thread"),
+      },
+    },
+    async ({ thread_id, reopen }) => {
+      requireWrite();
+      const thread = await setThreadResolved(auth.spaceId, thread_id, !reopen, mcpActor());
+      return text({ thread_id: thread.id, path: thread.path, resolved: Boolean(thread.resolvedAt) });
+    },
+  );
+
+  server.registerTool(
+    "list_space_comments",
+    {
+      title: "List comments in a company wiki",
+      description:
+        "Read comment threads in a company wiki you belong to — same as list_comments, but scoped to that space. With `path` returns that note's threads; without it, every unresolved thread in the wiki. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string().optional().describe("note path; omit for all open threads in the wiki"),
+        include_resolved: z.boolean().optional().describe("default false"),
+        limit: z.number().int().positive().max(200).optional(),
+      },
+    },
+    async ({ space, path, include_resolved, limit }) => {
+      const s = findSpace(await companySpaces(), space);
+      const threads = path
+        ? await listCommentThreads(brain, s.id, path, s.allowed, {
+            includeResolved: include_resolved,
+          })
+        : await listOpenThreads(s.id, s.allowed, { limit });
+      return text(threads.map(threadOut));
+    },
+  );
+
+  server.registerTool(
+    "add_space_comment",
+    {
+      title: "Comment on a company wiki note",
+      description:
+        "Leave a comment on a note in a company wiki you belong to — same as add_comment, but scoped to that space. Unlike the *_space write tools this does NOT require owner/admin: any member can comment on a note they can read, because commenting doesn't change the wiki's content. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        path: z.string().describe("relative note path, e.g. product/spec.md"),
+        body: z.string().describe("the comment text"),
+        quote: z
+          .string()
+          .optional()
+          .describe("exact text from the note to anchor to; must appear verbatim"),
+        reply_to: z.string().optional().describe("comment id to reply to (from list_space_comments)"),
+      },
+    },
+    async ({ space, path, body, quote, reply_to }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireWrite();
+      const res = await addComment(brain, s.id, s.allowed, mcpActor(s.role), {
+        path,
+        body,
+        quote,
+        replyTo: reply_to,
+      });
+      return text({
+        space: s.slug,
+        comment_id: res.comment.id,
+        thread_id: res.thread,
+        path,
+        anchored: res.anchored,
+      });
+    },
+  );
+
+  server.registerTool(
+    "resolve_space_comment",
+    {
+      title: "Resolve a company wiki comment thread",
+      description:
+        "Mark a comment thread in a company wiki as resolved (or reopen it with `reopen: true`) — same as resolve_comment, but scoped to that space. Call list_spaces first for valid `space` values.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      inputSchema: {
+        space: z.string().describe("space slug from list_spaces"),
+        thread_id: z.string().describe("thread id from list_space_comments"),
+        reopen: z.boolean().optional().describe("true to reopen a resolved thread"),
+      },
+    },
+    async ({ space, thread_id, reopen }) => {
+      const s = findSpace(await companySpaces(), space);
+      requireWrite();
+      const thread = await setThreadResolved(s.id, thread_id, !reopen, mcpActor(s.role));
+      return text({
+        space: s.slug,
+        thread_id: thread.id,
+        path: thread.path,
+        resolved: Boolean(thread.resolvedAt),
+      });
+    },
+  );
+
+  // ── Media (images and video an agent can store and look at) ───────────────
+  // Bytes live in a private bucket and a note body only ever carries
+  // `oms-asset:<id>`. Unlike notes, media is addressed by one set of tools with
+  // an optional `space`: the routing risk here is "which wiki does this
+  // screenshot belong to", which a named argument answers as well as a twin
+  // tool would, without doubling the surface an agent has to reason about.
+
+  /** Resolve the `space` argument to a writable/readable target. */
+  async function mediaTarget(slug?: string): Promise<{
+    id: string;
+    label: string;
+    allowed: Visibility[];
+    requireWriteHere: () => void;
+  }> {
+    if (!slug?.trim()) {
+      return {
+        id: auth.spaceId,
+        label: "self",
+        allowed,
+        requireWriteHere: requireWrite,
+      };
+    }
+    const s = findSpace(await companySpaces(), slug);
+    return {
+      id: s.id,
+      label: s.slug,
+      allowed: s.allowed,
+      requireWriteHere: () => requireCompanyWrite(s),
+    };
+  }
+
+  function assetOut(a: NoteAsset) {
+    return {
+      asset_id: a.id,
+      ref: assetUri(a.id),
+      kind: a.kind,
+      mime: a.mime,
+      bytes: a.sizeBytes,
+      ...(a.width && a.height ? { dimensions: `${a.width}x${a.height}` } : {}),
+      filename: a.originalName,
+      note_path: a.path,
+      created: a.createdAt,
+    };
+  }
+
+  server.registerTool(
+    "add_media",
+    {
+      title: "Store an image or video",
+      description:
+        "Store an image or video in the brain and get back a stable `oms-asset:<id>` reference. Use this when the person shares a screenshot, diagram, photo or clip that's worth keeping — pass the bytes as base64 in `data`, or a public link in `source_url` and the server downloads it. Give `note_path` to also embed it in that note (appends an :::image / :::video block); omit it to just store the file and place the returned `ref` yourself. Images: PNG, JPEG, WEBP, GIF, AVIF up to 10 MB. Video: MP4, WEBM, MOV up to 50 MB — for anything longer, keep it on Loom/YouTube and link it instead.",
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      inputSchema: {
+        data: z
+          .string()
+          .optional()
+          .describe("base64-encoded file contents (a `data:` URL is accepted too). Either this or source_url."),
+        source_url: z
+          .string()
+          .optional()
+          .describe("public http(s) URL for the server to download instead of sending base64"),
+        mime_type: z
+          .string()
+          .optional()
+          .describe("e.g. image/png — required with `data`, inferred from the response with source_url"),
+        filename: z.string().optional(),
+        note_path: z
+          .string()
+          .optional()
+          .describe("note to embed this in, e.g. projects/bonds/_index.md — omit to only store the file"),
+        alt: z.string().optional().describe("what the image shows (also its alt text)"),
+        caption: z.string().optional(),
+        space: z
+          .string()
+          .optional()
+          .describe("company wiki slug from list_spaces — omit for the person's own brain"),
+      },
+    },
+    async ({ data, source_url, mime_type, filename, note_path, alt, caption, space }) => {
+      const target = await mediaTarget(space);
+      target.requireWriteHere();
+
+      let bytes: Uint8Array;
+      let mime = mime_type?.trim().toLowerCase() ?? "";
+      let name = filename ?? null;
+
+      if (source_url?.trim()) {
+        const remote = await fetchRemoteMedia(source_url, MAX_VIDEO_BYTES);
+        bytes = remote.bytes;
+        mime = mime || remote.mime;
+        name = name ?? remote.filename;
+      } else if (data?.trim()) {
+        const inline = /^data:([^;,]+);base64,(.*)$/s.exec(data.trim());
+        if (inline) {
+          mime = mime || inline[1]!.toLowerCase();
+          bytes = new Uint8Array(Buffer.from(inline[2]!, "base64"));
+        } else {
+          bytes = new Uint8Array(Buffer.from(data.trim(), "base64"));
+        }
+        if (!mime) throw new BadRequestError("mime_type is required when sending base64 `data`");
+      } else {
+        throw new BadRequestError("pass either `data` (base64) or `source_url`");
+      }
+
+      const asset = await createAsset({
+        spaceId: target.id,
+        path: note_path?.trim() || null,
+        mime,
+        bytes,
+        originalName: name,
+        createdBy: auth.userId,
+      });
+
+      let embedded: string | null = null;
+      if (note_path?.trim()) {
+        const note = await brain.appendToNote(
+          target.id,
+          note_path.trim(),
+          mediaBlockFor(asset, { alt, caption }),
+          target.allowed,
+          attributionFromAuth(auth, `embedded ${asset.kind}`),
+        );
+        embedded = note.path;
+      }
+
+      return text(
+        withUrl(
+          {
+            ok: true,
+            ...assetOut(asset),
+            ...(space ? { space: target.label } : {}),
+            ...(embedded
+              ? { path: embedded, embedded_in: embedded }
+              : {
+                  next: `Not embedded anywhere yet — put \`src: ${assetUri(asset.id)}\` inside a :::image or :::video block in a note body.`,
+                }),
+          },
+          target.id,
+        ),
+      );
+    },
+  );
+
+  server.registerTool(
+    "get_media",
+    {
+      title: "Look at stored media",
+      description:
+        "Fetch a stored image so you can actually SEE it and reason about it — the image comes back as visual content, downscaled for vision. Use it whenever a note references `oms-asset:<id>` and the answer depends on what the picture contains (reading a screenshot, describing a diagram, comparing designs). Video can't be returned as content; for a video this returns its metadata plus a temporary signed URL. Accepts a bare id or the `oms-asset:<id>` you read out of a note.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        asset: z.string().describe("asset id, or the oms-asset:<id> reference copied from a note"),
+        space: z
+          .string()
+          .optional()
+          .describe("company wiki slug from list_spaces — omit for the person's own brain"),
+      },
+    },
+    async ({ asset, space }) => {
+      const target = await mediaTarget(space);
+      const id = parseAssetRef(asset);
+      const meta = await getAsset(target.id, id);
+
+      if (meta.kind === "video") {
+        const [signed] = await resolveAssets(target.id, [id]);
+        return text({
+          ...assetOut(meta),
+          note: "Video can't be handed to a model as content. Use `url` if your client can fetch it; it expires shortly.",
+          url: signed?.url ?? null,
+        });
+      }
+
+      const image = await agentImage(target.id, id);
+      return {
+        content: [
+          { type: "image" as const, data: image.base64, mimeType: image.mime },
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              { ...assetOut(meta), ...(image.downscaled ? { downscaled_for_vision: true } : {}) },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "list_media",
+    {
+      title: "List stored media",
+      description:
+        "List the images and video stored in the brain, newest first — pass `path` for the media belonging to one note. Use it to find out what visual material exists before deciding what to look at with get_media. Note bodies reference these as `oms-asset:<id>`.",
+      annotations: { readOnlyHint: true },
+      inputSchema: {
+        path: z.string().optional().describe("only media attached to this note, e.g. projects/bonds/_index.md"),
+        limit: z.number().int().positive().max(200).optional(),
+        space: z
+          .string()
+          .optional()
+          .describe("company wiki slug from list_spaces — omit for the person's own brain"),
+      },
+    },
+    async ({ path, limit, space }) => {
+      const target = await mediaTarget(space);
+      const assets = await listAssets(target.id, { path, limit });
+      return text({
+        ...(space ? { space: target.label } : {}),
+        count: assets.length,
+        media: assets.map(assetOut),
+      });
     },
   );
 
@@ -1895,7 +2652,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility,
         tags: ["skill", ...(tags ?? [])],
       });
-      return text(res);
+      return text(withUrl(res));
     },
   );
 

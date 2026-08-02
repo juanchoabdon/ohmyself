@@ -31,6 +31,35 @@ export interface FullNote {
   raw: string;
 }
 
+export type AssetKind = "image" | "video";
+
+/** An image or video uploaded into a note. The bytes sit in a private bucket;
+ *  the body only stores `oms-asset:<id>`. */
+export interface NoteAsset {
+  id: string;
+  spaceId: string;
+  path: string | null;
+  mime: string;
+  kind: AssetKind;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  originalName: string | null;
+  createdAt: string;
+}
+
+/** An asset id traded for a short-lived signed URL. */
+export interface ResolvedAsset {
+  id: string;
+  url: string;
+  mime: string;
+  kind: AssetKind;
+  width: number | null;
+  height: number | null;
+  /** Epoch ms after which `url` stops working. */
+  expiresAt: number;
+}
+
 export interface HistoryEntry {
   version: string;
   author: string;
@@ -43,6 +72,44 @@ export interface HistoryEntry {
 export interface Category {
   folder: string;
   label: string;
+}
+
+/** Where a thread points in the note. Resolved client-side against the rendered
+ *  text, so a comment follows its sentence across edits. */
+export interface CommentAnchor {
+  quote: string;
+  prefix: string;
+  suffix: string;
+  offset: number;
+}
+
+export interface CommentAuthor {
+  userId: string | null;
+  kind: "human" | "agent";
+  label: string;
+}
+
+export interface NoteComment {
+  id: string;
+  threadId: string;
+  parentId: string | null;
+  path: string;
+  body: string;
+  author: CommentAuthor;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommentThread {
+  id: string;
+  path: string;
+  anchor: CommentAnchor | null;
+  /** True when the quoted text is gone from the note. */
+  orphaned: boolean;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  root: NoteComment;
+  replies: NoteComment[];
 }
 
 /** A top-level pillar and how many notes it holds (for the lazy sidebar). */

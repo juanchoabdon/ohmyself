@@ -1,18 +1,124 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
-import { X, ZoomIn } from "lucide-react";
+import { AlertTriangle, Loader2, RotateCw, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ACCEPTED_IMAGE_TYPES, ACCEPTED_VIDEO_TYPES, assetIdFromUri } from "@/lib/assets";
 import { BlockDeleteButton } from "./BlockDeleteButton";
 import { deleteRichBlockAt } from "./markdownRichContent";
+import { AssetImage, AssetVideo, EmbedFrame, MediaPlaceholder } from "./MediaRender";
+import {
+  insertUploadedMedia,
+  notePathFromEditor,
+  pendingUpload,
+  retryUpload,
+  subscribeToUploads,
+} from "./mediaUpload";
+
+function usePendingUpload(key: string | null) {
+  return useSyncExternalStore(
+    subscribeToUploads,
+    () => pendingUpload(key),
+    () => null,
+  );
+}
+
+/** Local preview shown while the bytes are still going up. */
+function UploadingPreview({
+  previewUrl,
+  kind,
+  name,
+  error,
+  onRetry,
+}: {
+  previewUrl: string;
+  kind: "image" | "video";
+  name: string;
+  error?: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-lg border border-border">
+      {kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={previewUrl}
+          alt={name}
+          className={cn("block max-h-[420px] w-full bg-surface object-contain", !error && "opacity-60")}
+        />
+      ) : (
+        <video src={previewUrl} className={cn("max-h-[420px] w-full bg-ink/90", !error && "opacity-60")} muted />
+      )}
+      <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-surface/95 px-3 py-2 text-xs">
+        {error ? (
+          <>
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-red-500" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-red-500">{error}</span>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 font-medium text-ink hover:border-brand/40 hover:text-brand"
+            >
+              <RotateCw className="h-3 w-3" aria-hidden />
+              Retry
+            </button>
+          </>
+        ) : (
+          <>
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted" aria-hidden />
+            <span className="text-muted">Uploading {name}…</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Empty-state chooser: upload a file, or point at a URL. */
+function MediaChooser({
+  accept,
+  label,
+  onPick,
+}: {
+  accept: string[];
+  label: string;
+  onPick: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <MediaPlaceholder>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept.join(",")}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onPick(file);
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className="mx-auto flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:border-brand/40 hover:text-brand"
+      >
+        <Upload className="h-4 w-4" aria-hidden />
+        {label}
+      </button>
+      <p className="mt-2 text-xs text-muted">or drop a file here, or paste a URL below</p>
+    </MediaPlaceholder>
+  );
+}
 
 export function OmsImageView({ node, selected, updateAttributes, editor, getPos }: NodeViewProps) {
   const src = (node.attrs.src as string) || "";
   const alt = (node.attrs.alt as string) || "";
   const caption = (node.attrs.caption as string) || "";
-  const [zoomed, setZoomed] = useState(false);
+  const upload = usePendingUpload((node.attrs.pending as string) || null);
+  const uploaded = assetIdFromUri(src) !== null;
 
   const removeBlock = () => {
     const pos = getPos();
@@ -25,29 +131,36 @@ export function OmsImageView({ node, selected, updateAttributes, editor, getPos 
         <div className="mb-1 flex justify-end">
           <BlockDeleteButton label="Remove image" onClick={removeBlock} />
         </div>
-        {src ? (
-          <button
-            type="button"
-            className="oms-image__zoom group relative block w-full overflow-hidden rounded-lg border border-border"
-            onClick={() => setZoomed(true)}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} alt={alt} className="block max-h-[420px] w-full object-contain bg-surface" />
-            <span className="absolute right-2 top-2 rounded-md border border-border bg-surface/90 p-1 opacity-0 shadow-sm transition-opacity group-hover:opacity-100">
-              <ZoomIn className="h-4 w-4 text-muted" />
-            </span>
-          </button>
+
+        {upload ? (
+          <UploadingPreview
+            previewUrl={upload.previewUrl}
+            kind={upload.kind}
+            name={upload.name}
+            error={upload.error}
+            onRetry={() => retryUpload(editor, node.attrs.pending as string)}
+          />
+        ) : src ? (
+          <AssetImage src={src} alt={alt} caption={selected ? undefined : caption} />
         ) : (
-          <div className="rounded-lg border border-dashed border-border bg-bg px-4 py-8 text-center text-sm text-muted">
-            Add image URL in source mode: :::image block
-          </div>
+          <MediaChooser
+            accept={ACCEPTED_IMAGE_TYPES}
+            label="Upload image"
+            onPick={(file) => {
+              // Replace this empty block with the uploading one.
+              removeBlock();
+              void insertUploadedMedia(editor, file, notePathFromEditor(editor));
+            }}
+          />
         )}
+
         {selected && (
           <div className="mt-2 space-y-2">
             <input
               className="w-full rounded-md border border-border bg-bg px-2 py-1 text-sm"
-              value={src}
-              placeholder="src: https://…"
+              value={uploaded ? "" : src}
+              placeholder={uploaded ? "Uploaded file" : "src: https://…"}
+              disabled={uploaded}
               onChange={(e) => updateAttributes({ src: e.target.value })}
             />
             <input
@@ -64,62 +177,21 @@ export function OmsImageView({ node, selected, updateAttributes, editor, getPos 
             />
           </div>
         )}
-        {caption && !selected && (
-          <figcaption className="mt-2 text-center text-xs text-muted">{caption}</figcaption>
-        )}
       </figure>
-
-      {zoomed && src && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-ink/70 p-4"
-          role="dialog"
-          onClick={() => setZoomed(false)}
-        >
-          <button
-            type="button"
-            className="absolute right-4 top-4 rounded-lg border border-border bg-surface p-2"
-            onClick={() => setZoomed(false)}
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={src}
-            alt={alt}
-            className="max-h-[90vh] max-w-[95vw] rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
     </NodeViewWrapper>
   );
 }
 
-function youtubeEmbedUrl(src: string): string | null {
-  try {
-    const u = new URL(src);
-    if (u.hostname.includes("youtu.be")) {
-      return `https://www.youtube.com/embed/${u.pathname.slice(1)}`;
-    }
-    if (u.hostname.includes("youtube.com")) {
-      const id = u.searchParams.get("v");
-      if (id) return `https://www.youtube.com/embed/${id}`;
-    }
-    if (u.hostname.includes("vimeo.com")) {
-      const id = u.pathname.split("/").filter(Boolean).pop();
-      if (id) return `https://player.vimeo.com/video/${id}`;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-export function OmsVideoView({ node, selected, updateAttributes }: NodeViewProps) {
+export function OmsVideoView({ node, selected, updateAttributes, editor, getPos }: NodeViewProps) {
   const src = (node.attrs.src as string) || "";
   const title = (node.attrs.title as string) || "Video";
-  const embed = youtubeEmbedUrl(src);
+  const upload = usePendingUpload((node.attrs.pending as string) || null);
+  const uploaded = assetIdFromUri(src) !== null;
+
+  const removeBlock = () => {
+    const pos = getPos();
+    if (typeof pos === "number") deleteRichBlockAt(editor, pos);
+  };
 
   return (
     <NodeViewWrapper className={cn("oms-video my-4", selected && "oms-video--selected")}>
@@ -127,8 +199,9 @@ export function OmsVideoView({ node, selected, updateAttributes }: NodeViewProps
         <div className="mb-2 space-y-2">
           <input
             className="w-full rounded-md border border-border bg-bg px-2 py-1 text-sm"
-            value={src}
-            placeholder="YouTube or Vimeo URL"
+            value={uploaded ? "" : src}
+            placeholder={uploaded ? "Uploaded file" : "YouTube, Vimeo, or video URL"}
+            disabled={uploaded}
             onChange={(e) => updateAttributes({ src: e.target.value })}
           />
           <input
@@ -139,22 +212,33 @@ export function OmsVideoView({ node, selected, updateAttributes }: NodeViewProps
           />
         </div>
       )}
-      {embed ? (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <iframe
-            title={title}
-            src={embed}
-            className="aspect-video w-full border-0 bg-bg"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
+
+      <div className="mb-1 flex justify-end">
+        <BlockDeleteButton label="Remove video" onClick={removeBlock} />
+      </div>
+
+      {upload ? (
+        <UploadingPreview
+          previewUrl={upload.previewUrl}
+          kind={upload.kind}
+          name={upload.name}
+          error={upload.error}
+          onRetry={() => retryUpload(editor, node.attrs.pending as string)}
+        />
+      ) : src ? (
+        <AssetVideo src={src} title={title} />
       ) : (
-        <div className="rounded-lg border border-dashed border-border bg-bg px-4 py-8 text-center text-sm text-muted">
-          Paste a YouTube or Vimeo URL
-        </div>
+        <MediaChooser
+          accept={ACCEPTED_VIDEO_TYPES}
+          label="Upload video"
+          onPick={(file) => {
+            removeBlock();
+            void insertUploadedMedia(editor, file, notePathFromEditor(editor));
+          }}
+        />
       )}
-      {title && <p className="mt-2 text-xs text-muted">{title}</p>}
+
+      {title && !selected && <p className="mt-2 text-xs text-muted">{title}</p>}
     </NodeViewWrapper>
   );
 }
@@ -183,19 +267,9 @@ export function OmsEmbedView({ node, selected, updateAttributes }: NodeViewProps
         </div>
       )}
       {url ? (
-        <div className="overflow-hidden rounded-lg border border-border">
-          <iframe
-            title={title}
-            src={url}
-            sandbox="allow-scripts allow-same-origin allow-popups"
-            className="w-full border-0 bg-bg"
-            style={{ height: `${Math.min(height, 720)}px` }}
-          />
-        </div>
+        <EmbedFrame url={url} title={title} height={height} />
       ) : (
-        <div className="rounded-lg border border-dashed border-border bg-bg px-4 py-8 text-center text-sm text-muted">
-          Paste an embed URL
-        </div>
+        <MediaPlaceholder>Paste an embed URL</MediaPlaceholder>
       )}
     </NodeViewWrapper>
   );

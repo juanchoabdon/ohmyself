@@ -1,4 +1,12 @@
-export type BrainEventType = "note_created" | "note_updated" | "note_deleted" | "note_moved";
+export type BrainEventType =
+  | "note_created"
+  | "note_updated"
+  | "note_deleted"
+  | "note_moved"
+  | "comment_created"
+  | "comment_updated"
+  | "comment_resolved"
+  | "comment_deleted";
 
 export interface BrainEvent {
   type: BrainEventType;
@@ -7,6 +15,9 @@ export interface BrainEvent {
   /** Destination path for note_moved. */
   to?: string;
   updated?: string;
+  /** comment_* only: the comment that changed and the thread it belongs to. */
+  commentId?: string;
+  threadId?: string;
 }
 
 type Listener = (event: BrainEvent) => void;

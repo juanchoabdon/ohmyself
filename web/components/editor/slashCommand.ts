@@ -154,34 +154,24 @@ export const slashCommandItems: SlashCommandItem[] = [
   },
   {
     title: "Image",
-    hint: "zoom",
+    hint: "upload or URL",
     command: ({ editor, range }) =>
       editor
         .chain()
         .focus()
         .deleteRange(range)
-        .insertContent({
-          type: "omsImage",
-          attrs: {
-            src: "https://picsum.photos/seed/ohmyself/800/450",
-            alt: "Example image",
-            caption: "Click to zoom",
-          },
-        })
+        .insertContent({ type: "omsImage", attrs: { src: "", alt: "", caption: "" } })
         .run(),
   },
   {
     title: "Video",
-    hint: "youtube",
+    hint: "upload or YouTube",
     command: ({ editor, range }) =>
       editor
         .chain()
         .focus()
         .deleteRange(range)
-        .insertContent({
-          type: "omsVideo",
-          attrs: { src: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Video title" },
-        })
+        .insertContent({ type: "omsVideo", attrs: { src: "", title: "" } })
         .run(),
   },
   {

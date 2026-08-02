@@ -29,6 +29,9 @@ server/versions/
 .oms/secrets.env
 .oms/*.local
 
+# Drafts an agent staged locally before writing them to the brain.
+.ohmyself-drafts/
+
 # OS / editor
 .DS_Store
 *.log

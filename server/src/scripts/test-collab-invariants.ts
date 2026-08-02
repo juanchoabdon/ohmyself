@@ -16,7 +16,7 @@
  */
 import * as Y from "yjs";
 import { applyUpdate, encodeStateAsUpdate } from "yjs";
-import { applyMarkdownToYDoc } from "../collab/hydrate.js";
+import { replaceYDocMarkdown } from "../collab/hydrate.js";
 import { collabFieldName, roundTripMarkdown, yDocToMarkdown } from "../collab/schema.js";
 import { dedupeRepeatedBody, repairCollabBody } from "../core/dedupeBody.js";
 import { stripRedundantTitleH1 } from "../core/titleBody.js";
@@ -55,7 +55,7 @@ ${"Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(30)}
 
 function docFromMarkdown(md: string): Y.Doc {
   const doc = new Y.Doc();
-  applyMarkdownToYDoc(doc, md);
+  replaceYDocMarkdown(doc, md);
   return doc;
 }
 
@@ -82,8 +82,8 @@ function docFromMarkdown(md: string): Y.Doc {
 {
   const doc = docFromMarkdown(SAMPLE);
   const before = yDocToMarkdown(doc);
-  applyMarkdownToYDoc(doc, before); // hydrate again with same content
-  applyMarkdownToYDoc(doc, before);
+  replaceYDocMarkdown(doc, before); // hydrate again with same content
+  replaceYDocMarkdown(doc, before);
   const after = yDocToMarkdown(doc);
   check("repeated hydration does not duplicate", before === after, `${before.length} -> ${after.length}`);
 }
@@ -112,7 +112,7 @@ function docFromMarkdown(md: string): Y.Doc {
   const a = docFromMarkdown(SAMPLE);
   const b = new Y.Doc();
   applyUpdate(b, encodeStateAsUpdate(a)); // same lineage
-  applyMarkdownToYDoc(b, `${yDocToMarkdown(b)}\n\n## New section\n\nAdded by client B.\n`);
+  replaceYDocMarkdown(b, `${yDocToMarkdown(b)}\n\n## New section\n\nAdded by client B.\n`);
   applyUpdate(a, encodeStateAsUpdate(b)); // merge back
   const merged = yDocToMarkdown(a);
   check(

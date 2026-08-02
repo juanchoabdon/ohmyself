@@ -10,7 +10,10 @@
  * Two tiers:
  * - standard (mini, 48k chars): routine meetings — entity facts + tasks.
  * - rich (escalate, 200k chars): long/strategic sessions — full synthesis +
- *   coverage check + company-space routing hints.
+ *   coverage check.
+ *
+ * Distill never chooses a destination. Company wikis are deliberately invisible
+ * here: whichever space owns the connection owns everything extracted from it.
  */
 
 import { z } from "zod";
@@ -32,13 +35,6 @@ export type IngestKind = "meeting" | "workshop" | "note" | string;
 export type IngestMode = "light" | "full";
 export type DistillTier = "standard" | "rich";
 
-export interface CompanySpaceHint {
-  slug: string;
-  name: string;
-  /** One-line description to help routing (e.g. "AI-native messaging company"). */
-  blurb?: string;
-}
-
 export interface GroundingContext {
   /** Who the wiki owner is (role, company, focus) — anchors role inference. */
   owner?: string;
@@ -54,8 +50,6 @@ export interface GroundingContext {
   /** Existing concept headwords (the glossary) — match these, don't duplicate. */
   concepts?: string[];
   openCommitments: { id: string; text: string }[];
-  /** Company spaces the owner belongs to — used for meeting routing. */
-  companySpaces?: CompanySpaceHint[];
 }
 
 export const EntityUpdateSchema = z.object({
@@ -97,13 +91,6 @@ export const ConceptualModelSchema = z.object({
   description: z.string(),
 });
 
-export const RoutingSchema = z.object({
-  target_space: z.enum(["self", "company"]),
-  company_slug: z.string().optional(),
-  confidence: z.number().min(0).max(1),
-  reason: z.string(),
-});
-
 export const CoverageSchema = z.object({
   score: z.number().min(0).max(1),
   missing_topics: z.array(z.string()).default([]),
@@ -124,7 +111,6 @@ export const DistillResultSchema = z.object({
   resolves: z.array(ResolveSchema).default([]),
   suggested_links: z.array(SuggestedLinkSchema).default([]),
   is_noise: z.boolean().default(false),
-  routing: RoutingSchema.optional(),
   coverage: CoverageSchema.optional(),
   /** Which tier produced the synthesis fields (insights/decisions/models). */
   distill_tier: z.enum(["standard", "rich"]).default("standard"),
@@ -133,7 +119,6 @@ export const DistillResultSchema = z.object({
 export type DistillResult = z.infer<typeof DistillResultSchema>;
 export type EntityUpdate = z.infer<typeof EntityUpdateSchema>;
 export type ActionItem = z.infer<typeof ActionItemSchema>;
-export type MeetingRouting = z.infer<typeof RoutingSchema>;
 export type DistillCoverage = z.infer<typeof CoverageSchema>;
 
 export interface DistillInput {
@@ -185,11 +170,7 @@ function kindHints(kind: IngestKind, mode: IngestMode, tier: DistillTier): strin
         "'three-surface model: human chat / private AI / shared multiplayer interface', " +
         "'relationship world', 'private intent → share → shared state → recall'). " +
         "Include models even if not labeled as such — infer the architecture the team is designing.\n" +
-        "- Do NOT reduce the meeting to action items only — capture the thinking.\n" +
-        "- `routing`: if COMPANY SPACES are listed below and the meeting content clearly " +
-        "belongs to one company wiki (product/design/strategy for that company), set " +
-        "target_space=company with the slug and confidence 0-1. Use self when personal/mixed " +
-        "or confidence < 0.85. Never guess a company without clear signals."
+        "- Do NOT reduce the meeting to action items only — capture the thinking."
       : "\n\nFor short routine meetings: insights/decisions/conceptual_models may be empty. " +
         "Still separate summary from action items.";
   const base = kind === "note" ? "This is a source document." : meeting;
@@ -256,15 +237,6 @@ function buildPrompt(input: DistillInput, tier: DistillTier): { system: string; 
     ...(g.projectContext?.length ? ["Project notes:", ...g.projectContext.map((p) => `  - ${p}`)] : []),
     "KNOWN CONCEPTS (the existing glossary — reuse these exact names, don't dupe): " +
       (g.concepts?.length ? g.concepts.join(", ") : "(none yet)"),
-    ...(g.companySpaces?.length
-      ? [
-          "",
-          "COMPANY SPACES (route meetings here when content is clearly about that company):",
-          ...g.companySpaces.map(
-            (s) => `  - slug=${s.slug} name=${s.name}${s.blurb ? ` — ${s.blurb}` : ""}`,
-          ),
-        ]
-      : []),
     "Open commitments:",
     ...(g.openCommitments.length
       ? g.openCommitments.map((c) => `  - [${c.id}] ${c.text}`)
@@ -293,8 +265,7 @@ const JSON_INSTRUCTIONS =
   "({entityType:'person'|'project'|'concept', slugOrName, fact, role?, relationship?})[], " +
   "action_items ({text, owner, due?, project?})[], " +
   "project_updates ({project, update})[], resolves ({item_id, reason})[], " +
-  "suggested_links ({a, b})[], is_noise (boolean), " +
-  "routing ({target_space:'self'|'company', company_slug?, confidence, reason}) optional.";
+  "suggested_links ({a, b})[], is_noise (boolean).";
 
 async function callDistillModel(
   system: string,
@@ -376,7 +347,6 @@ export async function distill(input: DistillInput): Promise<DistillResult> {
     parsed.data.decisions = [];
     parsed.data.open_questions = [];
     parsed.data.conceptual_models = [];
-    parsed.data.routing = undefined;
   }
 
   // Coverage check on rich passes (skip noise).

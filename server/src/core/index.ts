@@ -40,7 +40,33 @@ export {
   listSelfSpaceIds,
 } from "./spaces.js";
 export type { Space, SpaceKind, CreateSpaceInput, UpdateSpaceInput, SpaceMember } from "./spaces.js";
-export { serviceClient, brainBucket, logoBucket } from "./supabase.js";
+export { serviceClient, brainBucket, logoBucket, assetBucket } from "./supabase.js";
+export {
+  createAsset,
+  resolveAssets,
+  getAsset,
+  listAssets,
+  readAssetBytes,
+  agentImage,
+  mediaBlockFor,
+  assetIdFromUri,
+  assetRefsInBody,
+  assetUri,
+  parseAssetRef,
+  checkUploadable,
+  ASSET_URI_PREFIX,
+  MAX_IMAGE_BYTES,
+  MAX_VIDEO_BYTES,
+} from "./assets.js";
+export type {
+  NoteAsset,
+  ResolvedAsset,
+  AssetKind,
+  CreateAssetInput,
+  AgentImage,
+  ListAssetsOptions,
+} from "./assets.js";
+export { fetchRemoteMedia } from "./fetch-remote-media.js";
 export { createToken, listTokens, revokeToken, lookupToken } from "./tokens.js";
 export type { ApiTokenRow } from "./tokens.js";
 export {
@@ -74,6 +100,7 @@ export {
   upsertProject,
   addToProject,
   projectIndexPath,
+  projectDocPath,
 } from "./projects.js";
 export type {
   ProjectKind,
@@ -133,9 +160,7 @@ export type {
   IngestMode,
   GroundingContext,
   DistillTier,
-  MeetingRouting,
   DistillCoverage,
-  CompanySpaceHint,
 } from "./distill.js";
 export {
   type HistoryEntry,
@@ -143,6 +168,26 @@ export {
   type VersionOp,
 } from "./versions/types.js";
 export { attributionFromAuth } from "./write-attribution.js";
+export {
+  listCommentThreads,
+  listOpenThreads,
+  addComment,
+  updateComment,
+  setThreadResolved,
+  deleteComment,
+  retargetComments,
+  openThreadCounts,
+} from "./comments.js";
+export type {
+  NoteComment,
+  CommentThread,
+  CommentActor,
+  CommentAuthor,
+  CommentAuthorKind,
+  AddCommentInput,
+} from "./comments.js";
+export { buildAnchor, resolveAnchor, locateQuote, parseAnchor } from "./anchor.js";
+export type { CommentAnchor, AnchorMatch } from "./anchor.js";
 
 export interface OhmyselfCore {
   brain: Brain;

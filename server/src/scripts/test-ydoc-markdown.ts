@@ -1,6 +1,6 @@
 /** Smoke test: markdown → Y doc (hydrate) → markdown (yDocToMarkdown) round-trips. */
 import * as Y from "yjs";
-import { applyMarkdownToYDoc } from "../collab/hydrate.js";
+import { replaceYDocMarkdown } from "../collab/hydrate.js";
 import { roundTripMarkdown, yDocToMarkdown } from "../collab/schema.js";
 
 const sample = `- **Attendees:** Ana, Beto
@@ -34,7 +34,7 @@ flowchart LR
 `;
 
 const ydoc = new Y.Doc();
-applyMarkdownToYDoc(ydoc, sample);
+replaceYDocMarkdown(ydoc, sample);
 const out = yDocToMarkdown(ydoc);
 const expected = roundTripMarkdown(sample);
 

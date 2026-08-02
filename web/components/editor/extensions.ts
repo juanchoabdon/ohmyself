@@ -21,6 +21,7 @@ import { Accordion, AccordionItem } from "./Accordion";
 import { OmsImage, OmsVideo, OmsEmbed } from "./MediaBlocks";
 import { SlashCommand } from "./slashCommand";
 import { MarkdownPaste } from "./MarkdownPaste";
+import { MediaUpload } from "./mediaUpload";
 import { RichBlockDelete } from "./RichBlockDelete";
 import { EditorEssentials } from "./EditorEssentials";
 
@@ -29,6 +30,7 @@ export function buildEditorExtensions(
   collaborationDocument?: Y.Doc,
   collaborationProvider?: HocuspocusProvider | null,
   collaborationUser?: CollabUser | null,
+  notePath?: string | null,
 ): Extensions {
   return [
     StarterKit.configure({
@@ -60,6 +62,8 @@ export function buildEditorExtensions(
     TaskList,
     TaskItem.configure({ nested: true }),
     SlashCommand,
+    // Before MarkdownPaste: a paste carrying files is an upload, not markdown.
+    MediaUpload.configure({ notePath: notePath ?? null }),
     MarkdownPaste,
     RichBlockDelete,
     EditorEssentials,
