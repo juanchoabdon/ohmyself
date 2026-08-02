@@ -163,6 +163,10 @@ ${"Even more legitimate content. ".repeat(80)}
     "strips exact-match leading H1",
     stripRedundantTitleH1(`# My Note Title\n\n## Body\n\nText`, t) === `## Body\n\nText`,
   );
+  check(
+    "strips H1 with subtitle suffix",
+    stripRedundantTitleH1(`# My Note Title (draft)\n\n## Body`, t) === `## Body`,
+  );
   const diff = `# Different Title\n\nText`;
   check("keeps non-matching H1", stripRedundantTitleH1(diff, t) === diff);
   const noH1 = `## Section\n\nText`;

@@ -39,11 +39,23 @@ export const dedupeExactDoubleBody = repairCollabBody;
  * body duplicates it on screen. Hide a leading H1 that matches the title.
  * Display-layer only — see server/src/core/titleBody.ts for the write path.
  */
+function isRedundantTitleH1(h1: string, title: string): boolean {
+  const h = h1.trim();
+  const t = title.trim();
+  if (!h || !t) return false;
+  if (h === t) return true;
+  const longer = h.length >= t.length ? h : t;
+  const shorter = h.length >= t.length ? t : h;
+  if (!longer.startsWith(shorter)) return false;
+  const rest = longer.slice(shorter.length);
+  return /^[\s(—–-]/.test(rest);
+}
+
 export function stripRedundantTitleH1(body: string, title: string): string {
   const t = title.trim();
   if (!t || !body) return body;
   const m = body.match(/^\s*#[ \t]+(.+?)[ \t]*(?:\r?\n|$)/);
   if (!m || m[1] === undefined) return body;
-  if (m[1].trim() !== t) return body;
+  if (!isRedundantTitleH1(m[1], t)) return body;
   return body.slice(m[0].length).replace(/^(?:[ \t]*\r?\n)+/, "");
 }
