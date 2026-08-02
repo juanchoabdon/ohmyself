@@ -1,18 +1,27 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { NodeViewContent, NodeViewWrapper } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
 import { cn } from "@/lib/utils";
 import { BlockDeleteButton } from "./BlockDeleteButton";
 import { deleteRichBlockAt } from "./markdownRichContent";
+import { activeTab, setActiveTab, subscribeTabs } from "./tabsState";
 
-type TabsCtx = { active: number; setActive: (n: number) => void };
-
-export const TabsActiveContext = createContext<TabsCtx | null>(null);
+/** The tabs block's own position, shared by the header and its panels. */
+function useTabsKey(key: string): number {
+  return useSyncExternalStore(
+    subscribeTabs,
+    () => activeTab(key),
+    () => 0,
+  );
+}
 
 export function TabsView({ node, selected, editor, getPos }: NodeViewProps) {
-  const [active, setActive] = useState(0);
+  const pos = getPos();
+  const key = String(typeof pos === "number" ? pos : -1);
+  const active = useTabsKey(key);
+
   const titles = useMemo(() => {
     const list: string[] = [];
     for (let i = 0; i < node.childCount; i++) {
@@ -22,55 +31,53 @@ export function TabsView({ node, selected, editor, getPos }: NodeViewProps) {
   }, [node]);
 
   const removeBlock = () => {
-    const pos = getPos();
     if (typeof pos === "number") deleteRichBlockAt(editor, pos);
   };
 
   return (
-    <TabsActiveContext.Provider value={{ active, setActive }}>
-      <NodeViewWrapper className={cn("oms-tabs my-4", selected && "oms-tabs--selected")}>
-        <div className="oms-tabs__header" role="tablist">
-          {titles.map((title, i) => (
-            <button
-              key={i}
-              type="button"
-              role="tab"
-              aria-selected={active === i}
-              className={cn(
-                "oms-tabs__tab",
-                active === i && "oms-tabs__tab--active",
-              )}
-              onClick={() => setActive(i)}
-            >
-              {title}
-            </button>
-          ))}
-          <div className="ml-auto flex items-center pr-1">
-            <BlockDeleteButton label="Remove tabs" onClick={removeBlock} />
-          </div>
+    <NodeViewWrapper className={cn("oms-tabs my-4", selected && "oms-tabs--selected")}>
+      {/* Chrome, not content: without contentEditable={false} ProseMirror
+          treats these buttons as editable text and eats the click. */}
+      <div className="oms-tabs__header" role="tablist" contentEditable={false}>
+        {titles.map((title, i) => (
+          <button
+            key={i}
+            type="button"
+            role="tab"
+            aria-selected={active === i}
+            className={cn("oms-tabs__tab", active === i && "oms-tabs__tab--active")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setActiveTab(key, i)}
+          >
+            {title}
+          </button>
+        ))}
+        <div className="ml-auto flex items-center pr-1">
+          <BlockDeleteButton label="Remove tabs" onClick={removeBlock} />
         </div>
-        <div className="oms-tabs__body">
-          <NodeViewContent />
-        </div>
-      </NodeViewWrapper>
-    </TabsActiveContext.Provider>
+      </div>
+      <div className="oms-tabs__body">
+        <NodeViewContent />
+      </div>
+    </NodeViewWrapper>
   );
 }
 
 export function TabView({ editor, getPos, node }: NodeViewProps) {
-  const ctx = useContext(TabsActiveContext);
-  const index = useMemo(() => {
+  const { index, parentKey } = useMemo(() => {
     const pos = getPos();
-    if (typeof pos !== "number") return 0;
-    return editor.state.doc.resolve(pos).index();
+    if (typeof pos !== "number") return { index: 0, parentKey: "-1" };
+    const $pos = editor.state.doc.resolve(pos);
+    // `before(depth)` is the position right before the tabs node — exactly what
+    // the parent gets from its own getPos(), so both derive the same key.
+    return { index: $pos.index(), parentKey: String($pos.before($pos.depth)) };
   }, [editor, getPos, node]);
 
-  const active = ctx?.active ?? 0;
-  const hidden = index !== active;
+  const active = useTabsKey(parentKey);
 
   return (
     <NodeViewWrapper
-      className={cn("oms-tab-panel", hidden && "oms-tab-panel--hidden")}
+      className={cn("oms-tab-panel", index !== active && "oms-tab-panel--hidden")}
       data-tab-title={(node.attrs.title as string) || ""}
     >
       <NodeViewContent className="oms-tab-panel__content" />
@@ -93,14 +100,4 @@ export function TabTitleEditor({
       placeholder="Tab title"
     />
   );
-}
-
-export function TabsActiveProvider({
-  children,
-  value,
-}: {
-  children: ReactNode;
-  value: TabsCtx;
-}) {
-  return <TabsActiveContext.Provider value={value}>{children}</TabsActiveContext.Provider>;
 }
