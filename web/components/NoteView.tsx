@@ -20,7 +20,11 @@ import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "
 import { EditorModeToggle, loadEditorModePreference, saveEditorModePreference, type EditorMode } from "./editor/EditorModeToggle";
 import type { PresencePeer } from "./editor/PresenceBar";
 import type { CollabUser } from "@/lib/collabUser";
-import { isWikiHref, wikiLinksToMarkdownLinks, wikiPathFromHref } from "./editor/wikiLinkMarkdown";
+import {
+  isInternalNoteHref,
+  notePathFromHref,
+  wikiLinksToMarkdownLinks,
+} from "./editor/wikiLinkMarkdown";
 import { AssetImage, AssetVideo, EmbedFrame } from "./editor/MediaRender";
 import { HtmlPreview, MermaidDiagram, languageFromClassName } from "./editor/RichCodeRender";
 import { isHtmlPreviewLanguage } from "./editor/htmlPreview";
@@ -646,11 +650,11 @@ function ReadOnlyMarkdown({ text, onOpenLink }: { text: string; onOpenLink: (pat
       remarkPlugins={[remarkGfm]}
       components={{
         a: ({ href, children }) => {
-          if (isWikiHref(href)) {
+          if (isInternalNoteHref(href)) {
             return (
               <button
                 type="button"
-                onClick={() => onOpenLink(wikiPathFromHref(href!))}
+                onClick={() => onOpenLink(notePathFromHref(href!))}
                 className="oms-wiki-link font-medium text-brand underline underline-offset-2"
               >
                 {children}

@@ -1,8 +1,6 @@
 import { Mark, mergeAttributes } from "@tiptap/core";
-import { Plugin } from "@tiptap/pm/state";
 
 export interface WikiLinkOptions {
-  onOpenLink?: (path: string) => void;
   HTMLAttributes: Record<string, string>;
 }
 
@@ -15,7 +13,6 @@ export const WikiLink = Mark.create<WikiLinkOptions>({
 
   addOptions() {
     return {
-      onOpenLink: undefined,
       HTMLAttributes: {},
     };
   },
@@ -72,27 +69,5 @@ export const WikiLink = Mark.create<WikiLinkOptions>({
     if (!path) return text;
     if (text && text !== path) return `[[${path}|${text}]]`;
     return `[[${path}]]`;
-  },
-
-  addProseMirrorPlugins() {
-    const onOpen = this.options.onOpenLink;
-    if (!onOpen) return [];
-
-    return [
-      new Plugin({
-        props: {
-          handleClick: (view, pos, event) => {
-            if (!(event instanceof MouseEvent) || event.button !== 0) return false;
-            const { doc } = view.state;
-            const $pos = doc.resolve(pos);
-            const mark = $pos.marks().find((m) => m.type.name === "wikiLink");
-            if (!mark?.attrs.path) return false;
-            event.preventDefault();
-            onOpen(mark.attrs.path as string);
-            return true;
-          },
-        },
-      }),
-    ];
   },
 });

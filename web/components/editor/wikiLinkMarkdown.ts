@@ -15,3 +15,20 @@ export function isWikiHref(href?: string): boolean {
 export function wikiPathFromHref(href: string): string {
   return decodeURIComponent(href.slice("wiki:".length));
 }
+
+/** True for wiki links and relative note paths (not http/mailto/hash). */
+export function isInternalNoteHref(href?: string): boolean {
+  if (!href) return false;
+  if (isWikiHref(href)) return true;
+  if (/^(https?:|mailto:|tel:|#)/i.test(href)) return false;
+  return true;
+}
+
+export function notePathFromHref(href: string): string {
+  if (isWikiHref(href)) return wikiPathFromHref(href);
+  try {
+    return decodeURIComponent(href.replace(/^\//, ""));
+  } catch {
+    return href.replace(/^\//, "");
+  }
+}

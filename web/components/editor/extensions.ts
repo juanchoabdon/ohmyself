@@ -14,6 +14,7 @@ import type { Extensions } from "@tiptap/core";
 import type * as Y from "yjs";
 import type { CollabUser } from "@/lib/collabUser";
 import { WikiLink } from "./WikiLink";
+import { InternalLinkClick } from "./InternalLinkClick";
 import { OmsCodeBlock } from "./OmsCodeBlock";
 import { Callout } from "./Callout";
 import { Tabs, Tab } from "./Tabs";
@@ -54,7 +55,8 @@ export function buildEditorExtensions(
       autolink: true,
       HTMLAttributes: { class: "oms-md-link" },
     }),
-    WikiLink.configure({ onOpenLink }),
+    WikiLink,
+    InternalLinkClick.configure({ onOpenLink }),
     Table.configure({ resizable: false }),
     TableRow,
     TableHeader,
