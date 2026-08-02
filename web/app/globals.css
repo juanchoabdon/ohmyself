@@ -395,41 +395,43 @@ main {
 }
 
 /* Task lists.
-   Two markups reach these rules: the editor's (TipTap, `data-type`) and the
-   read-only renderer's (remark-gfm, `.contains-task-list`). They must look
-   identical, so every rule matches both. */
+   Two markups reach these rules and must look identical: the editor's (TipTap)
+   and the read-only renderer's (remark-gfm, `.task-list-item`).
+   TipTap's item is drawn by a node view that only sets `data-checked` on the
+   `<li>` — `data-type="taskItem"` exists solely in its clipboard serialization,
+   so the item must be reached through its parent list instead. */
 .prose ul[data-type="taskList"],
 .prose ul.contains-task-list {
   list-style: none;
   padding-left: 0;
 }
-.prose li[data-type="taskItem"],
+.prose ul[data-type="taskList"] > li,
 .prose li.task-list-item {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.45rem;
 }
-.prose li[data-type="taskItem"] > label {
+.prose ul[data-type="taskList"] > li > label {
   margin-top: 0.2em;
   user-select: none;
 }
-.prose li[data-type="taskItem"] > div,
+.prose ul[data-type="taskList"] > li > div,
 .prose li.task-list-item > p {
   flex: 1;
   margin: 0;
 }
 /* Keep both markups equally tight, without collapsing a multi-paragraph item. */
-.prose li[data-type="taskItem"] > div > p:first-child {
+.prose ul[data-type="taskList"] > li > div > p:first-child {
   margin-top: 0;
 }
-.prose li[data-type="taskItem"] > div > p:last-child {
+.prose ul[data-type="taskList"] > li > div > p:last-child {
   margin-bottom: 0;
 }
 /* A nested list belongs under the row, not beside the label — and its items
    carry their own checked state, so a struck-out parent must not bleed in. */
-.prose li[data-type="taskItem"] > ul,
-.prose li[data-type="taskItem"] > ol,
+.prose ul[data-type="taskList"] > li > ul,
+.prose ul[data-type="taskList"] > li > ol,
 .prose li.task-list-item > ul,
 .prose li.task-list-item > ol {
   flex-basis: 100%;
@@ -438,7 +440,7 @@ main {
   color: var(--ink);
   text-decoration: none;
 }
-.prose li[data-type="taskItem"] input[type="checkbox"],
+.prose ul[data-type="taskList"] > li input[type="checkbox"],
 .prose li.task-list-item > input[type="checkbox"] {
   /* Native control, themed — keeps keyboard and screen-reader behaviour. */
   accent-color: var(--brand);
@@ -454,7 +456,7 @@ main {
   cursor: default;
 }
 /* A checked item reads as done. */
-.prose li[data-type="taskItem"][data-checked="true"] > div,
+.prose ul[data-type="taskList"] > li[data-checked="true"] > div,
 .prose li.task-list-item:has(> input[type="checkbox"]:checked) {
   color: var(--muted);
   text-decoration: line-through;
