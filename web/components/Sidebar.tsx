@@ -139,6 +139,20 @@ function titleCase(name: string): string {
   return prettyFolder(name).replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Pillar + folder paths that must be open to reveal a note in the tree. */
+function expandPathsForNote(path: string): string[] {
+  const segs = path.split("/").filter(Boolean);
+  if (segs.length === 0) return [];
+  const root = segs[0]!;
+  const paths = [`__pillar__/${root}`, root];
+  let acc = root;
+  for (let i = 1; i < segs.length - 1; i++) {
+    acc += `/${segs[i]}`;
+    paths.push(acc);
+  }
+  return paths;
+}
+
 export function Sidebar({
   notes,
   categories,
@@ -162,6 +176,7 @@ export function Sidebar({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
   const canEdit = Boolean(onCreateInside || onRenameFolder || onDeleteFolder);
 
   // Resizable width (drag the right edge). Persisted so it survives reloads.
@@ -243,6 +258,10 @@ export function Sidebar({
   // only shows up via counts — and nested folders appear on expand), while
   // preserving whatever the user has manually expanded since.
   const seen = useRef<Set<string>>(new Set());
+  const revealPaths = useMemo(
+    () => (selected ? new Set(expandPathsForNote(selected)) : new Set<string>()),
+    [selected],
+  );
   useEffect(() => {
     const keys = [
       ...categories.map((c) => `__pillar__/${c.folder}`),
@@ -252,8 +271,35 @@ export function Sidebar({
     const fresh = keys.filter((k) => !seen.current.has(k));
     if (fresh.length === 0) return;
     for (const k of keys) seen.current.add(k);
-    setCollapsed((prev) => new Set([...prev, ...fresh]));
-  }, [categories, folderCounts, folderPaths]);
+    setCollapsed((prev) => new Set([...prev, ...fresh.filter((k) => !revealPaths.has(k))]));
+  }, [categories, folderCounts, folderPaths, revealPaths]);
+
+  // Deep links / restored tabs: expand ancestors and load the pillar so the
+  // open note is visible in the tree (not buried in collapsed folders).
+  useEffect(() => {
+    if (!selected) return;
+    const paths = expandPathsForNote(selected);
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      for (const p of paths) next.delete(p);
+      return next;
+    });
+    const root = selected.split("/").filter(Boolean)[0];
+    if (root) onExpandFolder(root);
+    // onExpandFolder (ensureFolder) is idempotent — stable deps omitted intentionally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const id = requestAnimationFrame(() => {
+      const el = navRef.current?.querySelector(
+        `[data-note-path="${CSS.escape(selected)}"]`,
+      );
+      el?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [selected, forest, loadedFolders, collapsed]);
 
   // Category roots in config order, then any other pillar known from counts or
   // already-loaded notes.
@@ -288,6 +334,7 @@ export function Sidebar({
         return (
           <li key={node.path}>
             <button
+              data-note-path={node.path}
               onClick={() => onSelect(node.path)}
               style={{ paddingLeft: rowPad(depth, "file") }}
               className={`group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left text-sm transition-colors duration-100 ${
@@ -443,7 +490,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto p-2">
+      <nav ref={navRef} className="flex-1 overflow-y-auto p-2">
         {(loading && roots.length === 0) || searching ? (
           <SidebarSkeleton />
         ) : null}
