@@ -45,6 +45,7 @@ import {
   upsertProject,
   writeBrain,
   attributionFromAuth,
+  cleanAgentLabel,
   type AuthContext,
   type CommentActor,
   type CommentThread,
@@ -59,7 +60,7 @@ import {
   type UserConfig,
   type Visibility,
 } from "../core/index.js";
-import { BadRequestError, ForbiddenError, NotFoundError } from "../core/errors.js";
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "../core/errors.js";
 import { buildPaletteResponse } from "../core/palette.js";
 import { buildPreviewUrl } from "../core/preview-url.js";
 import { getLinkContext } from "../core/link-intelligence.js";
@@ -83,7 +84,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
  *  then for move_space_note + delete_space_note, then for media (add_media /
  *  get_media / list_media and the oms-asset: reference scheme). Kept stable
  *  even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.13";
+const CONTRACT_VERSION = "2.15";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -104,6 +105,22 @@ function text(value: unknown) {
       },
     ],
   };
+}
+
+/** Structured 409 for optimistic-lock conflicts — includes latest markdown to merge. */
+function revisionConflictText(err: unknown): ReturnType<typeof text> | null {
+  if (!(err instanceof ConflictError) || !err.detail) return null;
+  const d = err.detail;
+  return text({
+    conflict: true,
+    error: err.message,
+    path: d.path,
+    expected_revision: d.expectedRevision ?? null,
+    current_revision: d.currentRevision,
+    markdown: d.markdown,
+    hint:
+      "Someone else updated this note first. Merge your intended changes into `markdown`, then retry with base_revision set to `current_revision`.",
+  });
 }
 
 /** Build a goal path from a period like "2026", "2026-q3", "2026-06". */
@@ -176,6 +193,8 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         "WORK DOCS NEED CONFIRMATION: specs, PRDs, plans, RFCs and design docs are never written on the first call — in the personal brain or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft and a `confirm_token`. Show the owner the whole draft in the conversation (and write it to the suggested `local_file` if you have filesystem access), ask for an explicit yes, and END YOUR TURN. Only after they approve, call the same tool again with the identical body plus `confirm_token`. Never confirm on the owner's behalf, and never chain the preview and the confirmed write in one turn. If they ask for edits, resend the new body without a token.",
         "",
         "AFTER WRITING: every write returns a `url` deep link to the note. Always surface that link to the owner so they can open what you just saved.",
+        "",
+        "REVISION MERGE: read_note / read_space_note return `revision`. Pass it as `base_revision` on update_* / append_* so concurrent edits don't clobber each other. On conflict the tool returns `conflict: true`, `current_revision`, and the latest `markdown` — merge your intended changes into that body, then retry with `base_revision` set to `current_revision`.",
       ].join("\n"),
     },
   );
@@ -197,7 +216,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     input: Parameters<typeof brain.upsertNote>[2],
   ) {
     requireWrite();
-    const { note, created } = await brain.upsertNote(auth.spaceId, path, input, await config(), allowed);
+    const { note, created } = await brain.upsertNote(
+      auth.spaceId,
+      path,
+      input,
+      await config(),
+      allowed,
+      mcpAttr(input.append ? `append ${path}` : `upsert ${input.title ?? path}`),
+    );
     return { ok: true, path: note.path, created, visibility: note.meta.visibility };
   }
 
@@ -329,13 +355,15 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Read a note",
       description:
-        "Read the full markdown (frontmatter + body) of a note by its path. If it embeds images or video, the reply lists their `oms-asset:` references — pass one to get_media to actually see it.",
+        "Read the full markdown (frontmatter + body) of a note by its path. Returns `{ path, revision, markdown }` — pass `revision` as `base_revision` on update/append. On write conflict the tool returns the latest `markdown` to merge. If it embeds images or video, the reply lists their `oms-asset:` references — pass one to get_media to actually see it.",
       annotations: { readOnlyHint: true },
       inputSchema: { path: z.string().describe("relative note path, e.g. projects/x/_index.md") },
     },
     async ({ path }) => {
       const note = await brain.readNote(auth.spaceId, path, allowed);
-      return text(await withMediaIndex(auth.spaceId, serializeNote(note.meta, note.body)));
+      const revision = await brain.getRevision(auth.spaceId, path, allowed);
+      const markdown = await withMediaIndex(auth.spaceId, serializeNote(note.meta, note.body));
+      return text({ path: note.path, revision, markdown });
     },
   );
 
@@ -966,7 +994,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Read a company wiki note",
       description:
-        "Read the full markdown of one note in a company wiki you belong to by path — same as read_note, but scoped to that space. Embedded media is listed as `oms-asset:` references; pass one to get_media (with the same `space`) to see it. Read-only. Call list_spaces first for valid `space` values.",
+        "Read the full markdown of one note in a company wiki you belong to by path — same as read_note, but scoped to that space. Returns `{ space, path, revision, markdown }` — pass `revision` as `base_revision` on update/append; on conflict the write tool returns latest `markdown` to merge. Embedded media is listed as `oms-asset:` references; pass one to get_media (with the same `space`) to see it. Read-only. Call list_spaces first for valid `space` values.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -976,7 +1004,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     async ({ space, path }) => {
       const s = findSpace(await companySpaces(), space);
       const note = await brain.readNote(s.id, path, s.allowed);
-      return text(await withMediaIndex(s.id, serializeNote(note.meta, note.body)));
+      const revision = await brain.getRevision(s.id, path, s.allowed);
+      const markdown = await withMediaIndex(s.id, serializeNote(note.meta, note.body));
+      return text({ space: s.slug, path: note.path, revision, markdown });
     },
   );
 
@@ -1146,7 +1176,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Update a company wiki note",
       description:
-        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection. Pass `base_revision` from read_space_note; on conflict returns latest `markdown` to merge before retry. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -1156,6 +1186,10 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility: VisibilityEnum.optional(),
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
+        base_revision: z
+          .string()
+          .optional()
+          .describe("revision from read_space_note; on conflict returns latest markdown to merge"),
         confirm_token: confirmTokenSchema,
       },
     },
@@ -1176,8 +1210,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.updateNote(s.id, path, patch, s.allowed, mcpAttr(`update ${path}`));
-      return text(withUrl({ space: s.slug, updated: note.path, meta: note.meta }, s.id));
+      try {
+        const note = await brain.updateNote(s.id, path, patch, s.allowed, mcpAttr(`update ${path}`));
+        return text(withUrl({ space: s.slug, updated: note.path, meta: note.meta, revision: note.revision }, s.id));
+      } catch (err) {
+        const conflict = revisionConflictText(err);
+        if (conflict) return conflict;
+        throw err;
+      }
     },
   );
 
@@ -1186,16 +1226,20 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Append to a company wiki note",
       description:
-        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection. Pass `base_revision` from read_space_note; on conflict returns latest `markdown` to merge before retry. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
         path: z.string(),
         text: z.string(),
+        base_revision: z
+          .string()
+          .optional()
+          .describe("revision from read_space_note; on conflict returns latest markdown to merge"),
         confirm_token: confirmTokenSchema,
       },
     },
-    async ({ space, path, text: content, confirm_token }) => {
+    async ({ space, path, text: content, base_revision, confirm_token }) => {
       const s = findSpace(await companySpaces(), space);
       requireCompanyWrite(s);
       const pending = await gateWorkDoc({
@@ -1208,8 +1252,21 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.appendToNote(s.id, path, content, s.allowed, mcpAttr(`append ${path}`));
-      return text(withUrl({ space: s.slug, appended: note.path }, s.id));
+      try {
+        const note = await brain.appendToNote(
+          s.id,
+          path,
+          content,
+          s.allowed,
+          mcpAttr(`append ${path}`),
+          base_revision,
+        );
+        return text(withUrl({ space: s.slug, appended: note.path, revision: note.revision }, s.id));
+      } catch (err) {
+        const conflict = revisionConflictText(err);
+        if (conflict) return conflict;
+        throw err;
+      }
     },
   );
 
@@ -1364,6 +1421,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         },
         await getUserConfig(s.id),
         s.allowed,
+        mcpAttr(`save skill ${name}`),
       );
       return text(
         withUrl(
@@ -1405,6 +1463,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         hint,
         apply,
         visibility,
+        attr: mcpAttr("write_space"),
       });
       return text(withUrl(res, s.id));
     },
@@ -1582,14 +1641,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ name, summary, status, tags, append, visibility }) => {
       requireWrite();
-      const res = await upsertProject(brain, auth.spaceId, await config(), allowed, {
-        name,
-        summary,
-        status,
-        tags,
-        append,
-        visibility,
-      });
+      const res = await upsertProject(
+        brain,
+        auth.spaceId,
+        await config(),
+        allowed,
+        { name, summary, status, tags, append, visibility },
+        mcpAttr(`upsert project ${name}`),
+      );
       return text(withUrl(res));
     },
   );
@@ -1625,15 +1684,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const res = await addToProject(brain, auth.spaceId, await config(), allowed, {
-        project,
-        kind: kind as ProjectKind,
-        title,
-        body,
-        append,
-        visibility,
-        tags,
-      });
+      const res = await addToProject(
+        brain,
+        auth.spaceId,
+        await config(),
+        allowed,
+        { project, kind: kind as ProjectKind, title, body, append, visibility, tags },
+        mcpAttr(`add ${kind} to ${project}`),
+      );
       return text(withUrl(res));
     },
   );
@@ -1656,14 +1714,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ name, relationship, notes, append, visibility, tags }) => {
       requireWrite();
-      const res = await upsertPerson(brain, auth.spaceId, await config(), allowed, {
-        name,
-        relationship,
-        notes,
-        append,
-        visibility,
-        tags,
-      });
+      const res = await upsertPerson(
+        brain,
+        auth.spaceId,
+        await config(),
+        allowed,
+        { name, relationship, notes, append, visibility, tags },
+        mcpAttr(`upsert person ${name}`),
+      );
       return text(withUrl(res));
     },
   );
@@ -1935,8 +1993,23 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
 
   // ── Power tools (generic CRUD) ─────────────────────────────────────────────
 
+  /** The connected MCP client's self-reported name ("Cursor", "Claude", ...).
+   *  Only available after `initialize`, which always precedes tool calls. */
+  function mcpClientName(): string | null {
+    try {
+      return server.server.getClientVersion()?.name ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Attribute writes to the actual agent: the live MCP client name first,
+   *  then the token / OAuth client name, then the auth method. */
   function mcpAttr(summary?: string) {
-    return attributionFromAuth(auth, summary);
+    return attributionFromAuth(
+      { ...auth, clientLabel: mcpClientName() ?? auth.clientLabel },
+      summary,
+    );
   }
 
   server.registerTool(
@@ -2107,7 +2180,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Update a note",
       description:
-        "Update a note's body and/or frontmatter by path. Requires a writable scope. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Update a note's body and/or frontmatter by path. Requires a writable scope. Pass `base_revision` from read_note; on conflict returns latest `markdown` to merge before retry. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         path: z.string(),
@@ -2116,6 +2189,10 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         visibility: VisibilityEnum.optional(),
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
+        base_revision: z
+          .string()
+          .optional()
+          .describe("revision from read_note; on conflict returns latest markdown to merge"),
         summary: z.string().max(80).optional().describe("intent shown on the timeline"),
         confirm_token: confirmTokenSchema,
       },
@@ -2131,8 +2208,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.updateNote(auth.spaceId, path, patch, allowed, mcpAttr(summary));
-      return text(withUrl({ updated: note.path, meta: note.meta }));
+      try {
+        const note = await brain.updateNote(auth.spaceId, path, patch, allowed, mcpAttr(summary));
+        return text(withUrl({ updated: note.path, meta: note.meta, revision: note.revision }));
+      } catch (err) {
+        const conflict = revisionConflictText(err);
+        if (conflict) return conflict;
+        throw err;
+      }
     },
   );
 
@@ -2141,16 +2224,20 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Append to a note",
       description:
-        "Append text to the end of a note's body by path. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Append text to the end of a note's body by path. Pass `base_revision` from read_note; on conflict returns latest `markdown` to merge before retry. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         path: z.string(),
         text: z.string(),
+        base_revision: z
+          .string()
+          .optional()
+          .describe("revision from read_note; on conflict returns latest markdown to merge"),
         summary: z.string().max(80).optional(),
         confirm_token: confirmTokenSchema,
       },
     },
-    async ({ path, text: t, summary, confirm_token }) => {
+    async ({ path, text: t, summary, base_revision, confirm_token }) => {
       requireWrite();
       const pending = await gateWorkDoc({
         spaceId: auth.spaceId,
@@ -2160,8 +2247,21 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.appendToNote(auth.spaceId, path, t, allowed, mcpAttr(summary));
-      return text(withUrl({ appended: note.path }));
+      try {
+        const note = await brain.appendToNote(
+          auth.spaceId,
+          path,
+          t,
+          allowed,
+          mcpAttr(summary),
+          base_revision,
+        );
+        return text(withUrl({ appended: note.path, revision: note.revision }));
+      } catch (err) {
+        const conflict = revisionConflictText(err);
+        if (conflict) return conflict;
+        throw err;
+      }
     },
   );
 
@@ -2200,6 +2300,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         hint,
         apply,
         visibility,
+        attr: mcpAttr("write_brain"),
       });
       return text(withUrl(res));
     },
@@ -2210,15 +2311,10 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   // quoted span so they survive edits. Commenting is looser than editing: any
   // member of a space may comment on a note they can read.
 
-  /** Name the comment after the connected client ("Claude", "Cursor", ...). */
+  /** Name the comment after the connected client ("Claude", "Cursor", ...),
+   *  then the token / OAuth client name, then the auth method. */
   function agentLabel(): string {
-    try {
-      const client = server.server.getClientVersion();
-      if (client?.name) return client.name;
-    } catch {
-      /* client info is only available after initialize */
-    }
-    return `agent:${auth.via ?? "token"}`;
+    return mcpClientName() ?? cleanAgentLabel(auth.clientLabel) ?? `agent:${auth.via ?? "token"}`;
   }
   function mcpActor(role: SpaceRole = auth.role): CommentActor {
     return {
@@ -2530,7 +2626,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           note_path.trim(),
           mediaBlockFor(asset, { alt, caption }),
           target.allowed,
-          attributionFromAuth(auth, `embedded ${asset.kind}`),
+          mcpAttr(`embedded ${asset.kind}`),
         );
         embedded = note.path;
       }

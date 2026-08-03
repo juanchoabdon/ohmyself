@@ -16,6 +16,8 @@ export interface ApiTokenRow {
 export interface TokenLookup {
   userId: string;
   scope: Scope;
+  /** The user-given token name ("Cursor", "MacBook") — used for attribution. */
+  name: string | null;
 }
 
 function hashToken(token: string): string {
@@ -29,14 +31,18 @@ export async function lookupToken(token: string): Promise<TokenLookup | null> {
   const sb = serviceClient();
   const { data, error } = await sb
     .from("api_tokens")
-    .select("id,user_id,scope")
+    .select("id,user_id,scope,name")
     .eq("token_hash", hashToken(token))
     .is("revoked_at", null)
     .limit(1)
     .maybeSingle();
   if (error || !data) return null;
   void sb.from("api_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
-  return { userId: data.user_id as string, scope: data.scope as Scope };
+  return {
+    userId: data.user_id as string,
+    scope: data.scope as Scope,
+    name: (data.name as string | null) ?? null,
+  };
 }
 
 export async function createToken(

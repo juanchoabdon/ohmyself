@@ -35,6 +35,7 @@ import {
   updateMemberRole,
   updateSpace,
   attributionFromAuth,
+  cleanAgentLabel,
   createAsset,
   resolveAssets,
   addComment,
@@ -51,7 +52,7 @@ import {
   type Scope,
   type Visibility,
 } from "../core/index.js";
-import { BadRequestError, BrainError, ForbiddenError } from "../core/errors.js";
+import { BadRequestError, BrainError, ConflictError, ForbiddenError } from "../core/errors.js";
 import { subscribeBrainEvents } from "../core/events.js";
 import { embedTexts, embeddingsEnabled, semanticEdges } from "../core/embeddings.js";
 import { connectors, getConnector } from "../connectors/index.js";
@@ -107,7 +108,7 @@ function commentActor(auth: AuthContext): CommentActor {
   return {
     userId: auth.userId,
     kind: human ? "human" : "agent",
-    label: human ? null : `agent:${auth.via ?? "token"}`,
+    label: human ? null : `agent:${cleanAgentLabel(auth.clientLabel) ?? auth.via ?? "token"}`,
     isAdmin: isSelfSpace(auth) || isSpaceAdmin(auth.role),
   };
 }
@@ -656,24 +657,45 @@ export function createApp(): Hono<Env> {
   app.get("/v1/notes/:path{.+}", async (c) => {
     const auth = c.get("auth");
     const allowed = effectiveAllowed(auth);
-    const note = await brain.readNote(auth.spaceId, c.req.param("path"), allowed);
-    return c.json({ path: note.path, meta: note.meta, body: note.body, raw: serializeNote(note.meta, note.body) });
+    const path = c.req.param("path");
+    const note = await brain.readNote(auth.spaceId, path, allowed);
+    const revision = await brain.getRevision(auth.spaceId, path, allowed);
+    return c.json({
+      path: note.path,
+      meta: note.meta,
+      body: note.body,
+      revision,
+      raw: serializeNote(note.meta, note.body),
+    });
   });
 
   app.patch("/v1/notes/:path{.+}", async (c) => {
     const auth = c.get("auth");
     requireCompanyWrite(auth);
     const allowed = effectiveAllowed(auth);
-    const patch = await c.req.json<{ summary?: string } & Record<string, unknown>>();
-    const { summary, ...notePatch } = patch;
+    const path = c.req.param("path");
+    const patch = await c.req.json<{ summary?: string; base_revision?: string } & Record<string, unknown>>();
+    const { summary, base_revision, ...notePatch } = patch;
     if (typeof notePatch.body === "string") {
+      const { collabEnabled, isCollabRoomActive } = await import("../collab/index.js");
+      if (collabEnabled() && isCollabRoomActive(auth.spaceId, path)) {
+        throw new ConflictError(
+          "note has active collaborators — edit in visual mode or wait for the room to close",
+        );
+      }
       const { repairCollabBody } = await import("../core/dedupeBody.js");
       const { body, deduped } = repairCollabBody(notePatch.body);
       if (deduped) notePatch.body = body;
     }
     const attr = attributionFromAuth(auth, summary);
-    const note = await brain.updateNote(auth.spaceId, c.req.param("path"), notePatch, allowed, attr);
-    return c.json({ path: note.path, meta: note.meta, body: note.body });
+    const note = await brain.updateNote(
+      auth.spaceId,
+      path,
+      { ...notePatch, base_revision },
+      allowed,
+      attr,
+    );
+    return c.json({ path: note.path, meta: note.meta, body: note.body, revision: note.revision });
   });
 
   app.delete("/v1/notes/:path{.+}", async (c) => {
@@ -704,9 +726,21 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireCompanyWrite(auth);
     const allowed = effectiveAllowed(auth);
-    const { path, text, summary } = await c.req.json<{ path: string; text: string; summary?: string }>();
-    const note = await brain.appendToNote(auth.spaceId, path, text, allowed, attributionFromAuth(auth, summary));
-    return c.json({ appended: note.path });
+    const { path, text, summary, base_revision } = await c.req.json<{
+      path: string;
+      text: string;
+      summary?: string;
+      base_revision?: string;
+    }>();
+    const note = await brain.appendToNote(
+      auth.spaceId,
+      path,
+      text,
+      allowed,
+      attributionFromAuth(auth, summary),
+      base_revision,
+    );
+    return c.json({ appended: note.path, revision: note.revision });
   });
 
   app.post("/v1/link", async (c) => {
@@ -998,6 +1032,21 @@ export function createApp(): Hono<Env> {
   });
 
   app.onError((err, c) => {
+    if (err instanceof ConflictError) {
+      return c.json(
+        {
+          error: err.message,
+          conflict: true,
+          path: err.detail?.path,
+          expected_revision: err.detail?.expectedRevision ?? null,
+          current_revision: err.detail?.currentRevision ?? null,
+          markdown: err.detail?.markdown,
+          hint:
+            "Someone else updated this note first. Merge your changes into markdown, then retry with base_revision set to current_revision.",
+        },
+        409,
+      );
+    }
     if (err instanceof BrainError) return c.json({ error: err.message }, err.status as 400);
     console.error("[api] error:", err);
     return c.json({ error: "internal error" }, 500);

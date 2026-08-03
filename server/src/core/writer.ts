@@ -18,6 +18,7 @@ import { findType, folderForType, isPersonalBrain, type UserConfig } from "./con
 import { chatJSON, llmEnabled } from "./llm.js";
 import { todayISO } from "./frontmatter.js";
 import type { IndexedNote, Visibility } from "./types.js";
+import type { WriteAttribution } from "./versions/types.js";
 
 export type WriteCategory =
   | "memory"
@@ -154,7 +155,7 @@ export async function writeBrain(
   content: string,
   config: UserConfig,
   allowed: Visibility[],
-  options?: { hint?: string; apply?: boolean; visibility?: Visibility },
+  options?: { hint?: string; apply?: boolean; visibility?: Visibility; attr?: WriteAttribution },
 ): Promise<WriteResult> {
   const text = content.trim();
   if (!text) throw new Error("write_brain: content is required");
@@ -266,6 +267,7 @@ export async function writeBrain(
     { type, title, body, append, visibility, tags: tags.length ? tags : undefined },
     config,
     allowed,
+    options?.attr,
   );
 
   return {

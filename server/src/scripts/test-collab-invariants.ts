@@ -175,5 +175,13 @@ ${"Even more legitimate content. ".repeat(80)}
   check("keeps H1 that is not leading", stripRedundantTitleH1(midH1, t) === midH1);
 }
 
+// ── 8. WikiLink round-trip ───────────────────────────────────────────────────
+{
+  const wiki = "## Links\n\nSee [[product/spec.md|the spec]] and [[people/jd.md]].\n";
+  const once = yDocToMarkdown(docFromMarkdown(wiki));
+  check("wiki links survive Y round-trip", once.includes("[[product/spec.md|the spec]]"));
+  check("wiki links round-trip stable", once === yDocToMarkdown(docFromMarkdown(once)));
+}
+
 console.log(failures === 0 ? "\nALL INVARIANTS PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

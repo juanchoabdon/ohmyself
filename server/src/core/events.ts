@@ -15,6 +15,8 @@ export interface BrainEvent {
   /** Destination path for note_moved. */
   to?: string;
   updated?: string;
+  /** Write summary — clients skip sidebar refresh on collab autosave (`live edit`). */
+  summary?: string;
   /** comment_* only: the comment that changed and the thread it belongs to. */
   commentId?: string;
   threadId?: string;

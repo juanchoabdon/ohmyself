@@ -42,3 +42,26 @@ export async function deleteCollabState(spaceId: string, path: string): Promise<
     .eq("path", path);
   if (error) throw new Error(`collab state delete failed: ${error.message}`);
 }
+
+export async function migrateCollabState(spaceId: string, from: string, to: string): Promise<void> {
+  const { error } = await serviceClient()
+    .from(TABLE)
+    .update({ path: to, updated_at: new Date().toISOString() })
+    .eq("space_id", spaceId)
+    .eq("path", from);
+  if (error) throw new Error(`collab state migrate failed: ${error.message}`);
+}
+
+export async function getCollabStateMeta(
+  spaceId: string,
+  path: string,
+): Promise<{ updated_at: string } | null> {
+  const { data, error } = await serviceClient()
+    .from(TABLE)
+    .select("updated_at")
+    .eq("space_id", spaceId)
+    .eq("path", path)
+    .maybeSingle();
+  if (error || !data?.updated_at) return null;
+  return { updated_at: data.updated_at as string };
+}

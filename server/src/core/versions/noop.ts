@@ -6,6 +6,9 @@ export class NoopVersionStore implements VersionStore {
   async record(): Promise<string | null> {
     return null;
   }
+  async latestRevision(): Promise<string | null> {
+    return null;
+  }
   async history(): Promise<HistoryEntry[]> {
     return [];
   }

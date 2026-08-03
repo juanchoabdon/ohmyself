@@ -46,6 +46,25 @@ export class SupabaseVersionStore implements VersionStore {
     return data ? String((data as { id: number }).id) : null;
   }
 
+  async latestRevision(
+    spaceId: string,
+    path: string,
+    allowed: Visibility[],
+  ): Promise<string | null> {
+    const sb = serviceClient();
+    const { data, error } = await sb
+      .from("note_versions")
+      .select("id")
+      .eq("space_id", spaceId)
+      .eq("path", path)
+      .in("visibility", allowed)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return String((data as { id: number }).id);
+  }
+
   async history(
     spaceId: string,
     path: string,

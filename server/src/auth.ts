@@ -18,6 +18,7 @@ interface BaseAuth {
   scope: Scope;
   readonly: boolean;
   via: AuthContext["via"];
+  clientLabel?: string | null;
 }
 
 /**
@@ -59,9 +60,14 @@ export async function resolveAuth(headers: {
 
   const requested = headers["x-brain-scope"];
   const requestedSpace = headers["x-brain-space"];
-  const base = (userId: string, max: Scope, via: AuthContext["via"]): BaseAuth => {
+  const base = (
+    userId: string,
+    max: Scope,
+    via: AuthContext["via"],
+    clientLabel?: string | null,
+  ): BaseAuth => {
     const scope = isScope(requested) ? clampScope(requested, max) : max;
-    return { userId, scope, readonly: scope === "public", via };
+    return { userId, scope, readonly: scope === "public", via, clientLabel: clientLabel ?? null };
   };
 
   const publicToken = process.env.PUBLIC_AGENT_TOKEN;
@@ -76,11 +82,13 @@ export async function resolveAuth(headers: {
 
   // Personal API token (returns null fast for non-`oms_` tokens, e.g. JWTs).
   const tok = await lookupToken(token);
-  if (tok) return attachSpace(base(tok.userId, tok.scope, "token"), requestedSpace);
+  if (tok) return attachSpace(base(tok.userId, tok.scope, "token", tok.name), requestedSpace);
 
   // OAuth 2.1 access token (`oma_`) issued to a Claude / ChatGPT connector.
   const oauth = await lookupAccessToken(token);
-  if (oauth) return attachSpace(base(oauth.userId, oauth.scope, "oauth"), requestedSpace);
+  if (oauth) {
+    return attachSpace(base(oauth.userId, oauth.scope, "oauth", oauth.clientName), requestedSpace);
+  }
 
   const sb = serviceClient();
   const { data, error } = await sb.auth.getUser(token);

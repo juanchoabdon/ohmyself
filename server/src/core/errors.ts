@@ -8,6 +8,14 @@ export class BrainError extends Error {
   }
 }
 
+export interface RevisionConflictDetail {
+  path: string;
+  expectedRevision?: string;
+  currentRevision: string | null;
+  /** Latest vault markdown for three-way merge on the client/agent. */
+  markdown?: string;
+}
+
 export class NotFoundError extends BrainError {
   constructor(message = "Not found") {
     super(message, 404);
@@ -29,5 +37,11 @@ export class BadRequestError extends BrainError {
 export class UnauthorizedError extends BrainError {
   constructor(message = "Unauthorized") {
     super(message, 401);
+  }
+}
+
+export class ConflictError extends BrainError {
+  constructor(message = "Conflict", public detail?: RevisionConflictDetail) {
+    super(message, 409);
   }
 }

@@ -2,6 +2,7 @@ import type { Brain } from "./brain.js";
 import { slugify } from "./brain.js";
 import type { UserConfig } from "./config.js";
 import type { Visibility } from "./types.js";
+import type { WriteAttribution } from "./versions/types.js";
 
 export interface UpsertPersonInput {
   name: string;
@@ -34,6 +35,7 @@ export async function upsertPerson(
   config: UserConfig,
   allowed: Visibility[],
   input: UpsertPersonInput,
+  attr?: WriteAttribution,
 ): Promise<PersonWriteResult> {
   const rel = input.relationship ? `> ${input.relationship}\n\n` : "";
   const body =
@@ -51,6 +53,7 @@ export async function upsertPerson(
     },
     config,
     allowed,
+    attr,
   );
   return { ok: true, path: note.path, created, visibility: note.meta.visibility };
 }

@@ -2,6 +2,7 @@ import type { Brain } from "./brain.js";
 import { slugify } from "./brain.js";
 import type { UserConfig } from "./config.js";
 import type { Visibility } from "./types.js";
+import type { WriteAttribution } from "./versions/types.js";
 
 /** Sub-document kinds that can live inside a project. */
 export const PROJECT_KINDS = {
@@ -46,6 +47,7 @@ export async function upsertProject(
   config: UserConfig,
   allowed: Visibility[],
   input: UpsertProjectInput,
+  attr?: WriteAttribution,
 ): Promise<ProjectWriteResult> {
   const path = projectIndexPath(input.name);
   if (input.createIfMissing === false) {
@@ -73,6 +75,7 @@ export async function upsertProject(
     },
     config,
     allowed,
+    attr,
   );
   return { ok: true, path: note.path, created, visibility: note.meta.visibility };
 }
@@ -101,6 +104,7 @@ export async function addToProject(
   config: UserConfig,
   allowed: Visibility[],
   input: AddToProjectInput,
+  attr?: WriteAttribution,
 ): Promise<ProjectWriteResult> {
   const k = PROJECT_KINDS[input.kind];
   const path = projectDocPath(input.project, input.kind, input.title);
@@ -117,6 +121,7 @@ export async function addToProject(
     },
     config,
     allowed,
+    attr,
   );
   return { ok: true, path: note.path, created, visibility: note.meta.visibility };
 }

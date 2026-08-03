@@ -167,7 +167,7 @@ export {
   type WriteAttribution,
   type VersionOp,
 } from "./versions/types.js";
-export { attributionFromAuth } from "./write-attribution.js";
+export { attributionFromAuth, cleanAgentLabel } from "./write-attribution.js";
 export {
   listCommentThreads,
   listOpenThreads,

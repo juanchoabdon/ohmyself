@@ -9,7 +9,7 @@ import {
 } from "./config.js";
 import { embedQuery, embedTexts, embeddingsEnabled } from "./embeddings.js";
 import { emitBrainEvent } from "./events.js";
-import { BadRequestError, ForbiddenError, NotFoundError } from "./errors.js";
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "./errors.js";
 import { excerptOf, parseNote, serializeNote, todayISO } from "./frontmatter.js";
 import { stripRedundantTitleH1 } from "./titleBody.js";
 import type { BrainIndex } from "./indexer/types.js";
@@ -60,6 +60,8 @@ export interface UpdateNoteInput {
   links?: string[];
   /** Extra frontmatter keys; shallow-merged into existing extra on update. */
   extra?: Record<string, unknown>;
+  /** Optimistic-lock token from read_note / read_space_note (`revision`). */
+  base_revision?: string;
 }
 
 export interface UpsertNoteInput {
@@ -148,9 +150,9 @@ export class Brain {
     raw: string | null,
     op: VersionOp,
     attr?: WriteAttribution,
-  ): Promise<void> {
+  ): Promise<string | null> {
     try {
-      await this.versions.record(spaceId, {
+      return await this.versions.record(spaceId, {
         path: notePath,
         title: meta.title,
         visibility: meta.visibility,
@@ -161,7 +163,42 @@ export class Brain {
       });
     } catch {
       /* version history is best-effort; vault/index remain SSOT */
+      return null;
     }
+  }
+
+  async getRevision(userId: string, path: string, allowed: Visibility[]): Promise<string | null> {
+    await this.readNote(userId, path, allowed);
+    return this.versions.latestRevision(userId, path, allowed);
+  }
+
+  private async assertRevision(
+    userId: string,
+    path: string,
+    allowed: Visibility[],
+    baseRevision?: string,
+  ): Promise<void> {
+    if (baseRevision === undefined) return;
+    const current = await this.versions.latestRevision(userId, path, allowed);
+    if (baseRevision === current) return;
+    if (!baseRevision && !current) return;
+    let markdown: string | undefined;
+    try {
+      markdown = (await this.readNote(userId, path, allowed)).body;
+    } catch {
+      /* best-effort — conflict payload still has revision ids */
+    }
+    throw new ConflictError(
+      current
+        ? `stale revision: expected ${baseRevision ?? "none"}, current is ${current}`
+        : "stale revision: note has no prior version",
+      {
+        path,
+        expectedRevision: baseRevision,
+        currentRevision: current,
+        markdown,
+      },
+    );
   }
 
   async createNote(
@@ -218,7 +255,13 @@ export class Brain {
     await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
     await this.recordVersion(userId, path, meta, raw, "create", attr);
-    emitBrainEvent({ type: "note_created", spaceId: userId, path, updated: meta.updated });
+    emitBrainEvent({
+      type: "note_created",
+      spaceId: userId,
+      path,
+      updated: meta.updated,
+      summary: attr?.summary,
+    });
     return { path, meta, body };
   }
 
@@ -316,7 +359,13 @@ export class Brain {
       author: attr?.author ?? "human",
       summary: attr?.summary ?? `restore ${version}`,
     });
-    emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
+    emitBrainEvent({
+      type: "note_updated",
+      spaceId: userId,
+      path,
+      updated: meta.updated,
+      summary: attr?.summary ?? `restore ${version}`,
+    });
     return { path, meta, body };
   }
 
@@ -332,7 +381,13 @@ export class Brain {
     await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
     await this.recordVersion(userId, path, meta, raw, "update", attr);
-    emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
+    emitBrainEvent({
+      type: "note_updated",
+      spaceId: userId,
+      path,
+      updated: meta.updated,
+      summary: attr?.summary,
+    });
     return { path, meta, body };
   }
 
@@ -352,36 +407,44 @@ export class Brain {
     allowed: Visibility[],
     attr?: WriteAttribution,
   ): Promise<Note> {
+    const { base_revision, ...notePatch } = patch;
     const current = await this.readNote(userId, path, allowed); // enforces visibility
+    await this.assertRevision(userId, path, allowed, base_revision);
     const meta: NoteMeta = { ...current.meta };
-    if (patch.title !== undefined) meta.title = patch.title;
-    if (patch.tags !== undefined) meta.tags = patch.tags;
-    if (patch.links !== undefined) meta.links = patch.links;
-    if (patch.extra !== undefined) {
-      const merged = { ...(current.meta.extra ?? {}), ...patch.extra };
+    if (notePatch.title !== undefined) meta.title = notePatch.title;
+    if (notePatch.tags !== undefined) meta.tags = notePatch.tags;
+    if (notePatch.links !== undefined) meta.links = notePatch.links;
+    if (notePatch.extra !== undefined) {
+      const merged = { ...(current.meta.extra ?? {}), ...notePatch.extra };
       meta.extra = Object.keys(merged).length ? merged : undefined;
     }
-    if (patch.visibility !== undefined) {
-      if (!allowed.includes(patch.visibility)) {
+    if (notePatch.visibility !== undefined) {
+      if (!allowed.includes(notePatch.visibility)) {
         throw new ForbiddenError("cannot set a visibility above your scope");
       }
-      meta.visibility = patch.visibility;
+      meta.visibility = notePatch.visibility;
     }
     meta.updated = todayISO();
     const body =
-      patch.body !== undefined ? stripRedundantTitleH1(patch.body, meta.title) : current.body;
+      notePatch.body !== undefined ? stripRedundantTitleH1(notePatch.body, meta.title) : current.body;
     const raw = serializeNote(meta, body);
     await this.vault.write(userId, path, raw);
     await this.writeIndex(userId, path, meta, body);
-    await this.recordVersion(userId, path, meta, raw, "update", attr);
-    emitBrainEvent({ type: "note_updated", spaceId: userId, path, updated: meta.updated });
+    const revision = await this.recordVersion(userId, path, meta, raw, "update", attr);
+    emitBrainEvent({
+      type: "note_updated",
+      spaceId: userId,
+      path,
+      updated: meta.updated,
+      summary: attr?.summary,
+    });
     // Push vault body into the live Yjs room for open editors — skip the collab
     // autosave round-trip (`summary: "live edit"`) to avoid feedback loops.
-    if (patch.body !== undefined && attr?.summary !== "live edit") {
+    if (notePatch.body !== undefined && attr?.summary !== "live edit") {
       const { pushBodyToCollab } = await import("../collab/sync.js");
       void pushBodyToCollab(userId, path, body);
     }
-    return { path, meta, body };
+    return { path, meta, body, revision: revision ?? undefined };
   }
 
   async appendToNote(
@@ -390,10 +453,11 @@ export class Brain {
     text: string,
     allowed: Visibility[],
     attr?: WriteAttribution,
+    baseRevision?: string,
   ): Promise<Note> {
     const current = await this.readNote(userId, path, allowed);
     const body = `${current.body.replace(/\s+$/, "")}\n\n${text.trim()}\n`;
-    return this.updateNote(userId, path, { body }, allowed, attr);
+    return this.updateNote(userId, path, { body, base_revision: baseRevision }, allowed, attr);
   }
 
   async deleteNote(
@@ -407,7 +471,14 @@ export class Brain {
     await this.index.remove(userId, path);
     await this.removeChunks(userId, path);
     await this.recordVersion(userId, path, current.meta, null, "delete", attr);
-    emitBrainEvent({ type: "note_deleted", spaceId: userId, path });
+    const { deleteCollabState } = await import("../collab/state-store.js");
+    await deleteCollabState(userId, path).catch(() => {});
+    emitBrainEvent({
+      type: "note_deleted",
+      spaceId: userId,
+      path,
+      summary: attr?.summary,
+    });
   }
 
   /** Move/rename a note to a new path, preserving its frontmatter. Used by the
@@ -446,12 +517,15 @@ export class Brain {
     });
     // Comment threads key off (space, path), so they have to follow the rename.
     await retargetComments(userId, from, dest);
+    const { migrateCollabState } = await import("../collab/state-store.js");
+    await migrateCollabState(userId, from, dest).catch(() => {});
     emitBrainEvent({
       type: "note_moved",
       spaceId: userId,
       path: from,
       to: dest,
       updated: current.meta.updated,
+      summary: attr?.summary ?? `move ${from} → ${dest}`,
     });
     return { path: dest, meta: current.meta, body: current.body };
   }

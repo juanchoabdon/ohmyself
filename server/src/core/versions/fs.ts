@@ -52,6 +52,19 @@ export class FsVersionStore implements VersionStore {
     return version;
   }
 
+  async latestRevision(
+    spaceId: string,
+    path: string,
+    allowed: Visibility[],
+  ): Promise<string | null> {
+    const rows = (await this.load(spaceId)).filter(
+      (r) => r.path === path && allowed.includes(r.visibility),
+    );
+    if (!rows.length) return null;
+    const latest = rows.reduce((a, b) => (Number(b.version) > Number(a.version) ? b : a));
+    return latest.version;
+  }
+
   async history(
     spaceId: string,
     notePath: string,

@@ -176,13 +176,27 @@ export async function issueTokens(
   return { access_token: access, refresh_token: refresh, token_type: "Bearer", expires_in: ACCESS_TTL_S, scope };
 }
 
+/** client_id → client_name. Registrations are immutable, so cache forever. */
+const clientNameCache = new Map<string, string | null>();
+
+async function clientNameFor(clientId: string | null): Promise<string | null> {
+  if (!clientId) return null;
+  if (clientNameCache.has(clientId)) return clientNameCache.get(clientId) ?? null;
+  const client = await getClient(clientId).catch(() => null);
+  const name = client?.client_name ?? null;
+  clientNameCache.set(clientId, name);
+  return name;
+}
+
 /** Resolve an access token (oma_) to its owner + scope, or null. */
-export async function lookupAccessToken(token: string): Promise<{ userId: string; scope: Scope } | null> {
+export async function lookupAccessToken(
+  token: string,
+): Promise<{ userId: string; scope: Scope; clientName: string | null } | null> {
   if (!token.startsWith(ACCESS_PREFIX)) return null;
   const sb = serviceClient();
   const { data } = await sb
     .from("oauth_tokens")
-    .select("token_hash,user_id,scope,expires_at,revoked_at")
+    .select("token_hash,client_id,user_id,scope,expires_at,revoked_at")
     .eq("token_hash", sha256(token))
     .eq("kind", "access")
     .is("revoked_at", null)
@@ -190,7 +204,11 @@ export async function lookupAccessToken(token: string): Promise<{ userId: string
   if (!data) return null;
   if (new Date(data.expires_at as string).getTime() < Date.now()) return null;
   void sb.from("oauth_tokens").update({ last_used_at: new Date().toISOString() }).eq("token_hash", data.token_hash);
-  return { userId: data.user_id as string, scope: data.scope as Scope };
+  return {
+    userId: data.user_id as string,
+    scope: data.scope as Scope,
+    clientName: await clientNameFor((data.client_id as string | null) ?? null),
+  };
 }
 
 /** Rotate a refresh token (omr_): revoke the old one, issue a fresh pair. */

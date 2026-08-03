@@ -15,6 +15,7 @@ import sharp from "sharp";
 import { serviceClient } from "../core/supabase.js";
 import { createAsset, assetUri, resolveAssets, agentImage } from "../core/assets.js";
 import { buildCore, getUserConfig } from "../core/index.js";
+import { deleteCollabState } from "../collab/state-store.js";
 
 const NOTE_PATH = "notes/media-demo.md";
 
@@ -131,6 +132,43 @@ src: https://www.youtube.com/watch?v=dQw4w9WgXcQ
 title: Un embed de YouTube sigue funcionando igual
 :::
 
+## Graficas (Mermaid)
+
+No hay un widget de chart aparte — Mermaid es el camino. Pie, barras y flujos se renderizan en editor y en lectura.
+
+\`\`\`mermaid
+pie title Donde vive cada cosa
+  "Bucket privado" : 45
+  "Markdown (oms-asset)" : 25
+  "Signed URL (efimera)" : 20
+  "Derivado agente" : 10
+\`\`\`
+
+\`\`\`mermaid
+xychart-beta
+  title "Tamano tipico por tipo"
+  x-axis [PNG, JPEG, WEBP, MP4]
+  y-axis "MB" 0 --> 50
+  bar [2, 3, 1, 28]
+\`\`\`
+
+\`\`\`mermaid
+flowchart LR
+  A[Pega / sube] --> B[add_media]
+  B --> C[Bucket privado]
+  C --> D[oms-asset:id]
+  D --> E[Web: signed URL]
+  D --> F[Agente: get_media]
+\`\`\`
+
+## HTML preview
+
+\`\`\`html preview
+<div style="font:600 18px/1.4 system-ui;padding:16px;border-radius:12px;background:linear-gradient(135deg,#f0b42922,#5aa9e622);border:1px solid #e6e0d6">
+  Widget HTML sandboxed — util para mockups rapidos.
+</div>
+\`\`\`
+
 ## Tabla y checklist
 
 | Bloque | Sube archivo | Lo ve un agente |
@@ -141,7 +179,7 @@ title: Un embed de YouTube sigue funcionando igual
 
 - [x] Bucket privado creado
 - [x] Subida real probada
-- [ ] Deploy a Railway
+- [x] Deploy a Railway
 
 \`\`\`ts
 const { base64, mime } = await agentImage(spaceId, id);
@@ -158,6 +196,8 @@ const { base64, mime } = await agentImage(spaceId, id);
     ["public", "private", "secret"],
   );
   console.log(`note ${created ? "created" : "updated"}: ${NOTE_PATH}`);
+  // Drop any stale Y.Doc so the editor rehydrates from this markdown.
+  await deleteCollabState(space.id, NOTE_PATH);
 
   const [signed] = await resolveAssets(space.id, [asset.id]);
   console.log(`signed url: ${signed?.url ? "ok" : "FAILED"}`);

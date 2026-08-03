@@ -22,6 +22,8 @@ export interface Note {
   path: string;
   meta: NoteMeta;
   body: string;
+  /** note_versions id after the most recent write (when available). */
+  revision?: string;
 }
 
 /** Lightweight indexed view used for listing / search results. */
@@ -126,4 +128,8 @@ export interface AuthContext {
   readonly: boolean;
   /** How the caller authenticated. Token management requires a `jwt` session. */
   via?: "jwt" | "token" | "oauth" | "public";
+  /** Human-readable name of the credential's client — the API token's name
+   *  ("Cursor", "MacBook") or the OAuth client's registered name ("Claude").
+   *  Used to attribute agent writes ("agent:Cursor") instead of "agent:token". */
+  clientLabel?: string | null;
 }

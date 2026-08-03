@@ -20,7 +20,7 @@ import { stripRedundantTitleH1 } from "../core/titleBody.js";
 import type { Visibility } from "../core/types.js";
 import { hydrateYDocOnce, replaceYDocMarkdown } from "./hydrate.js";
 import { collabFieldName, roundTripMarkdown, yDocToMarkdown } from "./schema.js";
-import { loadCollabState, saveCollabState } from "./state-store.js";
+import { loadCollabState, saveCollabState, getCollabStateMeta } from "./state-store.js";
 
 const ALL_VISIBILITIES: Visibility[] = ["public", "private", "secret"];
 
@@ -57,6 +57,21 @@ export function getCollabServer(): Hocuspocus | null {
   return hocuspocus;
 }
 
+/** WebSocket editors in a room (excludes ephemeral direct connections). */
+export function activeEditorCount(documentName: string): number {
+  const doc = hocuspocus?.documents.get(documentName);
+  return doc?.connections.size ?? 0;
+}
+
+export function isCollabRoomActive(spaceId: string, path: string): boolean {
+  return activeEditorCount(roomName(spaceId, path)) > 0;
+}
+
+function vaultContentIsNewer(metaUpdated: string | undefined, collabUpdatedAt: string | null): boolean {
+  if (!metaUpdated || !collabUpdatedAt) return false;
+  return metaUpdated.slice(0, 10) > collabUpdatedAt.slice(0, 10);
+}
+
 export function collabEnabled(): boolean {
   return process.env.COLLAB_ENABLED === "true";
 }
@@ -67,6 +82,8 @@ export function startCollabServer(): Hocuspocus | null {
 
   hocuspocus = new Hocuspocus({
     name: "ohmyself-collab",
+    debounce: 500,
+    maxDebounce: 3000,
 
     async onAuthenticate({ token, documentName }) {
       if (!token) throw new Error("collab: missing token");
@@ -86,7 +103,13 @@ export function startCollabServer(): Hocuspocus | null {
       if (!room) return;
 
       const { vault, brain } = buildCore();
-      const raw = await vault.read(room.spaceId, room.path);
+      // Fetch everything the load needs in parallel — these were serial Supabase
+      // round-trips and the editor blocks on this hook before first sync.
+      const [raw, stored, collabMeta] = await Promise.all([
+        vault.read(room.spaceId, room.path),
+        loadCollabState(room.spaceId, room.path).catch(() => null),
+        getCollabStateMeta(room.spaceId, room.path).catch(() => null),
+      ]);
       const parsed = raw ? parseNote(raw, room.path) : null;
       const vaultBodyRaw = parsed
         ? stripRedundantTitleH1(parsed.body, parsed.meta.title)
@@ -116,7 +139,6 @@ export function startCollabServer(): Hocuspocus | null {
       // Yjs keeps both, which stacks the whole note. So the stored state is
       // never discarded: it is restored, then converged toward the vault with a
       // diff, which stays inside the same lineage and is merge-safe.
-      const stored = await loadCollabState(room.spaceId, room.path).catch(() => null);
       let restored = false;
       if (stored) {
         applyUpdate(document, stored, "ohmyself-state-store");
@@ -136,18 +158,17 @@ export function startCollabServer(): Hocuspocus | null {
         return;
       }
 
-      // Restored lineage: reconcile it to the vault only when they actually
-      // differ, comparing through the same serializer to ignore normalization.
+      // Restored lineage: reconcile toward vault only when vault content is
+      // provably newer than the last persisted Y state. Otherwise Y wins — it
+      // may hold live edits not yet flushed to the vault.
       const liveRound = yDocToMarkdown(document).trim();
       if (liveRound === vaultRound) return;
 
-      // Stored/live Y can be ahead of the vault when collab edits haven't flushed
-      // yet — only skip reconcile when Y is substantially longer (not a small MCP edit).
-      if (liveRound.length > vaultRound.length * 1.4) {
+      if (!vaultContentIsNewer(parsed?.meta.updated, collabMeta?.updated_at ?? null)) {
         const dup = repairCollabBody(liveRound);
         if (!dup.deduped) {
           console.log(
-            `[collab] kept Y state for ${documentName} (live ${liveRound.length} > vault ${vaultRound.length})`,
+            `[collab] kept Y state for ${documentName} (vault not newer than collab; live ${liveRound.length} chars)`,
           );
           return;
         }

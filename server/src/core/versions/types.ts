@@ -28,6 +28,12 @@ export interface VersionRecordInput {
 
 export interface VersionStore {
   record(spaceId: string, input: VersionRecordInput): Promise<string | null>;
+  /** Latest version id for a note path, or null if none recorded yet. */
+  latestRevision(
+    spaceId: string,
+    path: string,
+    allowed: Visibility[],
+  ): Promise<string | null>;
   history(
     spaceId: string,
     path: string,

@@ -1,5 +1,5 @@
 /**
- * TipTap schema aligned with the web editor (minus WikiLink / custom code block).
+ * TipTap schema aligned with the web editor (WikiLink + rich blocks).
  * Used to parse agent markdown into Yjs XmlFragment for live collab.
  */
 import { Node } from "@tiptap/pm/model";
@@ -17,6 +17,7 @@ import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Markdown, MarkdownManager } from "@tiptap/markdown";
 import { richMarkdownExtensions } from "./richMarkdownExtensions.js";
+import { WikiLink } from "./wikiLink.js";
 
 const COLLAB_FIELD = "default";
 
@@ -28,6 +29,7 @@ const extensions: Extensions = [
     undoRedo: false,
   }),
   ...richMarkdownExtensions,
+  WikiLink,
   Link.configure({ openOnClick: false, autolink: true }),
   Table.configure({ resizable: false }),
   TableRow,
