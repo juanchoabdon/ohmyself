@@ -463,6 +463,13 @@ main {
   text-decoration-color: color-mix(in oklab, var(--muted) 55%, transparent);
 }
 
+/* Mermaid inherits the app face even if the SVG baked a fallback. */
+.oms-mermaid-preview,
+.oms-mermaid-preview text,
+.oms-mermaid-preview tspan {
+  font-family: var(--font-sans);
+}
+
 /* Wiki links + in-editor links */
 .prose .oms-wiki-link,
 .prose a.oms-wiki-link {

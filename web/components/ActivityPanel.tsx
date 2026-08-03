@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bot, Clock, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { HistoryEntry } from "@/lib/types";
-import { agentCollabUser } from "@/lib/collabUser";
+import { agentCollabUser, prettyAgentName } from "@/lib/collabUser";
 import { cn } from "@/lib/utils";
 
 function formatWhen(ts: number): string {
@@ -23,7 +23,10 @@ function formatWhen(ts: number): string {
 function authorLabel(author: string | undefined | null): string {
   const a = author ?? "unknown";
   if (a === "human") return "You";
-  if (a.startsWith("agent:")) return a.replace("agent:", "Agent · ");
+  if (a.startsWith("agent:")) {
+    const name = prettyAgentName(a);
+    return name === "Agent" ? "Agent" : `Agent · ${name}`;
+  }
   return a;
 }
 

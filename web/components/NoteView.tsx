@@ -12,13 +12,13 @@ import {
 import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { MessageSquare, MessageSquarePlus } from "lucide-react";
+import { Clock, MessageSquare, MessageSquarePlus, PanelRight } from "lucide-react";
 import type { CommentThread, FullNote, Visibility } from "@/lib/types";
 import { applyCommentHighlights, clearCommentHighlights } from "@/lib/domHighlight";
 import { VisibilityBadge } from "./VisibilityBadge";
 import { MarkdownEditor, EditorBodySkeleton, type ScrollToHeadingTarget } from "./editor/MarkdownEditor";
 import { EditorModeToggle, loadEditorModePreference, saveEditorModePreference, type EditorMode } from "./editor/EditorModeToggle";
-import type { PresencePeer } from "./editor/PresenceBar";
+import { PresenceAvatars, type CollabSyncStatus, type PresencePeer } from "./editor/PresenceBar";
 import type { CollabUser } from "@/lib/collabUser";
 import {
   isInternalNoteHref,
@@ -79,7 +79,13 @@ type NoteViewProps = {
   activeThreadId?: string | null;
   onSelectThread?: (threadId: string) => void;
   onStartComment?: (quote: string, offset: number) => void;
-  onOpenComments?: () => void;
+  /** Doc side panels — their toggles live here, in the doc toolbar, not in the app header. */
+  panels?: {
+    comments: boolean;
+    activity: boolean;
+    outline: boolean;
+    onToggle: (panel: "comments" | "activity" | "outline") => void;
+  };
 };
 
 export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteView(
@@ -103,7 +109,7 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     activeThreadId = null,
     onSelectThread,
     onStartComment,
-    onOpenComments,
+    panels,
   },
   ref,
 ) {
@@ -119,6 +125,8 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
   const [editorLive, setEditorLive] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>("visual");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [presencePeers, setPresencePeers] = useState<PresencePeer[]>([]);
+  const [presenceSync, setPresenceSync] = useState<CollabSyncStatus>("offline");
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -151,6 +159,8 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
     setEditorMode(loadEditorModePreference());
     setError(null);
     setSaveStatus("idle");
+    setPresencePeers([]);
+    setPresenceSync("offline");
     if (note) {
       setTitle(note.meta.title);
       setBody(note.body);
@@ -351,31 +361,86 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 {saveStatus === "error" && editable && (
                   <span className="text-vis-secret">· Save failed</span>
                 )}
+                {collabActive && editable && !editorLive && (
+                  // Subtle background-sync hint (Google Docs style) — the body
+                  // shows the vault preview meanwhile, no blocking state.
+                  <span className="text-muted/70">· Syncing…</span>
+                )}
+                {collabActive && editable && editorLive && presenceSync === "offline" && (
+                  <span className="text-vis-secret">· Offline — changes sync when back</span>
+                )}
                 {!editable && note!.meta.updated && (
                   <span>· updated {note!.meta.updated}</span>
                 )}
               </>
             )}
           </div>
-          {(editable || (note && (onDelete || shareUrl || onOpenComments))) && (
+          {(editable || (note && (onDelete || shareUrl || panels))) && (
             <div className="flex shrink-0 items-center gap-1.5">
+              <PresenceAvatars
+                peers={presencePeers}
+                extraPeers={agentPresence}
+                onSelectPeer={onSelectPresencePeer}
+                className="mr-1"
+              />
               {editable ? (
                 <EditorModeToggle
                   mode={editorMode}
                   onChange={handleEditorModeChange}
-                  disabled={fetching}
+                  disabled={fetching || collabActive}
+                  disabledReason={
+                    collabActive
+                      ? "Source mode is unavailable while collaborating in real time"
+                      : undefined
+                  }
                 />
               ) : null}
-              {onOpenComments && note ? (
-                <button
-                  type="button"
-                  onClick={onOpenComments}
-                  className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs font-medium text-muted hover:border-brand/40 hover:text-brand"
-                  title="Comments"
-                >
-                  <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-                  {openThreadCount > 0 ? openThreadCount : null}
-                </button>
+              {panels && note ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => panels.onToggle("comments")}
+                    aria-pressed={panels.comments}
+                    className={cn(
+                      "flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs font-medium transition-colors",
+                      panels.comments
+                        ? "border-brand/40 bg-brand-weak text-brand-ink"
+                        : "text-muted hover:border-brand/40 hover:text-brand",
+                    )}
+                    title="Comments"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                    {openThreadCount > 0 ? openThreadCount : null}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => panels.onToggle("activity")}
+                    aria-pressed={panels.activity}
+                    className={cn(
+                      "rounded-lg border border-border px-2 py-1 transition-colors",
+                      panels.activity
+                        ? "border-brand/40 bg-brand-weak text-brand-ink"
+                        : "text-muted hover:border-brand/40 hover:text-brand",
+                    )}
+                    title="Activity"
+                  >
+                    <Clock className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => panels.onToggle("outline")}
+                    aria-pressed={panels.outline}
+                    className={cn(
+                      "rounded-lg border border-border px-2 py-1 transition-colors",
+                      panels.outline
+                        ? "border-brand/40 bg-brand-weak text-brand-ink"
+                        : "text-muted hover:border-brand/40 hover:text-brand",
+                    )}
+                    title="Outline & info"
+                  >
+                    <PanelRight className="h-3.5 w-3.5" aria-hidden />
+                  </button>
+                </>
               ) : null}
               {shareUrl ? <ShareNoteButton url={shareUrl} /> : null}
               {onDelete ? (
@@ -463,12 +528,11 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 is never blank (Yjs can take a moment to sync). */}
             {!editorLive && (
               <>
-                {collabActive ? (
-                  <div className="space-y-3 py-1" aria-busy>
-                    <p className="text-sm text-muted">Syncing with collaborators…</p>
-                    <EditorBodySkeleton />
-                  </div>
-                ) : hasVaultBody || hasEditorBody ? (
+                {/* Yjs syncs silently in the background (Google Docs style):
+                    render the vault body read-only at full fidelity and swap in
+                    the live editor when the room is ready. Rendering never
+                    broadcasts into the shared room, so a stale preview is safe. */}
+                {hasVaultBody || hasEditorBody ? (
                   <div className="prose">
                     <ReadOnlyBody body={editorBody || vaultBody} onOpenLink={onOpenLink} />
                   </div>
@@ -515,8 +579,10 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                     : null
                 }
                 collabUser={collabUser}
-                agentPresence={agentPresence}
-                onSelectPresencePeer={onSelectPresencePeer}
+                onPresenceChange={(peers, status) => {
+                  setPresencePeers(peers);
+                  setPresenceSync(status);
+                }}
                 commentThreads={commentThreads}
                 activeThreadId={activeThreadId}
                 onSelectThread={onSelectThread}

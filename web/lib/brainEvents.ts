@@ -14,6 +14,8 @@ export type BrainEvent = {
   path: string;
   to?: string;
   updated?: string;
+  /** Write summary — skip sidebar refresh on collab autosave (`live edit`). */
+  summary?: string;
   commentId?: string;
   threadId?: string;
 };

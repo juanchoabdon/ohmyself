@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { buildHtmlPreviewSrcDoc, pingHtmlPreviewIframe } from "./htmlPreview";
-import { renderMermaidSvg } from "./mermaidPreview";
+import { readTheme, renderMermaidSvg, subscribeTheme } from "./mermaidPreview";
 
 /**
  * The two code blocks that render as something other than code: a mermaid
@@ -22,10 +22,13 @@ export function MermaidDiagram({ code, fallback }: { code: string; fallback?: Re
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const id = useId().replace(/:/g, "");
+  // SVG ink is baked at render time — re-render when light/dark flips.
+  const theme = useSyncExternalStore(subscribeTheme, readTheme, () => "light" as const);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setSvg(null);
     void renderMermaidSvg(code, `oms-mermaid-${id}`)
       .then((rendered) => {
         if (!cancelled) setSvg(rendered);
@@ -38,7 +41,7 @@ export function MermaidDiagram({ code, fallback }: { code: string; fallback?: Re
     return () => {
       cancelled = true;
     };
-  }, [code, id]);
+  }, [code, id, theme]);
 
   // Bad syntax shouldn't swallow the content — show the source instead.
   if (error) return <>{fallback ?? <p className="text-sm text-muted">{error}</p>}</>;

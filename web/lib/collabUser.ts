@@ -46,12 +46,42 @@ export function collabUserFromSupabase(user: User): CollabUser {
   };
 }
 
+/** Well-known agent identifiers → display names. Keys are lowercase. */
+const AGENT_NAMES: Record<string, string> = {
+  // legacy auth-method authors (before writes carried the client name)
+  token: "Agent",
+  oauth: "Agent",
+  public: "Agent",
+  ohmyself: "ohmyself",
+  // MCP clientInfo names
+  cursor: "Cursor",
+  "cursor-vscode": "Cursor",
+  "claude-ai": "Claude",
+  "claude-code": "Claude Code",
+  "claude-desktop": "Claude",
+  chatgpt: "ChatGPT",
+  "openai-mcp": "ChatGPT",
+};
+
+/** "agent:cursor-vscode" → "Cursor"; unknown ids get a title-cased cleanup. */
+export function prettyAgentName(agentId: string): string {
+  const short = agentId.replace(/^agent:/, "").trim();
+  if (!short) return "Agent";
+  const known = AGENT_NAMES[short.toLowerCase()];
+  if (known) return known;
+  if (/^[a-z0-9._-]+$/.test(short)) {
+    return short
+      .replace(/[._-]+/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  return short;
+}
+
 export function agentCollabUser(agentId: string, label?: string): CollabUser {
   const id = agentId.startsWith("agent:") ? agentId : `agent:${agentId}`;
-  const short = id.replace(/^agent:/, "");
   return {
     id,
-    name: label?.trim() || short || "Agent",
+    name: label?.trim() || prettyAgentName(id),
     color: colorFromId(id),
     kind: "agent",
   };

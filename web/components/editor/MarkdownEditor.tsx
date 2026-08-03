@@ -3,6 +3,7 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { IndexeddbPersistence } from "y-indexeddb";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import * as Y from "yjs";
@@ -23,7 +24,7 @@ import type { CollabUser } from "@/lib/collabUser";
 import type { CommentThread } from "@/lib/types";
 import { CommentHighlight, syncCommentHighlights } from "./commentHighlight";
 import {
-  PresenceBar,
+  readPeers,
   type CollabSyncStatus,
   type PresencePeer,
 } from "./PresenceBar";
@@ -66,8 +67,7 @@ export function MarkdownEditor({
   scrollToHeading,
   collab,
   collabUser,
-  agentPresence = [],
-  onSelectPresencePeer,
+  onPresenceChange,
   onReady,
   mode: modeProp,
   onModeChange: onModeChangeProp,
@@ -86,9 +86,8 @@ export function MarkdownEditor({
   scrollToHeading?: ScrollToHeadingTarget | null;
   collab?: CollabConfig | null;
   collabUser?: CollabUser | null;
-  /** Recent agent editors (until MCP writes join the Y doc). */
-  agentPresence?: PresencePeer[];
-  onSelectPresencePeer?: (peer: PresencePeer) => void;
+  /** Live presence for the parent header (Google Docs-style avatars). */
+  onPresenceChange?: (peers: PresencePeer[], syncStatus: CollabSyncStatus) => void;
   /** Fires when the editor has content ready to display. */
   onReady?: () => void;
   /** When set with `onModeChange`, mode is controlled by the parent (e.g. header toolbar). */
@@ -315,7 +314,13 @@ export function MarkdownEditor({
         },
       },
       onUpdate: ({ editor: ed }) => {
-        if (ed.isDestroyed || modeRef.current === "source" || !readyFiredRef.current) return;
+        if (ed.isDestroyed || modeRef.current === "source") return;
+        if (!readyFiredRef.current) {
+          // A partial local cache defers ready (shrink guard) — server ops
+          // arriving through Yjs re-trigger it here once content is complete.
+          if (collabActive) signalReady(ed);
+          return;
+        }
         emitMarkdown(ed.getMarkdown());
       },
     },
@@ -345,6 +350,12 @@ export function MarkdownEditor({
     },
     [collabActive, modeControlled, onModeChangeProp],
   );
+
+  useEffect(() => {
+    if (collabActive && mode === "source") {
+      handleModeChange("visual");
+    }
+  }, [collabActive, mode, handleModeChange]);
 
   const handleSourceChange = useCallback((md: string) => {
     setSourceMd(md);
@@ -383,6 +394,33 @@ export function MarkdownEditor({
     setProvider(null);
     setSyncStatus("connecting");
   }, [noteKey]);
+
+  // Local Y-state cache (the Google Docs model): a note opened before loads its
+  // Yjs lineage instantly from IndexedDB, the editor mounts editable right away,
+  // and the provider merges server diffs silently in the background. Safe
+  // because the cached lineage was previously synced with the server — CRDT
+  // merge converges without duplication. A first-ever open has no cache, so it
+  // still waits for the provider (mounting an empty doc would broadcast into
+  // the shared room).
+  useEffect(() => {
+    if (!collabActive || !ydoc || !collabSpaceId || !collabPath) return;
+    const idb = new IndexeddbPersistence(
+      `oms-collab:${collabRoomName(collabSpaceId, collabPath)}`,
+      ydoc,
+    );
+    let cancelled = false;
+    void idb.whenSynced.then(() => {
+      if (cancelled) return;
+      if (ydoc.getXmlFragment("default").length > 0) {
+        collabSyncedRef.current = true;
+        setCollabDocSynced(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+      void idb.destroy();
+    };
+  }, [collabActive, ydoc, collabSpaceId, collabPath, noteKey]);
 
   useEffect(() => {
     if (!collabActive || !ydoc || !collabToken || !collabSpaceId || !collabPath) {
@@ -439,6 +477,26 @@ export function MarkdownEditor({
       provider.off("synced", onSynced);
     };
   }, [provider]);
+
+  // Report room presence to the parent so it can render header avatars
+  // (Google Docs style) instead of an in-document bar.
+  const onPresenceChangeRef = useRef(onPresenceChange);
+  onPresenceChangeRef.current = onPresenceChange;
+
+  useEffect(() => {
+    const cb = onPresenceChangeRef.current;
+    if (!cb) return;
+    if (!collabActive || !provider || !collabUser) {
+      cb([], "offline");
+      return;
+    }
+    const bump = () => onPresenceChangeRef.current?.(readPeers(provider, collabUser), syncStatus);
+    provider.awareness?.on("change", bump);
+    bump();
+    return () => {
+      provider.awareness?.off("change", bump);
+    };
+  }, [collabActive, provider, collabUser, syncStatus]);
 
   // Parent reset (Cancel) without remounting the note — skip when Yjs owns the doc.
   // Ignore value echoes from our own onUpdate — that loop was shrinking bodies on load.
@@ -514,18 +572,8 @@ export function MarkdownEditor({
     );
   }, [editor, scrollToHeading, mode]);
 
-  if (collabActive && !canMountEditor) {
-    if (!provider || !collabUser) return null;
-    return (
-      <PresenceBar
-        provider={provider}
-        localUser={collabUser}
-        syncStatus={syncStatus}
-        extraPeers={agentPresence}
-        onSelectPeer={onSelectPresencePeer}
-      />
-    );
-  }
+  // Presence lives in the parent header now — nothing to render until synced.
+  if (collabActive && !canMountEditor) return null;
 
   if (!editor || editor.isDestroyed) return null;
 
@@ -547,16 +595,14 @@ export function MarkdownEditor({
           Comment
         </button>
       )}
-      {collabActive && provider && collabUser && (
-        <PresenceBar
-          provider={provider}
-          localUser={collabUser}
-          syncStatus={syncStatus}
-          extraPeers={agentPresence}
-          onSelectPeer={onSelectPresencePeer}
+      {!hideModeToggle ? (
+        <EditorModeToggle
+          mode={mode}
+          onChange={handleModeChange}
+          disabled={collabActive}
+          disabledReason="Source mode is unavailable while collaborating in real time"
         />
-      )}
-      {!hideModeToggle ? <EditorModeToggle mode={mode} onChange={handleModeChange} /> : null}
+      ) : null}
       {mode === "source" ? (
         <p className="px-2 pb-2 pt-0.5 text-[11px] text-muted">
           Source mode — callouts, Mermaid, and embeds render in{" "}

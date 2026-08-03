@@ -30,8 +30,13 @@ import {
   upsertTab,
   type EditorTab,
 } from "@/lib/editorTabs";
-import { Clock, MessageSquare, PanelRight, Search } from "lucide-react";
-import { connectBrainEvents } from "@/lib/brainEvents";
+import { Search } from "lucide-react";
+import { connectBrainEvents, type BrainEvent } from "@/lib/brainEvents";
+import {
+  applyInstantSidebarPatch,
+  isSidebarStructuralEvent,
+  mergeSidebarEvents,
+} from "@/lib/sidebarRealtime";
 import { fetchCollabEnabled } from "@/lib/collab";
 import { collabUserFromSupabase, agentCollabUser, type CollabUser } from "@/lib/collabUser";
 import type { PresencePeer } from "@/components/editor/PresenceBar";
@@ -66,6 +71,15 @@ export default function Dashboard() {
   const activeSpace = useMemo(
     () => spaces.find((s) => s.id === activeSpaceId) ?? spaces.find((s) => s.kind === "self") ?? null,
     [spaces, activeSpaceId],
+  );
+  // Company `member` can read + comment, but not edit notes or join the Yjs
+  // room. Handing them the editor with collab on left an empty doc (auth
+  // rejected) and no text to select for comments — so they looked locked out.
+  const canEditNotes = Boolean(
+    activeSpace &&
+      (activeSpace.kind === "self" ||
+        activeSpace.role === "owner" ||
+        activeSpace.role === "admin"),
   );
 
   const [baseNotes, setBaseNotes] = useState<IndexedNote[]>([]);
@@ -119,11 +133,6 @@ export default function Dashboard() {
     enabled: view === "notes",
     refreshKey: commentsRefreshKey,
   });
-
-  const openCommentCount = useMemo(
-    () => comments.threads.filter((t) => !t.resolvedAt).length,
-    [comments.threads],
-  );
 
   const startComment = useCallback((quote: string, offset: number) => {
     setCommentDraft({ quote, offset });
@@ -736,8 +745,66 @@ export default function Dashboard() {
   const selectedRef = useRef<string | null>(null);
   const noteViewRef = useRef<NoteViewHandle>(null);
   const openNoteSeqRef = useRef(0);
+  const sidebarSyncQueueRef = useRef<BrainEvent[]>([]);
+  const sidebarSyncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   selectedRef.current = selected;
   collabEnabledRef.current = collabEnabled;
+
+  const flushSidebarSync = useCallback(async () => {
+    if (!token) return;
+    const batch = sidebarSyncQueueRef.current;
+    sidebarSyncQueueRef.current = [];
+    if (!batch.length) return;
+
+    const { pillars, instant } = mergeSidebarEvents(batch);
+    if (!pillars.length && !instant.length) return;
+
+    for (const event of instant) {
+      setBaseNotes((prev) => applyInstantSidebarPatch(prev, event));
+    }
+
+    try {
+      const { folders } = await api.folders(token);
+      setFolderCounts(folders);
+
+      if (allLoadedRef.current) {
+        const { notes } = await api.listNotes(token);
+        setBaseNotes(notes);
+        return;
+      }
+
+      const toReload = pillars.filter((p) => loadedRef.current.has(p));
+      if (!toReload.length) return;
+
+      const results = await Promise.all(
+        toReload.map((p) => api.listNotes(token, { prefix: `${p}/` })),
+      );
+      setBaseNotes((prev) => {
+        let next = prev;
+        toReload.forEach((p, i) => {
+          const map = new Map(next.map((n) => [n.path, n]));
+          for (const key of [...map.keys()]) {
+            if (key.startsWith(`${p}/`)) map.delete(key);
+          }
+          for (const n of results[i]!.notes) map.set(n.path, n);
+          next = [...map.values()];
+        });
+        return next;
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }, [token]);
+
+  const queueSidebarSync = useCallback(
+    (event: BrainEvent) => {
+      if (!isSidebarStructuralEvent(event)) return;
+      sidebarSyncQueueRef.current.push(event);
+      if (sidebarSyncTimerRef.current) clearTimeout(sidebarSyncTimerRef.current);
+      sidebarSyncTimerRef.current = setTimeout(() => void flushSidebarSync(), 80);
+    },
+    [flushSidebarSync],
+  );
 
   async function refresh(open?: string | null) {
     if (!token) return;
@@ -802,13 +869,26 @@ export default function Dashboard() {
 
             if (event.type === "note_deleted" && selectedRef.current === event.path) {
               setBanner("This note was deleted elsewhere.");
-              await refresh(null);
+              queueSidebarSync(event);
+              setSelected(null);
+              setFullNote(null);
+              if (activeSpaceId) {
+                try {
+                  localStorage.removeItem(openNoteKey(activeSpaceId));
+                } catch {
+                  /* storage unavailable */
+                }
+                urlSyncRef.current = true;
+                writeNoteDeepLink(null, activeSpaceId);
+                urlSyncRef.current = false;
+              }
+              setActivityRefreshKey((k) => k + 1);
               return;
             }
 
-            let reopen: string | undefined;
+            let movedTo: string | undefined;
             if (event.type === "note_moved" && event.to && selectedRef.current === event.path) {
-              reopen = event.to;
+              movedTo = event.to;
               setSelected(event.to);
               setOpenTabs((prev) => {
                 const old = prev.find((t) => t.path === event.path);
@@ -817,25 +897,36 @@ export default function Dashboard() {
               });
             }
 
-            await refresh(reopen);
+            if (isSidebarStructuralEvent(event)) {
+              queueSidebarSync(event);
+            }
 
             setActivityRefreshKey((k) => k + 1);
 
             const livePath = event.type === "note_moved" && event.to ? event.to : event.path;
             const cur = selectedRef.current;
-            if (livePath && (cur === event.path || cur === livePath)) {
-              // With Yjs collab, autosave from the other editor is expected — not a conflict.
-              if (collabEnabledRef.current) return;
+            if (!livePath || (cur !== event.path && cur !== livePath)) return;
 
-              if (noteDirtyRef.current) {
-                setBanner("This note was updated elsewhere — save or reload to sync.");
-                return;
-              }
+            if (movedTo) {
               try {
-                setFullNote(await api.readNote(token, livePath));
+                setFullNote(await api.readNote(token, movedTo));
               } catch {
                 /* note gone or inaccessible */
               }
+              return;
+            }
+
+            // With Yjs collab, body autosave is expected — not a conflict.
+            if (collabEnabledRef.current) return;
+
+            if (noteDirtyRef.current) {
+              setBanner("This note was updated elsewhere — save or reload to sync.");
+              return;
+            }
+            try {
+              setFullNote(await api.readNote(token, livePath));
+            } catch {
+              /* note gone or inaccessible */
             }
           },
           ac.signal,
@@ -849,8 +940,9 @@ export default function Dashboard() {
     return () => {
       ac.abort();
       if (retryTimer) clearTimeout(retryTimer);
+      if (sidebarSyncTimerRef.current) clearTimeout(sidebarSyncTimerRef.current);
     };
-  }, [token, ready, activeSpaceId]);
+  }, [token, ready, activeSpaceId, queueSidebarSync, flushSidebarSync]);
 
   async function handleCreate(values: CreateEntryValues) {
     if (!token || !createFolder) return;
@@ -1011,68 +1103,6 @@ export default function Dashboard() {
             <span>Search</span>
             <kbd className="rounded border border-border px-1 py-0.5 text-[10px]">⌘K</kbd>
           </button>
-          {view === "notes" && selected && (
-            <button
-              type="button"
-              onClick={() => {
-                setCommentsOpen((v) => !v);
-                if (!commentsOpen) {
-                  setDocPanelOpen(false);
-                  setActivityOpen(false);
-                }
-              }}
-              aria-pressed={commentsOpen}
-              className={`relative rounded-lg border border-border p-1.5 transition-colors ${
-                commentsOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
-              }`}
-              title="Comments"
-            >
-              <MessageSquare className="h-4 w-4" />
-              {openCommentCount > 0 && (
-                <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand px-1 text-[9px] font-semibold text-white">
-                  {openCommentCount}
-                </span>
-              )}
-            </button>
-          )}
-          {view === "notes" && (
-            <button
-              type="button"
-              onClick={() => {
-                setActivityOpen((v) => !v);
-                if (!activityOpen) {
-                  setDocPanelOpen(false);
-                  setCommentsOpen(false);
-                }
-              }}
-              aria-pressed={activityOpen}
-              className={`rounded-lg border border-border p-1.5 transition-colors ${
-                activityOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
-              }`}
-              title="Space activity feed"
-            >
-              <Clock className="h-4 w-4" />
-            </button>
-          )}
-          {view === "notes" && selected && (
-            <button
-              type="button"
-              onClick={() => {
-                setDocPanelOpen((v) => !v);
-                if (!docPanelOpen) {
-                  setActivityOpen(false);
-                  setCommentsOpen(false);
-                }
-              }}
-              aria-pressed={docPanelOpen}
-              className={`rounded-lg border border-border p-1.5 transition-colors ${
-                docPanelOpen ? "bg-brand-weak text-brand-ink" : "text-muted hover:text-ink"
-              }`}
-              title="Toggle outline panel"
-            >
-              <PanelRight className="h-4 w-4" />
-            </button>
-          )}
           <button
             onClick={() => {
               setSettingsTab("connectors");
@@ -1162,14 +1192,18 @@ export default function Dashboard() {
                     activePath={selected}
                     previewTitle={notePreviewTitle}
                     onOpenLink={openNote}
-                    onSave={handleSaveNote}
-                    onBodyChange={setEditorBody}
-                    onDirtyChange={(d) => {
-                      noteDirtyRef.current = d;
-                    }}
+                    onSave={canEditNotes ? handleSaveNote : undefined}
+                    onBodyChange={canEditNotes ? setEditorBody : undefined}
+                    onDirtyChange={
+                      canEditNotes
+                        ? (d) => {
+                            noteDirtyRef.current = d;
+                          }
+                        : undefined
+                    }
                     scrollToHeading={scrollToHeading}
                     collab={
-                      token && activeSpaceId
+                      canEditNotes && token && activeSpaceId
                         ? { enabled: collabEnabled, token, spaceId: activeSpaceId }
                         : null
                     }
@@ -1182,9 +1216,13 @@ export default function Dashboard() {
                       setDocPanelOpen(false);
                       setCommentsOpen(false);
                     }}
-                    onDelete={async () => {
-                      if (selected) setConfirm({ kind: "note", path: selected });
-                    }}
+                    onDelete={
+                      canEditNotes
+                        ? async () => {
+                            if (selected) setConfirm({ kind: "note", path: selected });
+                          }
+                        : undefined
+                    }
                     shareUrl={shareUrl}
                     commentThreads={comments.threads}
                     activeThreadId={activeThreadId}
@@ -1193,7 +1231,32 @@ export default function Dashboard() {
                       setCommentsOpen(true);
                     }}
                     onStartComment={startComment}
-                    onOpenComments={() => setCommentsOpen(true)}
+                    panels={{
+                      comments: commentsOpen,
+                      activity: activityOpen,
+                      outline: docPanelOpen,
+                      onToggle: (panel) => {
+                        if (panel === "comments") {
+                          setCommentsOpen((v) => !v);
+                          if (!commentsOpen) {
+                            setDocPanelOpen(false);
+                            setActivityOpen(false);
+                          }
+                        } else if (panel === "activity") {
+                          setActivityOpen((v) => !v);
+                          if (!activityOpen) {
+                            setDocPanelOpen(false);
+                            setCommentsOpen(false);
+                          }
+                        } else {
+                          setDocPanelOpen((v) => !v);
+                          if (!docPanelOpen) {
+                            setActivityOpen(false);
+                            setCommentsOpen(false);
+                          }
+                        }
+                      },
+                    }}
                   />
                 </div>
                 {docPanelOpen && selected && (
@@ -1217,7 +1280,7 @@ export default function Dashboard() {
                       }
                       token={token}
                       onRestoreVersion={
-                        selected && token
+                        canEditNotes && selected && token
                           ? async (version) => {
                               await api.restoreVersion(token, selected, version);
                               noteDirtyRef.current = false;

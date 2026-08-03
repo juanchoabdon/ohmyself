@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
-import { Bot, Wifi, WifiOff } from "lucide-react";
+import { Bot } from "lucide-react";
 import type { CollabUser } from "@/lib/collabUser";
 import { cn } from "@/lib/utils";
 
@@ -14,11 +13,14 @@ export type PresencePeer = {
   avatarUrl?: string | null;
   kind?: "human" | "agent";
   isLocal?: boolean;
+  /** True when the peer is live on the Yjs socket (drives the green dot). */
+  live?: boolean;
 };
 
 export type CollabSyncStatus = "connecting" | "synced" | "offline";
 
-function readPeers(provider: HocuspocusProvider, localUser: CollabUser): PresencePeer[] {
+/** Snapshot the room's awareness states as presence peers. */
+export function readPeers(provider: HocuspocusProvider, localUser: CollabUser): PresencePeer[] {
   const awareness = provider.awareness;
   if (!awareness) return [];
   const localId = awareness.clientID;
@@ -34,6 +36,7 @@ function readPeers(provider: HocuspocusProvider, localUser: CollabUser): Presenc
       avatarUrl: user.avatarUrl,
       kind: user.kind ?? "human",
       isLocal: clientId === localId,
+      live: true,
     });
   });
   if (!peers.some((p) => p.isLocal)) {
@@ -45,112 +48,110 @@ function readPeers(provider: HocuspocusProvider, localUser: CollabUser): Presenc
       avatarUrl: localUser.avatarUrl,
       kind: localUser.kind,
       isLocal: true,
+      live: true,
     });
   }
   return peers.sort((a, b) => Number(b.isLocal) - Number(a.isLocal));
 }
 
-function syncLabel(status: CollabSyncStatus): string {
-  if (status === "synced") return "Live";
-  if (status === "connecting") return "Connecting…";
-  return "Offline";
-}
+const MAX_AVATARS = 5;
 
-export function PresenceBar({
-  provider,
-  localUser,
-  syncStatus,
+/**
+ * Google Docs-style header avatars: remote collaborators (humans + agents)
+ * shown as an overlapping stack with a green "active" dot for peers live on
+ * the socket. The local user is omitted — you know you're here.
+ */
+export function PresenceAvatars({
+  peers,
   extraPeers = [],
   onSelectPeer,
   className,
 }: {
-  provider: HocuspocusProvider;
-  localUser: CollabUser;
-  syncStatus: CollabSyncStatus;
-  /** Agents / recent editors not on the Yjs socket yet (until MCP→Y bridge). */
+  peers: PresencePeer[];
+  /** Agents / recent editors not on the Yjs socket (no green dot). */
   extraPeers?: PresencePeer[];
   onSelectPeer?: (peer: PresencePeer) => void;
   className?: string;
 }) {
-  const [livePeers, setLivePeers] = useState<PresencePeer[]>(() => readPeers(provider, localUser));
-
-  useEffect(() => {
-    const bump = () => setLivePeers(readPeers(provider, localUser));
-    provider.awareness?.on("change", bump);
-    bump();
-    return () => provider.awareness?.off("change", bump);
-  }, [provider, localUser]);
-
   const seen = new Set<string>();
   const merged: PresencePeer[] = [];
-  for (const p of [...livePeers, ...extraPeers]) {
+  for (const p of [...peers, ...extraPeers]) {
+    if (p.isLocal) continue;
     const key = p.id ?? `${p.kind}:${p.name}:${p.clientId}`;
     if (seen.has(key)) continue;
     seen.add(key);
     merged.push(p);
   }
+  if (!merged.length) return null;
 
-  if (merged.length <= 1 && syncStatus === "synced") return null;
+  const shown = merged.slice(0, MAX_AVATARS);
+  const overflow = merged.length - shown.length;
 
   return (
-    <div
-      className={cn(
-        "mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/80 bg-bg/50 px-2.5 py-1.5",
-        className,
-      )}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="flex -space-x-2">
-          {merged.map((peer) => (
+    <div className={cn("flex items-center", className)}>
+      <div className="flex -space-x-1.5">
+        {shown.map((peer) => {
+          const clickable = Boolean(onSelectPeer && peer.kind === "agent");
+          const statusLabel =
+            peer.kind === "agent"
+              ? peer.live
+                ? "Agent · editing now"
+                : "Agent · edited recently"
+              : peer.live
+                ? "Editing now"
+                : "Was here recently";
+          return (
             <button
               key={`${peer.clientId}-${peer.id ?? peer.name}`}
               type="button"
-              title={peer.isLocal ? `${peer.name} (you)` : peer.name}
-              onClick={() => onSelectPeer?.(peer)}
+              aria-label={`${peer.name} — ${statusLabel}`}
+              onClick={() => {
+                if (clickable) onSelectPeer?.(peer);
+              }}
               className={cn(
-                "relative grid h-7 w-7 place-items-center rounded-full border-2 border-surface text-[10px] font-semibold text-white shadow-sm transition-transform hover:z-10 hover:scale-105",
-                onSelectPeer && peer.kind === "agent" && "cursor-pointer",
-                !onSelectPeer && "cursor-default",
+                "group relative grid h-6 w-6 place-items-center rounded-full border-2 border-surface text-[9px] font-semibold text-white shadow-sm transition-transform hover:z-20 hover:scale-110",
+                clickable ? "cursor-pointer" : "cursor-default",
               )}
               style={{ backgroundColor: peer.color }}
-              disabled={!onSelectPeer || peer.kind !== "agent"}
             >
               {peer.kind === "agent" ? (
-                <Bot className="h-3.5 w-3.5" aria-hidden />
+                <Bot className="h-3 w-3" aria-hidden />
               ) : peer.avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={peer.avatarUrl} alt="" className="h-full w-full rounded-full object-cover" />
               ) : (
                 <span aria-hidden>{peer.name.slice(0, 1).toUpperCase()}</span>
               )}
-              {peer.isLocal && (
-                <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-surface bg-brand" />
+              {peer.live && (
+                <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-surface bg-emerald-500" />
               )}
+              {/* Hover card — who this is, styled (native title tooltips are too slow). */}
+              <span className="pointer-events-none absolute right-0 top-full z-30 mt-2 flex origin-top-right scale-95 flex-col items-start whitespace-nowrap rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left opacity-0 shadow-lg transition-all duration-100 group-hover:scale-100 group-hover:opacity-100 group-focus-visible:scale-100 group-focus-visible:opacity-100">
+                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-ink">
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full"
+                    style={{ backgroundColor: peer.color }}
+                    aria-hidden
+                  />
+                  {peer.name}
+                </span>
+                <span className="flex items-center gap-1 text-[10px] text-muted">
+                  {peer.live && (
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                  )}
+                  {statusLabel}
+                </span>
+                {clickable && (
+                  <span className="mt-0.5 text-[10px] text-brand">Click to see its edits</span>
+                )}
+              </span>
             </button>
-          ))}
-        </div>
-        <p className="truncate text-xs text-muted">
-          {merged.length === 1
-            ? "Only you here"
-            : `${merged.length} editing`}
-        </p>
+          );
+        })}
       </div>
-      <div
-        className={cn(
-          "flex shrink-0 items-center gap-1 text-[10px] font-medium uppercase tracking-wide",
-          syncStatus === "synced" && "text-vis-public",
-          syncStatus === "connecting" && "text-muted",
-          syncStatus === "offline" && "text-vis-secret",
-        )}
-        title={syncLabel(syncStatus)}
-      >
-        {syncStatus === "offline" ? (
-          <WifiOff className="h-3 w-3" aria-hidden />
-        ) : (
-          <Wifi className="h-3 w-3" aria-hidden />
-        )}
-        {syncLabel(syncStatus)}
-      </div>
+      {overflow > 0 && (
+        <span className="ml-1 text-[10px] font-medium text-muted">+{overflow}</span>
+      )}
     </div>
   );
 }

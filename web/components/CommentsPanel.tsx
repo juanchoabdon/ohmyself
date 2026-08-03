@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Check, MessageSquare, Trash2, Undo2, X } from "lucide-react";
 import type { CommentThread, NoteComment } from "@/lib/types";
 import type { CommentsController } from "@/lib/useComments";
+import { prettyAgentName } from "@/lib/collabUser";
 import { cn } from "@/lib/utils";
 
 /** A selection waiting to become a thread (started from the editor). */
@@ -49,7 +50,9 @@ function CommentBubble({
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-1.5">
-          <span className="truncate text-[11px] font-semibold text-ink">{comment.author.label}</span>
+          <span className="truncate text-[11px] font-semibold text-ink">
+            {agent ? prettyAgentName(comment.author.label) : comment.author.label}
+          </span>
           <span className="shrink-0 text-[10px] text-muted/80">{formatWhen(comment.createdAt)}</span>
           {canManage && (
             <button
@@ -147,6 +150,7 @@ function ThreadCard({
   thread,
   active,
   currentUserId,
+  canComment,
   onFocus,
   onReply,
   onResolve,
@@ -155,6 +159,7 @@ function ThreadCard({
   thread: CommentThread;
   active: boolean;
   currentUserId: string | null;
+  canComment: boolean;
   onFocus: () => void;
   onReply: (body: string) => Promise<void>;
   onResolve: (resolved: boolean) => void;
@@ -206,31 +211,33 @@ function ThreadCard({
           ))}
         </ul>
 
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setReplying((v) => !v);
-            }}
-            className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-bg hover:text-ink"
-          >
-            Reply
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onResolve(!resolved);
-            }}
-            className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-bg hover:text-ink"
-          >
-            {resolved ? <Undo2 className="h-3 w-3" /> : <Check className="h-3 w-3" />}
-            {resolved ? "Reopen" : "Resolve"}
-          </button>
-        </div>
+        {canComment && (
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setReplying((v) => !v);
+              }}
+              className="rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-bg hover:text-ink"
+            >
+              Reply
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onResolve(!resolved);
+              }}
+              className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-bg hover:text-ink"
+            >
+              {resolved ? <Undo2 className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+              {resolved ? "Reopen" : "Resolve"}
+            </button>
+          </div>
+        )}
 
-        {replying && (
+        {canComment && replying && (
           <div onClick={(e) => e.stopPropagation()}>
             <Composer
               placeholder="Reply…"
@@ -328,8 +335,8 @@ export function CommentsPanel({
           <p className="px-2 py-6 text-center text-xs text-muted">Loading…</p>
         ) : openThreads.length === 0 && !draft ? (
           <p className="px-3 py-6 text-center text-xs leading-relaxed text-muted">
-            No open comments. Select text in the note to start a thread — agents can leave them here
-            too, over MCP.
+            No open comments yet. Select text in the note to anchor a thread, or comment on the note
+            below.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -339,6 +346,7 @@ export function CommentsPanel({
                 thread={thread}
                 active={thread.id === activeThreadId}
                 currentUserId={currentUserId}
+                canComment={canComment}
                 onFocus={() => onFocusThread(thread.id)}
                 onReply={(body) => comments.add({ body, replyTo: thread.root.id })}
                 onResolve={(resolved) => void comments.resolve(thread.id, resolved)}
@@ -366,6 +374,7 @@ export function CommentsPanel({
                     thread={thread}
                     active={thread.id === activeThreadId}
                     currentUserId={currentUserId}
+                    canComment={canComment}
                     onFocus={() => onFocusThread(thread.id)}
                     onReply={(body) => comments.add({ body, replyTo: thread.root.id })}
                     onResolve={(resolved) => void comments.resolve(thread.id, resolved)}
@@ -378,11 +387,18 @@ export function CommentsPanel({
         )}
       </div>
 
-      {!canComment && (
+      {canComment && !draft ? (
+        <div className="border-t border-border px-2.5 py-2">
+          <Composer
+            placeholder="Comment on this note…"
+            onSubmit={(body) => comments.add({ body })}
+          />
+        </div>
+      ) : !canComment ? (
         <p className="border-t border-border px-3 py-2 text-[10px] leading-relaxed text-muted">
           This connection is read-only, so you can read threads but not post.
         </p>
-      )}
+      ) : null}
     </aside>
   );
 }

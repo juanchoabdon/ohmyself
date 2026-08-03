@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import type { FullNote, HistoryEntry, LinkContextResult } from "@/lib/types";
 import type { OutlineItem } from "@/lib/outline";
 import { extractOutline } from "@/lib/outline";
+import { prettyAgentName } from "@/lib/collabUser";
 import { cn } from "@/lib/utils";
 
 const OUTLINE_LEVEL: Record<number, { className: string; label: string }> = {
@@ -34,7 +35,10 @@ function formatWhen(ts: number): string {
 
 function authorLabel(author: string): string {
   if (author === "human") return "You";
-  if (author.startsWith("agent:")) return author.replace("agent:", "Agent · ");
+  if (author.startsWith("agent:")) {
+    const name = prettyAgentName(author);
+    return name === "Agent" ? "Agent" : `Agent · ${name}`;
+  }
   return author;
 }
 
