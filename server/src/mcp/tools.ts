@@ -1136,7 +1136,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.createNote(s.id, args, cfg, s.allowed);
+      const note = await brain.createNote(s.id, args, cfg, s.allowed, mcpAttr(`create ${args.title}`));
       return text(withUrl({ space: s.slug, created: note.path, meta: note.meta }, s.id));
     },
   );
@@ -1176,7 +1176,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.updateNote(s.id, path, patch, s.allowed);
+      const note = await brain.updateNote(s.id, path, patch, s.allowed, mcpAttr(`update ${path}`));
       return text(withUrl({ space: s.slug, updated: note.path, meta: note.meta }, s.id));
     },
   );
@@ -1208,7 +1208,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.appendToNote(s.id, path, content, s.allowed);
+      const note = await brain.appendToNote(s.id, path, content, s.allowed, mcpAttr(`append ${path}`));
       return text(withUrl({ space: s.slug, appended: note.path }, s.id));
     },
   );

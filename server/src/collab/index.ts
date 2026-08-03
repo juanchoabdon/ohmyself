@@ -142,8 +142,8 @@ export function startCollabServer(): Hocuspocus | null {
       if (liveRound === vaultRound) return;
 
       // Stored/live Y can be ahead of the vault when collab edits haven't flushed
-      // yet — never clobber a longer, non-duplicated Y doc with shorter vault text.
-      if (liveRound.length > vaultRound.length) {
+      // yet — only skip reconcile when Y is substantially longer (not a small MCP edit).
+      if (liveRound.length > vaultRound.length * 1.4) {
         const dup = repairCollabBody(liveRound);
         if (!dup.deduped) {
           console.log(
