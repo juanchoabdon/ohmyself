@@ -141,6 +141,18 @@ export function startCollabServer(): Hocuspocus | null {
       const liveRound = yDocToMarkdown(document).trim();
       if (liveRound === vaultRound) return;
 
+      // Stored/live Y can be ahead of the vault when collab edits haven't flushed
+      // yet — never clobber a longer, non-duplicated Y doc with shorter vault text.
+      if (liveRound.length > vaultRound.length) {
+        const dup = repairCollabBody(liveRound);
+        if (!dup.deduped) {
+          console.log(
+            `[collab] kept Y state for ${documentName} (live ${liveRound.length} > vault ${vaultRound.length})`,
+          );
+          return;
+        }
+      }
+
       replaceYDocMarkdown(document, vaultBody);
       console.log(
         `[collab] reconciled ${documentName} to vault (${liveRound.length} -> ${vaultRound.length} chars)`,

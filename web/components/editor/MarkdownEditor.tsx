@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquarePlus } from "lucide-react";
 import * as Y from "yjs";
 import "tippy.js/dist/tippy.css";
+import StarterKit from "@tiptap/starter-kit";
 import { buildEditorExtensions } from "./extensions";
 import { handleInternalLinkClick } from "./internalLinkNavigation";
 import { scrollEditorToHeading } from "./scrollToHeading";
@@ -27,6 +28,7 @@ import {
   type PresencePeer,
 } from "./PresenceBar";
 import { repairRichMarkdown } from "./markdownRichContent";
+import { normalizeNoteLinksForStorage, prepareNoteLinks } from "./wikiLinkMarkdown";
 
 export type ScrollToHeadingTarget = {
   text: string;
@@ -107,6 +109,13 @@ export function MarkdownEditor({
   onBlurRef.current = onBlur;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  /** Last markdown pushed to the parent — lets the value-sync effect ignore our own echoes. */
+  const lastEmittedRef = useRef<string | null>(null);
+  const emitMarkdown = useCallback((md: string) => {
+    const normalized = normalizeNoteLinksForStorage(md);
+    lastEmittedRef.current = normalized;
+    onChangeRef.current(normalized);
+  }, []);
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
   const readyFiredRef = useRef(false);
@@ -141,6 +150,7 @@ export function MarkdownEditor({
   useEffect(() => {
     setSourceMd(value);
     sourceMdRef.current = value;
+    lastEmittedRef.current = null;
   }, [noteKey]);
 
   useEffect(() => {
@@ -159,13 +169,17 @@ export function MarkdownEditor({
       sourceMdRef.current = md;
     } else if (!collabActive) {
       const md = sourceMdRef.current;
-      ed.commands.setContent(md, { contentType: "markdown" });
-      onChangeRef.current(ed.getMarkdown());
+      ed.commands.setContent(prepareNoteLinks(md), { contentType: "markdown" });
+      emitMarkdown(ed.getMarkdown());
     }
   }, [mode, modeControlled, collabActive]);
 
   const ydoc = useMemo(() => (collabActive ? new Y.Doc() : null), [noteKey, collabActive]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
+  /** True only after Hocuspocus has applied the room's Y state — never mount the
+   *  editor before this in collab mode (an empty TipTap doc would broadcast into
+   *  the shared room and clobber other users). */
+  const [collabDocSynced, setCollabDocSynced] = useState(false);
   const [syncStatus, setSyncStatus] = useState<CollabSyncStatus>("connecting");
   const seededRef = useRef(false);
 
@@ -174,8 +188,12 @@ export function MarkdownEditor({
   const onSelectThreadRef = useRef(onSelectThread);
   onSelectThreadRef.current = onSelectThread;
 
-  const extensions = useMemo(
-    () => [
+  const extensions = useMemo(() => {
+    if (collabActive && !collabDocSynced) {
+      // Stub until Yjs sync completes — never attach Collaboration to an empty doc.
+      return [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: false, codeBlock: false })];
+    }
+    return [
       ...buildEditorExtensions(
         (path) => onOpenLinkRef.current?.(path),
         ydoc ?? undefined,
@@ -186,9 +204,8 @@ export function MarkdownEditor({
       CommentHighlight.configure({
         onSelectThread: (threadId: string) => onSelectThreadRef.current?.(threadId),
       }),
-    ],
-    [noteKey, collabActive, ydoc, provider, collabUser],
-  );
+    ];
+  }, [noteKey, collabActive, collabDocSynced, ydoc, provider, collabUser]);
 
   const repairAttemptedRef = useRef(false);
 
@@ -204,13 +221,12 @@ export function MarkdownEditor({
         repairAttemptedRef.current = true;
         return;
       }
-      const vaultMd = collabInitialBodyRef.current ?? value;
+      const vaultMd = prepareNoteLinks(collabInitialBodyRef.current ?? value);
       if (repairRichMarkdown(ed, vaultMd)) {
         repairAttemptedRef.current = true;
-        const fixed = ed.getMarkdown();
+        const fixed = normalizeNoteLinksForStorage(ed.getMarkdown());
         setSourceMd(fixed);
         sourceMdRef.current = fixed;
-        if (modeRef.current !== "source") onChangeRef.current(fixed);
       }
     },
     [value, collabActive],
@@ -232,7 +248,7 @@ export function MarkdownEditor({
 
   const seedIfEmpty = useCallback((ed: Editor) => {
     if (ed.isDestroyed || seededRef.current || collabActive) return;
-    const seed = collabInitialBodyRef.current ?? value;
+    const seed = prepareNoteLinks(collabInitialBodyRef.current ?? value);
     if (ed.isEmpty && seed.trim()) {
       ed.commands.setContent(seed, { contentType: "markdown" });
       seededRef.current = true;
@@ -246,26 +262,38 @@ export function MarkdownEditor({
       seedIfEmpty(ed);
       const seed = collabInitialBodyRef.current ?? value;
       if (ed.isEmpty && seed.trim()) return;
+      // Yjs can briefly deliver a stale partial doc before server reconcile lands.
+      if (collabActive && seed.trim()) {
+        const liveLen = ed.getMarkdown().trim().length;
+        const seedLen = seed.trim().length;
+        if (seedLen > 1000 && liveLen < seedLen * 0.4) return;
+      }
       readyFiredRef.current = true;
       onReadyRef.current?.();
     },
     [value, collabActive, seedIfEmpty],
   );
 
-  const canMountEditor = !collabActive || provider?.awareness != null;
+  const canMountEditor = !collabActive || collabDocSynced;
 
   const editor = useEditor(
     {
       immediatelyRender: false,
       extensions,
-      // In collab mode Yjs owns the document — seeding `content` here races with
-      // the initial sync and can wipe the body. Seed via `seedIfEmpty` post-sync.
-      content: collabActive ? "" : value,
-      contentType: "markdown",
+      // Collab: Yjs owns the doc — never seed markdown here (races sync and can
+      // broadcast an empty/partial doc into the shared room).
+      ...(collabActive
+        ? {}
+        : { content: prepareNoteLinks(value), contentType: "markdown" as const }),
       onCreate: ({ editor: ed }) => {
+        if (collabActive) {
+          signalReady(ed);
+          return;
+        }
         scheduleRepair(ed);
-        if (collabActive) return;
-        requestAnimationFrame(() => signalReady(ed));
+        const kickReady = () => signalReady(ed);
+        requestAnimationFrame(kickReady);
+        window.setTimeout(kickReady, 120);
       },
       editorProps: {
         attributes: {
@@ -287,11 +315,11 @@ export function MarkdownEditor({
         },
       },
       onUpdate: ({ editor: ed }) => {
-        if (ed.isDestroyed || modeRef.current === "source") return;
-        onChangeRef.current(ed.getMarkdown());
+        if (ed.isDestroyed || modeRef.current === "source" || !readyFiredRef.current) return;
+        emitMarkdown(ed.getMarkdown());
       },
     },
-    [noteKey, collabActive, canMountEditor, provider, collabUser?.id],
+    [noteKey, collabActive, collabDocSynced, collabUser?.id],
   );
 
   editorRef.current = editor ?? null;
@@ -300,14 +328,14 @@ export function MarkdownEditor({
     (next: EditorMode) => {
       const ed = editorRef.current;
       if (next === "source" && ed && !ed.isDestroyed) {
-        const md = ed.getMarkdown();
+        const md = normalizeNoteLinksForStorage(ed.getMarkdown());
         setSourceMd(md);
         sourceMdRef.current = md;
       } else if (next === "visual" && ed && !ed.isDestroyed) {
         if (!collabActive) {
           const md = sourceMdRef.current;
-          ed.commands.setContent(md, { contentType: "markdown" });
-          onChangeRef.current(ed.getMarkdown());
+          ed.commands.setContent(prepareNoteLinks(md), { contentType: "markdown" });
+          emitMarkdown(ed.getMarkdown());
         }
       }
       modeRef.current = next;
@@ -321,15 +349,15 @@ export function MarkdownEditor({
   const handleSourceChange = useCallback((md: string) => {
     setSourceMd(md);
     sourceMdRef.current = md;
-    onChangeRef.current(md);
+    emitMarkdown(md);
     const ed = editorRef.current;
     if (!ed || ed.isDestroyed || collabActive) return;
     if (collabSyncTimerRef.current) clearTimeout(collabSyncTimerRef.current);
     collabSyncTimerRef.current = setTimeout(() => {
       const current = editorRef.current;
       if (!current || current.isDestroyed) return;
-      if (md !== current.getMarkdown()) {
-        current.commands.setContent(md, { contentType: "markdown" });
+      if (md !== normalizeNoteLinksForStorage(current.getMarkdown())) {
+        current.commands.setContent(prepareNoteLinks(md), { contentType: "markdown" });
       }
     }, 350);
   }, [collabActive]);
@@ -351,6 +379,7 @@ export function MarkdownEditor({
     readyFiredRef.current = false;
     seededRef.current = false;
     collabSyncedRef.current = false;
+    setCollabDocSynced(false);
     setProvider(null);
     setSyncStatus("connecting");
   }, [noteKey]);
@@ -396,42 +425,32 @@ export function MarkdownEditor({
   }, [collabActive, collabToken, collabSpaceId, collabPath, ydoc, noteKey, collabUser?.id]);
 
   useEffect(() => {
-    if (!provider || !editor || editor.isDestroyed) return;
+    if (!provider) return;
 
     const onSynced = () => {
-      if (editor.isDestroyed) return;
       collabSyncedRef.current = true;
+      setCollabDocSynced(true);
       setSyncStatus("synced");
-      seedIfEmpty(editor);
-      scheduleRepair(editor);
-      signalReady(editor);
     };
     provider.on("synced", onSynced);
-    // The editor is recreated when the provider lands, so `synced` may have
-    // fired before this effect subscribed — check the flag directly.
     if (provider.isSynced) onSynced();
 
-    const fallback = window.setTimeout(() => {
-      if (editor.isDestroyed || readyFiredRef.current) return;
-      collabSyncedRef.current = true;
-      seedIfEmpty(editor);
-      scheduleRepair(editor);
-      signalReady(editor);
-    }, 1500);
-
     return () => {
-      window.clearTimeout(fallback);
       provider.off("synced", onSynced);
     };
-  }, [provider, editor, seedIfEmpty, signalReady, scheduleRepair]);
+  }, [provider]);
 
   // Parent reset (Cancel) without remounting the note — skip when Yjs owns the doc.
+  // Ignore value echoes from our own onUpdate — that loop was shrinking bodies on load.
   useEffect(() => {
     if (!editor || editor.isDestroyed || collabActive) return;
-    const current = editor.getMarkdown();
-    if (value !== current) {
-      editor.commands.setContent(value, { contentType: "markdown" });
+    if (value === lastEmittedRef.current) return;
+    const current = normalizeNoteLinksForStorage(editor.getMarkdown());
+    if (value === current) {
+      lastEmittedRef.current = value;
+      return;
     }
+    editor.commands.setContent(prepareNoteLinks(value), { contentType: "markdown" });
   }, [editor, value, collabActive]);
 
   useEffect(() => {
@@ -495,7 +514,20 @@ export function MarkdownEditor({
     );
   }, [editor, scrollToHeading, mode]);
 
-  if (!canMountEditor || !editor || editor.isDestroyed) return null;
+  if (collabActive && !canMountEditor) {
+    if (!provider || !collabUser) return null;
+    return (
+      <PresenceBar
+        provider={provider}
+        localUser={collabUser}
+        syncStatus={syncStatus}
+        extraPeers={agentPresence}
+        onSelectPeer={onSelectPresencePeer}
+      />
+    );
+  }
+
+  if (!editor || editor.isDestroyed) return null;
 
   return (
     <div className="relative" ref={wrapperRef}>

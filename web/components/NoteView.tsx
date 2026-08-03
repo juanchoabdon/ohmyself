@@ -23,7 +23,7 @@ import type { CollabUser } from "@/lib/collabUser";
 import {
   isInternalNoteHref,
   notePathFromHref,
-  wikiLinksToMarkdownLinks,
+  prepareNoteLinks,
 } from "./editor/wikiLinkMarkdown";
 import { handleReadOnlyLinkClick } from "./editor/internalLinkNavigation";
 import { AssetImage, AssetVideo, EmbedFrame } from "./editor/MediaRender";
@@ -463,7 +463,12 @@ export const NoteView = forwardRef<NoteViewHandle, NoteViewProps>(function NoteV
                 is never blank (Yjs can take a moment to sync). */}
             {!editorLive && (
               <>
-                {hasVaultBody || hasEditorBody ? (
+                {collabActive ? (
+                  <div className="space-y-3 py-1" aria-busy>
+                    <p className="text-sm text-muted">Syncing with collaborators…</p>
+                    <EditorBodySkeleton />
+                  </div>
+                ) : hasVaultBody || hasEditorBody ? (
                   <div className="prose">
                     <ReadOnlyBody body={editorBody || vaultBody} onOpenLink={onOpenLink} />
                   </div>
@@ -681,7 +686,7 @@ function ReadOnlyMarkdown({ text, onOpenLink }: { text: string; onOpenLink: (pat
         },
       }}
     >
-      {wikiLinksToMarkdownLinks(text)}
+      {prepareNoteLinks(text)}
     </ReactMarkdown>
     </div>
   );
