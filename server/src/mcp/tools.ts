@@ -84,7 +84,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
  *  then for move_space_note + delete_space_note, then for media (add_media /
  *  get_media / list_media and the oms-asset: reference scheme). Kept stable
  *  even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.15";
+const CONTRACT_VERSION = "2.16";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -188,7 +188,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         "",
         "WRITING: prefer the specific tools (remember, add_person, upsert_project, add_to_project, set_goal, log_journal, update_identity) when you know the destination. Use write_brain to auto-route + dedupe when you don't. For a company wiki use the *_space write tools (create_space_note / update_space_note / append_space_note, or write_space to auto-route). Never invent facts; capture durable info in the moment.",
         "",
-        "MEDIA: notes can embed images and video. In a body they appear as a `:::image` / `:::video` block whose `src` is `oms-asset:<id>` — that is a reference, not a URL, and you cannot read the picture from the markdown. To SEE one, call get_media with that reference; the image comes back as visual content you can reason about. Do that whenever the answer depends on what the image shows. To store one (the person shares a screenshot, a diagram, a photo), call add_media with base64 `data` or a `source_url`, plus `note_path` to embed it. list_media shows what exists. Never invent an oms-asset id.",
+        "MEDIA: notes can embed images, video and interactive HTML. In a body they appear as a `:::image` / `:::video` block whose `src` is `oms-asset:<id>`, or an `:::embed` block whose `url` is either an external link or an `oms-asset:<id>` HTML asset — references, not URLs; you cannot read the content from the markdown. To SEE an image, call get_media with that reference; it comes back as visual content you can reason about. Do that whenever the answer depends on what the image shows. To store one (a screenshot, a diagram, a photo — or a self-contained interactive HTML prototype built for the person), call add_media with base64 `data` or a `source_url`, plus `note_path` to embed it. list_media shows what exists. Never invent an oms-asset id.",
         "",
         "WORK DOCS NEED CONFIRMATION: specs, PRDs, plans, RFCs and design docs are never written on the first call — in the personal brain or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft and a `confirm_token`. Show the owner the whole draft in the conversation (and write it to the suggested `local_file` if you have filesystem access), ask for an explicit yes, and END YOUR TURN. Only after they approve, call the same tool again with the identical body plus `confirm_token`. Never confirm on the owner's behalf, and never chain the preview and the confirmed write in one turn. If they ask for edits, resend the new body without a token.",
         "",
@@ -573,11 +573,11 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           friends:
             "shared brains (list_friends) mirror the same read routing via *_friend variants: recall_friend / search_friend_brain (fast), research_friend (deep), get_friend_neighbors / get_friend_backlinks / search_friend_by_entity / friend_timeline (navigate) — always read-only, capped at granted visibility",
           media:
-            "add_media stores an image/video and returns an oms-asset:<id> reference; get_media returns an image as visual content you can actually look at; list_media enumerates what exists. All three take an optional `space` slug instead of having *_space twins.",
+            "add_media stores an image/video/interactive-HTML and returns an oms-asset:<id> reference; get_media returns an image as visual content you can actually look at; list_media enumerates what exists. All three take an optional `space` slug instead of having *_space twins.",
         },
         media: {
           reference_scheme:
-            "note bodies embed media as a :::image or :::video block whose `src` is `oms-asset:<id>`. It is an opaque reference, not a URL — the bytes live in a private bucket and are only reachable through get_media or a short-lived signed url. Never fabricate an id.",
+            "note bodies embed media as a :::image or :::video block whose `src` is `oms-asset:<id>`, or an :::embed block whose `url` is an external link or an oms-asset:<id> HTML asset. It is an opaque reference, not a URL — the bytes live in a private bucket and are only reachable through get_media or a short-lived signed url. Never fabricate an id.",
           limits: "images up to 10 MB (png, jpeg, webp, gif, avif); video up to 50 MB (mp4, webm, mov)",
           vision:
             "get_media downscales images to at most 1568px before returning them, so reading one is cheap. Video is never returned as content — models can't watch it.",
@@ -2554,9 +2554,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   server.registerTool(
     "add_media",
     {
-      title: "Store an image or video",
+      title: "Store an image, video or interactive HTML",
       description:
-        "Store an image or video in the brain and get back a stable `oms-asset:<id>` reference. Use this when the person shares a screenshot, diagram, photo or clip that's worth keeping — pass the bytes as base64 in `data`, or a public link in `source_url` and the server downloads it. Give `note_path` to also embed it in that note (appends an :::image / :::video block); omit it to just store the file and place the returned `ref` yourself. Images: PNG, JPEG, WEBP, GIF, AVIF up to 10 MB. Video: MP4, WEBM, MOV up to 50 MB — for anything longer, keep it on Loom/YouTube and link it instead.",
+        "Store an image, video or self-contained interactive HTML page in the brain and get back a stable `oms-asset:<id>` reference. Use this when the person shares a screenshot, diagram, photo or clip worth keeping — or when an agent builds an interactive prototype/visualization that should render inside a note. Pass the bytes as base64 in `data`, or a public link in `source_url` and the server downloads it. Give `note_path` to also embed it in that note (appends an :::image / :::video / :::embed block); omit it to just store the file and place the returned `ref` yourself. Images: PNG, JPEG, WEBP, GIF, AVIF up to 10 MB. Video: MP4, WEBM, MOV up to 50 MB — for anything longer, keep it on Loom/YouTube and link it instead. Interactive HTML: `text/html` up to 2 MB, fully self-contained (inline CSS/JS, no external requests guaranteed); it renders in a sandboxed iframe with scripts enabled but no access to the wiki.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       inputSchema: {
         data: z
@@ -2640,7 +2640,10 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
             ...(embedded
               ? { path: embedded, embedded_in: embedded }
               : {
-                  next: `Not embedded anywhere yet — put \`src: ${assetUri(asset.id)}\` inside a :::image or :::video block in a note body.`,
+                  next:
+                    asset.kind === "html"
+                      ? `Not embedded anywhere yet — put \`url: ${assetUri(asset.id)}\` inside a :::embed block (fields: url, title, height) in a note body.`
+                      : `Not embedded anywhere yet — put \`src: ${assetUri(asset.id)}\` inside a :::image or :::video block in a note body.`,
                 }),
           },
           target.id,
@@ -2669,11 +2672,14 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       const id = parseAssetRef(asset);
       const meta = await getAsset(target.id, id);
 
-      if (meta.kind === "video") {
+      if (meta.kind !== "image") {
         const [signed] = await resolveAssets(target.id, [id]);
         return text({
           ...assetOut(meta),
-          note: "Video can't be handed to a model as content. Use `url` if your client can fetch it; it expires shortly.",
+          note:
+            meta.kind === "video"
+              ? "Video can't be handed to a model as content. Use `url` if your client can fetch it; it expires shortly."
+              : "Interactive HTML renders inside notes via an :::embed block whose `url` is this asset's reference. Fetch `url` to read the source; it expires shortly.",
           url: signed?.url ?? null,
         });
       }
@@ -2700,7 +2706,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "List stored media",
       description:
-        "List the images and video stored in the brain, newest first — pass `path` for the media belonging to one note. Use it to find out what visual material exists before deciding what to look at with get_media. Note bodies reference these as `oms-asset:<id>`.",
+        "List the images, video and interactive HTML stored in the brain, newest first — pass `path` for the media belonging to one note. Use it to find out what visual material exists before deciding what to look at with get_media. Note bodies reference these as `oms-asset:<id>`.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         path: z.string().optional().describe("only media attached to this note, e.g. projects/bonds/_index.md"),

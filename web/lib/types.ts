@@ -31,10 +31,10 @@ export interface FullNote {
   raw: string;
 }
 
-export type AssetKind = "image" | "video";
+export type AssetKind = "image" | "video" | "html";
 
-/** An image or video uploaded into a note. The bytes sit in a private bucket;
- *  the body only stores `oms-asset:<id>`. */
+/** An image, video or interactive HTML page uploaded into a note. The bytes
+ *  sit in a private bucket; the body only stores `oms-asset:<id>`. */
 export interface NoteAsset {
   id: string;
   spaceId: string;

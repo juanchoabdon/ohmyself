@@ -38,13 +38,25 @@ const VIDEO_TYPES: Record<string, string> = {
   "video/quicktime": "mov",
 };
 
+/** Self-contained interactive documents (prototypes, visualizations). Unlike
+ *  SVG — refused above because it would execute inside the page — an HTML
+ *  asset only ever renders inside a sandboxed iframe WITHOUT
+ *  `allow-same-origin`, from the storage origin: scripts run, but caged away
+ *  from the wiki's cookies, storage and DOM. */
+const HTML_TYPES: Record<string, string> = {
+  "text/html": "html",
+};
+
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 /** Uploads are buffered whole in memory by the request handler, so this is
  *  bounded by container memory rather than by storage. Comfortably covers a
  *  screen recording; anything longer belongs on Loom/YouTube via `:::embed`. */
 export const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+/** An interactive prototype is text; 2 MB is already a very large page. Bigger
+ *  payloads (bundled apps) belong on a real host, embedded by URL. */
+export const MAX_HTML_BYTES = 2 * 1024 * 1024;
 
-export type AssetKind = "image" | "video";
+export type AssetKind = "image" | "video" | "html";
 
 export interface NoteAsset {
   id: string;
@@ -100,6 +112,7 @@ function mapAsset(row: AssetRow): NoteAsset {
 }
 
 function kindFor(mime: string): AssetKind {
+  if (mime === "text/html") return "html";
   return mime.startsWith("video/") ? "video" : "image";
 }
 
@@ -120,8 +133,15 @@ export function checkUploadable(mime: string, sizeBytes: number): { ext: string;
     }
     return { ext: videoExt, kind: "video" };
   }
+  const htmlExt = HTML_TYPES[normalized];
+  if (htmlExt) {
+    if (sizeBytes > MAX_HTML_BYTES) {
+      throw new BadRequestError(`interactive HTML must be under ${MAX_HTML_BYTES / (1024 * 1024)} MB`);
+    }
+    return { ext: htmlExt, kind: "html" };
+  }
   throw new BadRequestError(
-    `unsupported file type "${normalized}" — images (PNG, JPEG, WEBP, GIF, AVIF) and video (MP4, WEBM, MOV) only`,
+    `unsupported file type "${normalized}" — images (PNG, JPEG, WEBP, GIF, AVIF), video (MP4, WEBM, MOV) and interactive HTML (text/html) only`,
   );
 }
 
@@ -380,6 +400,13 @@ export async function agentImage(spaceId: string, id: string): Promise<AgentImag
 /** The markdown block that embeds `asset` in a note body. */
 export function mediaBlockFor(asset: NoteAsset, opts?: { alt?: string; caption?: string }): string {
   const src = assetUri(asset.id);
+  if (asset.kind === "html") {
+    // Interactive HTML rides the :::embed fence: its `url` accepts an
+    // oms-asset reference, which the web renderer trades for a signed URL and
+    // frames with `sandbox="allow-scripts"` (no same-origin).
+    const title = opts?.caption || opts?.alt || asset.originalName || "Interactive";
+    return `:::embed\nurl: ${src}\ntitle: ${title}\nheight: 640\n:::`;
+  }
   if (asset.kind === "video") {
     const title = opts?.caption || opts?.alt || asset.originalName || "Video";
     return `:::video\nsrc: ${src}\ntitle: ${title}\n:::`;

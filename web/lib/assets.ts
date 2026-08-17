@@ -210,7 +210,9 @@ export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "i
 export const ACCEPTED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 export const ACCEPTED_MEDIA_TYPES = [...ACCEPTED_IMAGE_TYPES, ...ACCEPTED_VIDEO_TYPES];
 
-export function mediaKind(file: File): AssetKind | null {
+/** What the editor's drag/paste upload accepts — deliberately narrower than
+ *  `AssetKind`: interactive HTML only enters through the MCP `add_media`. */
+export function mediaKind(file: File): "image" | "video" | null {
   const type = file.type.toLowerCase();
   if (ACCEPTED_IMAGE_TYPES.includes(type)) return "image";
   if (ACCEPTED_VIDEO_TYPES.includes(type)) return "video";

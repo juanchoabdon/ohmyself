@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ImageOff, X, ZoomIn } from "lucide-react";
-import { useAssetSrc } from "@/lib/assets";
+import { assetIdFromUri, useAssetSrc } from "@/lib/assets";
 import { cn } from "@/lib/utils";
 
 /**
@@ -164,6 +164,36 @@ export function AssetVideo({ src, title }: { src: string; title?: string }) {
 }
 
 export function EmbedFrame({ url, title, height }: { url: string; title?: string; height: number }) {
+  // An embed's `url` also accepts an `oms-asset:` reference to an uploaded
+  // interactive HTML page; it resolves to a signed URL like any other asset,
+  // while a plain URL passes straight through the hook.
+  const isAsset = Boolean(assetIdFromUri(url));
+  const { url: resolved, loading, missing } = useAssetSrc(url);
+  const frameHeight = `${Math.min(height, isAsset ? 900 : 720)}px`;
+
+  if (isAsset) {
+    if (loading) {
+      return <div className="skeleton w-full rounded-lg" style={{ height: frameHeight }} aria-hidden />;
+    }
+    if (missing || !resolved) {
+      return <MediaPlaceholder>This embed is no longer available.</MediaPlaceholder>;
+    }
+    return (
+      <div className="overflow-hidden rounded-lg border border-border">
+        <iframe
+          title={title || "Embed"}
+          src={resolved}
+          // Scripts run, but caged: without allow-same-origin the frame can't
+          // touch the wiki's cookies, storage or DOM — the contract that makes
+          // uploaded HTML safe to render at all.
+          sandbox="allow-scripts"
+          className="w-full border-0 bg-bg"
+          style={{ height: frameHeight }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-hidden rounded-lg border border-border">
       <iframe
@@ -171,7 +201,7 @@ export function EmbedFrame({ url, title, height }: { url: string; title?: string
         src={url}
         sandbox="allow-scripts allow-same-origin allow-popups"
         className="w-full border-0 bg-bg"
-        style={{ height: `${Math.min(height, 720)}px` }}
+        style={{ height: frameHeight }}
       />
     </div>
   );
