@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ImageOff, X, ZoomIn } from "lucide-react";
 import { assetIdFromUri, useAssetSrc } from "@/lib/assets";
 import { cn } from "@/lib/utils";
@@ -169,20 +169,44 @@ export function EmbedFrame({ url, title, height }: { url: string; title?: string
   // while a plain URL passes straight through the hook.
   const isAsset = Boolean(assetIdFromUri(url));
   const { url: resolved, loading, missing } = useAssetSrc(url);
+  // Supabase Storage deliberately serves stored HTML as text/plain (so its CDN
+  // can't host phishing pages), which an iframe would show as source text. So
+  // for assets we fetch the text ourselves and render it via `srcdoc` — with
+  // sandbox and no allow-same-origin the document gets an opaque origin either
+  // way, so this changes delivery, not the security contract.
+  const [doc, setDoc] = useState<string | null>(null);
+  const [docFailed, setDocFailed] = useState(false);
+  useEffect(() => {
+    if (!isAsset || !resolved) return;
+    let active = true;
+    setDocFailed(false);
+    fetch(resolved)
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status}`))))
+      .then((text) => {
+        if (active) setDoc(text);
+      })
+      .catch(() => {
+        if (active) setDocFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAsset, resolved]);
+
   const frameHeight = `${Math.min(height, isAsset ? 900 : 720)}px`;
 
   if (isAsset) {
-    if (loading) {
-      return <div className="skeleton w-full rounded-lg" style={{ height: frameHeight }} aria-hidden />;
-    }
-    if (missing || !resolved) {
+    if (missing || docFailed) {
       return <MediaPlaceholder>This embed is no longer available.</MediaPlaceholder>;
+    }
+    if (loading || !doc) {
+      return <div className="skeleton w-full rounded-lg" style={{ height: frameHeight }} aria-hidden />;
     }
     return (
       <div className="overflow-hidden rounded-lg border border-border">
         <iframe
           title={title || "Embed"}
-          src={resolved}
+          srcDoc={doc}
           // Scripts run, but caged: without allow-same-origin the frame can't
           // touch the wiki's cookies, storage or DOM — the contract that makes
           // uploaded HTML safe to render at all.
