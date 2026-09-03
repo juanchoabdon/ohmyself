@@ -9,12 +9,17 @@ import {
   handleStripeEvent,
   stripeConfigured,
   type BillingPlan,
+  type PaidTier,
 } from "../core/billing.js";
 
 type Env = { Variables: { auth: AuthContext } };
 
-function isPlan(v: unknown): v is BillingPlan {
+function isInterval(v: unknown): v is BillingPlan {
   return v === "monthly" || v === "annual";
+}
+
+function isPaidTier(v: unknown): v is PaidTier {
+  return v === "basic" || v === "pro";
 }
 
 /** Unauthenticated Stripe webhook. Must be registered before the /v1 auth guard. */
@@ -51,9 +56,14 @@ export function registerBillingRoutes(app: Hono<Env>): void {
     const auth = c.get("auth");
     if (auth.via !== "jwt") throw new BadRequestError("subscribe from a signed-in session");
     if (!stripeConfigured()) throw new BadRequestError("billing is not configured");
-    const body = (await c.req.json().catch(() => ({}))) as { plan?: string };
-    const plan: BillingPlan = isPlan(body.plan) ? body.plan : "annual";
-    const { url } = await createCheckoutSession(auth.userId, plan);
+    const body = (await c.req.json().catch(() => ({}))) as { tier?: string; interval?: string; plan?: string };
+    const tier: PaidTier = isPaidTier(body.tier) ? body.tier : "pro";
+    const interval: BillingPlan = isInterval(body.interval)
+      ? body.interval
+      : isInterval(body.plan)
+        ? body.plan
+        : "annual";
+    const { url } = await createCheckoutSession(auth.userId, tier, interval);
     return c.json({ url });
   });
 

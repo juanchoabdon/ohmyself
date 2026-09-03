@@ -19,7 +19,9 @@ export default function AuthCallback() {
 
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const query = new URLSearchParams(window.location.search);
-    const next = query.get("next") === "/upgrade" ? "/upgrade" : "/app";
+    const rawNext = query.get("next");
+    const next =
+      rawNext === "/upgrade" || rawNext?.startsWith("/upgrade?") ? rawNext : "/app";
     const urlError =
       hash.get("error_description") ||
       query.get("error_description") ||

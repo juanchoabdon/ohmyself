@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { siClaude, siGooglecalendar, siNotion, siGmail, siWhatsapp } from "simple-icons";
 import { supabase } from "@/lib/supabaseClient";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrainMap } from "@/components/BrainMap";
 import type { IndexedNote } from "@/lib/types";
-import { PRICING } from "@/lib/pricing";
+import { ANNUAL_SAVE, type BillingInterval } from "@/lib/pricing";
+import { IntervalToggle, PlanPicker } from "@/components/PlanPicker";
 
 const GITHUB = "https://github.com/juanchoabdon/ohmyself";
 
@@ -954,49 +956,32 @@ function Features() {
 
 function Pricing() {
   const startup = useMode() === "startup";
+  const router = useRouter();
+  const [interval, setInterval] = useState<BillingInterval>("annual");
   return (
     <section id="pricing" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
       <div className="reveal mx-auto max-w-2xl text-center">
         <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
-          Free to start. Pro when you connect agents.
+          Free to start. Pay when you need more notes.
         </h2>
         <p className="mt-3 text-pretty text-muted">
           {startup
-            ? "The wiki is free on the web. Pro is for MCP, team wikis, connectors, and deep research on the hosted product."
-            : "Your second self on the web is free. Pro is for MCP, company wikis, connectors, and deep research on ohmyself.ai."}{" "}
-          Self-hosting the MIT server stays free.
+            ? "The wiki starts free. Basic connects your agents. Pro is meetings and more wikis."
+            : "Your second self on the web is free for 100 notes. Basic is 2,000 notes plus your AI apps. Pro is unlimited, with meetings and company wikis."}{" "}
+          Yearly is {ANNUAL_SAVE}. Self-hosting stays free.
         </p>
       </div>
-      <div className="mx-auto mt-12 grid max-w-3xl gap-4 md:grid-cols-2">
-        <div className="reveal rounded-2xl border border-border bg-surface/90 p-6 shadow-sm">
-          <p className="text-sm font-semibold uppercase tracking-wide text-muted">Free</p>
-          <p className="mt-2 font-heading text-3xl font-bold tracking-tight">$0</p>
-          <ul className="mt-4 space-y-2 text-sm text-ink">
-            <li>Personal brain on the web</li>
-            <li>Browse, edit, search, privacy levels</li>
-            <li>Self-host anytime</li>
-          </ul>
-        </div>
-        <div className="reveal rounded-2xl border border-brand bg-surface p-6 shadow-sm">
-          <p className="text-sm font-semibold uppercase tracking-wide text-brand-ink">Pro</p>
-          <p className="mt-2 font-heading text-3xl font-bold tracking-tight">
-            {PRICING.monthly.label}
-            <span className="text-lg font-medium text-muted">/{PRICING.monthly.period}</span>
-          </p>
-          <p className="mt-1 text-sm text-muted">or {PRICING.annual.label}/{PRICING.annual.period} — {PRICING.annual.save}</p>
-          <ul className="mt-4 space-y-2 text-sm text-ink">
-            <li>Connect Claude, ChatGPT, Cursor via MCP</li>
-            <li>Company wikis</li>
-            <li>Connectors and meeting distill</li>
-            <li>Deep research and semantic map</li>
-          </ul>
-          <Link
-            href="/upgrade"
-            className="mt-6 inline-flex rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-95"
-          >
-            Upgrade
-          </Link>
-        </div>
+      <div className="reveal mx-auto mt-8 flex justify-center">
+        <IntervalToggle value={interval} onChange={setInterval} />
+      </div>
+      <div className="mx-auto mt-8 max-w-5xl">
+        <PlanPicker
+          interval={interval}
+          highlight="basic"
+          onChoose={(tier) => {
+            router.push(`/upgrade?from=${tier}`);
+          }}
+        />
       </div>
     </section>
   );

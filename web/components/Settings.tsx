@@ -536,18 +536,18 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
           {/* Claude / MCP setup */}
           {tab === "mcp" && (
           <section>
-            {billing?.enforced && !billing.pro && (
+            {billing?.enforced && billing.tier === "free" && (
               <div className="mb-6 rounded-xl border border-border bg-brand-weak/40 p-4">
-                <p className="text-sm font-semibold text-ink">Connecting an agent is Pro</p>
+                <p className="text-sm font-semibold text-ink">Connecting an agent is Basic</p>
                 <p className="mt-1 text-sm text-muted">
-                  The web brain stays free. Pro unlocks MCP, company wikis, connectors, and deep
-                  research.
+                  2,000 notes, plus Cursor, ChatGPT, and Claude. Meetings and company wikis stay on
+                  Pro.
                 </p>
                 <a
-                  href="/upgrade"
+                  href="/upgrade?from=basic"
                   className="mt-3 inline-flex rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:opacity-95"
                 >
-                  Upgrade to Pro
+                  Continue with Basic
                 </a>
               </div>
             )}
@@ -566,11 +566,11 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
 
           {tab === "billing" && (
             <section>
-              <h3 className="text-sm font-semibold text-ink">Billing</h3>
+              <h3 className="text-sm font-semibold text-ink">Plan</h3>
               {billing?.enforced ? (
                 <>
                   <p className="mt-1 text-sm text-muted">
-                    Hosted Pro on ohmyself.ai. Self-hosting the open-source server is always free.
+                    Notes you keep. Yearly is two months free. Self-hosting stays free.
                   </p>
                   <div className="mt-4">
                     <BillingPanel token={token} billing={billing} />

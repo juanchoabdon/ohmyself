@@ -2,18 +2,10 @@
 
 import { useState } from "react";
 import { api, isPaymentRequired } from "@/lib/api";
-import { PRICING } from "@/lib/pricing";
-import type { BillingStatus, EntitlementStatus } from "@/lib/types";
-
-const STATUS_COPY: Record<EntitlementStatus, string> = {
-  free: "Free",
-  trialing: "Trial",
-  active: "Pro",
-  past_due: "Payment past due",
-  canceled: "Canceled",
-  grandfathered: "Pro (early user)",
-  lifetime: "Lifetime Pro",
-};
+import { PLANS, type BillingInterval, type HostedTier } from "@/lib/pricing";
+import { IntervalToggle, PlanPicker } from "@/components/PlanPicker";
+import { NoteUsageBar } from "@/components/NoteCap";
+import type { BillingStatus } from "@/lib/types";
 
 function formatDate(iso: string | null): string | null {
   if (!iso) return null;
@@ -22,28 +14,41 @@ function formatDate(iso: string | null): string | null {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+function planLabel(billing: BillingStatus): string {
+  const name = PLANS[billing.tier].name;
+  const ent = billing.entitlement;
+  if (!ent) return name;
+  if (ent.status === "grandfathered") return `${name} (early user)`;
+  if (ent.status === "lifetime") return "Lifetime Pro";
+  if (ent.status === "past_due") return `${name} — payment past due`;
+  return name;
+}
+
 export function BillingPanel({
   token,
   billing,
+  highlight,
 }: {
   token: string;
   billing: BillingStatus;
-  onUpdated?: () => void;
+  highlight?: "basic" | "pro";
 }) {
-  const [busy, setBusy] = useState<"monthly" | "annual" | "portal" | null>(null);
+  const [interval, setInterval] = useState<BillingInterval>("annual");
+  const [busy, setBusy] = useState<"basic" | "pro" | "portal" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ent = billing.entitlement;
-  const label = ent ? STATUS_COPY[ent.status] : billing.pro ? "Pro" : "Free";
   const until =
     formatDate(ent?.currentPeriodEnd) ??
     formatDate(ent?.trialEnd) ??
     formatDate(ent?.grandfatherUntil);
+  const usage = billing.usage;
+  const finite = usage && usage.limit != null;
 
-  async function checkout(plan: "monthly" | "annual") {
-    setBusy(plan);
+  async function checkout(tier: "basic" | "pro") {
+    setBusy(tier);
     setError(null);
     try {
-      const { url } = await api.billingCheckout(token, plan);
+      const { url } = await api.billingCheckout(token, tier, interval);
       window.location.href = url;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start checkout");
@@ -68,16 +73,20 @@ export function BillingPanel({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="rounded-xl border border-border bg-bg p-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Plan</p>
-        <p className="mt-1 text-lg font-semibold text-ink">{label}</p>
+        <p className="text-sm font-semibold text-ink">{planLabel(billing)}</p>
         {until && (
           <p className="mt-1 text-sm text-muted">
             {ent?.cancelAtPeriodEnd ? "Ends" : "Renews"} {until}
           </p>
         )}
-        {billing.pro && ent?.hasCustomer && (
+        {finite && (
+          <div className="mt-3">
+            <NoteUsageBar used={usage.notes} limit={usage.limit!} planName={PLANS[billing.tier].name} />
+          </div>
+        )}
+        {billing.paid && ent?.hasCustomer && (
           <button
             onClick={portal}
             disabled={busy !== null}
@@ -88,72 +97,23 @@ export function BillingPanel({
         )}
       </div>
 
-      {!billing.pro && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <PlanCard
-            name="Monthly"
-            price={PRICING.monthly.label}
-            period={`/${PRICING.monthly.period}`}
-            cta={busy === "monthly" ? "…" : "Subscribe monthly"}
-            busy={busy !== null}
-            onClick={() => checkout("monthly")}
-          />
-          <PlanCard
-            name="Annual"
-            price={PRICING.annual.label}
-            period={`/${PRICING.annual.period}`}
-            note={PRICING.annual.save}
-            recommended
-            cta={busy === "annual" ? "…" : "Subscribe annually"}
-            busy={busy !== null}
-            onClick={() => checkout("annual")}
+      {billing.tier !== "pro" && (
+        <div className="space-y-3">
+          <IntervalToggle value={interval} onChange={setInterval} />
+          <PlanPicker
+            interval={interval}
+            currentTier={billing.tier}
+            highlight={highlight ?? (billing.tier === "basic" ? "pro" : "basic")}
+            busy={busy === "portal" ? null : busy}
+            ctaLabel={(tier) =>
+              billing.tier === tier ? "Current plan" : `Continue with ${PLANS[tier as HostedTier].name}`
+            }
+            onChoose={checkout}
           />
         </div>
       )}
 
       {error && <p className="text-sm text-vis-secret">{error}</p>}
-    </div>
-  );
-}
-
-function PlanCard({
-  name,
-  price,
-  period,
-  note,
-  recommended,
-  cta,
-  busy,
-  onClick,
-}: {
-  name: string;
-  price: string;
-  period: string;
-  note?: string;
-  recommended?: boolean;
-  cta: string;
-  busy: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      className={`rounded-xl border p-4 ${
-        recommended ? "border-brand bg-brand-weak/40" : "border-border bg-bg"
-      }`}
-    >
-      <p className="text-sm font-semibold text-ink">{name}</p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight text-ink">
-        {price}
-        <span className="text-sm font-medium text-muted">{period}</span>
-      </p>
-      {note && <p className="mt-1 text-xs text-muted">{note}</p>}
-      <button
-        onClick={onClick}
-        disabled={busy}
-        className="mt-3 w-full rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:opacity-95 disabled:opacity-60"
-      >
-        {cta}
-      </button>
     </div>
   );
 }

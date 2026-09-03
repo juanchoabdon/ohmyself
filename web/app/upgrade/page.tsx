@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { api } from "@/lib/api";
-import { PRICING } from "@/lib/pricing";
+import { ANNUAL_SAVE, PLANS } from "@/lib/pricing";
+import type { BillingInterval } from "@/lib/pricing";
 import { BillingPanel } from "@/components/BillingPanel";
+import { IntervalToggle, PlanPicker } from "@/components/PlanPicker";
+import { NoteCapMessage } from "@/components/NoteCap";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import type { BillingStatus } from "@/lib/types";
 
 export default function UpgradePage() {
   return (
-    <Suspense fallback={<Centered>Loading…</Centered>}>
+    <Suspense fallback={<p className="px-5 py-16 text-sm text-muted">Loading…</p>}>
       <Upgrade />
     </Suspense>
   );
@@ -20,7 +23,10 @@ export default function UpgradePage() {
 
 function Upgrade() {
   const params = useSearchParams();
+  const router = useRouter();
   const status = params.get("status");
+  const from = params.get("from") === "pro" ? "pro" : "basic";
+  const [interval, setInterval] = useState<BillingInterval>("annual");
   const [token, setToken] = useState<string | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +60,7 @@ function Upgrade() {
   }, [status]);
 
   return (
-    <main className="mx-auto max-w-2xl px-5 py-16">
+    <main className="mx-auto max-w-5xl px-5 py-16">
       <div className="flex items-center justify-between">
         <Link href="/" className="font-display text-2xl font-semibold tracking-tight">
           <span className="brand-gradient">ohmyself!</span>
@@ -62,15 +68,16 @@ function Upgrade() {
         <ThemeToggle />
       </div>
 
-      <h1 className="mt-10 font-heading text-3xl font-bold tracking-tight text-ink">Pro</h1>
-      <p className="mt-2 text-pretty text-muted">
-        The hosted brain stays yours as markdown. Pro connects agents, company wikis, meetings, and
-        deep research on ohmyself.ai. Self-hosting the open source server stays free.
+      <h1 className="mt-10 font-heading text-3xl font-bold tracking-tight text-ink">
+        Free, Basic, or Pro.
+      </h1>
+      <p className="mt-2 max-w-xl text-pretty text-muted">
+        One number: notes. Yearly is {ANNUAL_SAVE}. Self-hosting the open-source server stays free.
       </p>
 
       {status === "success" && (
         <p className="mt-4 rounded-xl border border-border bg-brand-weak/50 px-4 py-3 text-sm text-ink">
-          Payment received. Pro unlocks as soon as Stripe confirms — usually a few seconds.
+          Payment received. Your plan updates as soon as Stripe confirms — usually a few seconds.
         </p>
       )}
       {status === "cancel" && (
@@ -79,76 +86,48 @@ function Upgrade() {
         </p>
       )}
 
-      <ul className="mt-8 space-y-2 text-sm text-ink">
-        <li>Connect Claude, ChatGPT, Cursor, and any MCP client</li>
-        <li>Company wikis with roles</li>
-        <li>Calendar connectors and meeting distill</li>
-        <li>Deep research and the semantic brain map</li>
-      </ul>
-
       <div className="mt-8">
         {!token && (
           <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <SilentPlan name="Monthly" price={PRICING.monthly.label} period={`/${PRICING.monthly.period}`} />
-              <SilentPlan
-                name="Annual"
-                price={PRICING.annual.label}
-                period={`/${PRICING.annual.period}`}
-                note={PRICING.annual.save}
-                recommended
-              />
-            </div>
+            <IntervalToggle value={interval} onChange={setInterval} />
+            <PlanPicker
+              interval={interval}
+              highlight={from}
+              onChoose={(tier) => {
+                router.push(`/login?mode=signin&next=${encodeURIComponent(`/upgrade?from=${tier}`)}`);
+              }}
+            />
             <Link
-              href="/login?mode=signin&next=/upgrade"
+              href={`/login?mode=signin&next=${encodeURIComponent(`/upgrade?from=${from}`)}`}
               className="inline-flex rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:opacity-95"
             >
               Sign in to subscribe
             </Link>
           </div>
         )}
-        {token && billing && <BillingPanel token={token} billing={billing} />}
+        {token && billing && billing.enforced && (
+          <BillingPanel token={token} billing={billing} highlight={from} />
+        )}
+        {token && billing && !billing.enforced && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted">
+              Charging is off on this server. This is the checkout as users will see it.
+            </p>
+            <IntervalToggle value={interval} onChange={setInterval} />
+            <PlanPicker interval={interval} highlight={from} />
+          </div>
+        )}
         {token && !billing && !error && <p className="text-sm text-muted">Loading your plan…</p>}
         {error && <p className="text-sm text-vis-secret">{error}</p>}
       </div>
 
-      <p className="mt-10 text-xs text-muted">
-        Self-host with <code className="font-mono">VAULT_BACKEND=fs</code> or leave{" "}
-        <code className="font-mono">OMS_ENFORCE_PRO</code> unset — billing never applies.
-      </p>
+      <section className="mt-14 max-w-md">
+        <h2 className="font-heading text-lg font-semibold tracking-tight text-ink">If you hit 100 notes</h2>
+        <p className="mt-1 text-sm text-muted">Same message as in the app. No extra meters.</p>
+        <div className="mt-4 rounded-xl border border-border bg-surface p-5">
+          <NoteCapMessage tier="free" used={PLANS.free.notes!} limit={PLANS.free.notes!} />
+        </div>
+      </section>
     </main>
   );
-}
-
-function SilentPlan({
-  name,
-  price,
-  period,
-  note,
-  recommended,
-}: {
-  name: string;
-  price: string;
-  period: string;
-  note?: string;
-  recommended?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-xl border p-4 ${
-        recommended ? "border-brand bg-brand-weak/40" : "border-border bg-surface"
-      }`}
-    >
-      <p className="text-sm font-semibold text-ink">{name}</p>
-      <p className="mt-1 text-2xl font-semibold tracking-tight text-ink">
-        {price}
-        <span className="text-sm font-medium text-muted">{period}</span>
-      </p>
-      {note && <p className="mt-1 text-xs text-muted">{note}</p>}
-    </div>
-  );
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <p className="px-5 py-16 text-sm text-muted">{children}</p>;
 }

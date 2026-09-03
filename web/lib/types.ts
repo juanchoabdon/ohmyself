@@ -229,10 +229,13 @@ export type EntitlementStatus =
   | "grandfathered"
   | "lifetime";
 
+export type HostedTier = "free" | "basic" | "pro";
+
 export interface Entitlement {
   userId: string;
   status: EntitlementStatus;
   plan: "monthly" | "annual" | null;
+  tier: HostedTier | null;
   source: string | null;
   currentPeriodEnd: string | null;
   trialEnd: string | null;
@@ -241,9 +244,17 @@ export interface Entitlement {
   hasCustomer: boolean;
 }
 
+export interface BillingUsage {
+  notes: number;
+  limit: number | null;
+}
+
 export interface BillingStatus {
   enforced: boolean;
   pro: boolean;
+  paid: boolean;
+  tier: HostedTier;
+  usage: BillingUsage | null;
   entitlement: Entitlement | null;
   upgradeUrl: string;
 }

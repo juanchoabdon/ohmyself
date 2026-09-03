@@ -3,7 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createApp } from "./api/app.js";
 import { resolveAuth } from "./auth.js";
 import { BrainError, PaymentRequiredError } from "./core/errors.js";
-import { requirePro } from "./core/billing.js";
+import { requireBasic } from "./core/billing.js";
 import { buildMcpServer } from "./mcp/tools.js";
 import { checkRateLimit } from "./middleware/rateLimit.js";
 
@@ -179,13 +179,16 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<voi
   }
 
   try {
-    await requirePro(auth.userId, auth.via);
+    await requireBasic(auth.userId, auth.via);
   } catch (err) {
     if (err instanceof PaymentRequiredError) {
       sendJson(res, 402, {
         error: err.message,
-        code: "payment_required",
+        code: err.extras.code ?? "payment_required",
         upgrade_url: err.upgradeUrl,
+        used: err.extras.used,
+        limit: err.extras.limit,
+        suggested_tier: err.extras.suggestedTier,
       });
       return;
     }

@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, isSessionExpired, setActiveSpace } from "@/lib/api";
+import { api, isPaymentRequired, isSessionExpired, setActiveSpace } from "@/lib/api";
 import { clearAssetCache } from "@/lib/assets";
 import { supabase } from "@/lib/supabaseClient";
-import type { Category, FolderCount, FullNote, HistoryEntry, IndexedNote, Space, Visibility } from "@/lib/types";
+import type { BillingStatus, Category, FolderCount, FullNote, HistoryEntry, IndexedNote, Space, Visibility } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteView, type NoteViewHandle } from "@/components/NoteView";
 import { ActivityPanel } from "@/components/ActivityPanel";
@@ -43,6 +43,7 @@ import type { PresencePeer } from "@/components/editor/PresenceBar";
 import type { OutlineItem } from "@/lib/outline";
 import type { ScrollToHeadingTarget } from "@/components/editor/MarkdownEditor";
 import { buildNoteShareUrl, readNoteDeepLink, writeNoteDeepLink } from "@/lib/noteUrl";
+import { PLANS } from "@/lib/pricing";
 
 /** localStorage key holding the last note opened in a given space, so a page
  *  refresh (or coming back to a space) reopens where you left off. */
@@ -334,6 +335,30 @@ export default function Dashboard() {
       sub.subscription.unsubscribe();
     };
   }, [router]);
+
+  useEffect(() => {
+    try {
+      setPreviewCap(new URLSearchParams(window.location.search).get("preview") === "cap");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void api
+      .billingStatus(token)
+      .then((b) => {
+        if (active) setBilling(b);
+      })
+      .catch(() => {
+        if (active) setBilling(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
 
   // Load the spaces the user belongs to (self + companies). Default to the
   // self space; a saved preference (last active space) is honored if still valid.
@@ -736,6 +761,24 @@ export default function Dashboard() {
   const [createFolder, setCreateFolder] = useState<{ folder: string | null } | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [previewCap, setPreviewCap] = useState(false);
+  const noteCap =
+    previewCap
+      ? { tier: "free" as const, used: PLANS.free.notes!, limit: PLANS.free.notes! }
+      : billing?.enforced &&
+          billing.usage?.limit != null &&
+          billing.usage.notes >= billing.usage.limit
+        ? { tier: billing.tier, used: billing.usage.notes, limit: billing.usage.limit }
+        : null;
+  const sidebarUsage =
+    billing?.enforced && billing.usage?.limit != null
+      ? {
+          used: billing.usage.notes,
+          limit: billing.usage.limit,
+          planName: PLANS[billing.tier].name,
+        }
+      : null;
   const [renameFolder, setRenameFolder] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{ kind: "note" | "folder"; path: string; count?: number } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -961,6 +1004,17 @@ export default function Dashboard() {
       setCreateFolder(null);
       await refresh(created);
     } catch (e) {
+      if (isPaymentRequired(e) && e.code === "note_cap" && typeof e.limit === "number") {
+        setBilling((prev) =>
+          prev
+            ? {
+                ...prev,
+                usage: { notes: e.used ?? e.limit, limit: e.limit },
+              }
+            : prev,
+        );
+        return;
+      }
       setCreateError(e instanceof Error ? e.message : "Could not create entry");
     } finally {
       setCreateBusy(false);
@@ -1142,6 +1196,7 @@ export default function Dashboard() {
           onTypeFilter={setTypeFilter}
           visFilter={visFilter}
           onVisFilter={setVisFilter}
+          usage={sidebarUsage}
           onCreateInside={(folder) => {
             setCreateError(null);
             setCreateFolder({ folder });
@@ -1369,6 +1424,7 @@ export default function Dashboard() {
           defaultType={createFolder.folder ? createFolder.folder.split("/")[0]! : "note"}
           busy={createBusy}
           error={createError}
+          cap={noteCap}
           onSubmit={handleCreate}
           onClose={() => setCreateFolder(null)}
         />

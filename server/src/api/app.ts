@@ -53,7 +53,7 @@ import {
   type Visibility,
 } from "../core/index.js";
 import { BadRequestError, BrainError, ConflictError, ForbiddenError, PaymentRequiredError } from "../core/errors.js";
-import { getBillingStatus, requirePro } from "../core/billing.js";
+import { getBillingStatus, requireBasic, requirePro } from "../core/billing.js";
 import { registerBillingRoutes, registerBillingWebhook } from "./billing.js";
 import { subscribeBrainEvents } from "../core/events.js";
 import { embedTexts, embeddingsEnabled, semanticEdges } from "../core/embeddings.js";
@@ -238,7 +238,7 @@ export function createApp(): Hono<Env> {
   app.post("/v1/tokens", async (c) => {
     const auth = c.get("auth");
     requireJwt(auth);
-    await requirePro(auth.userId);
+    await requireBasic(auth.userId);
     const body = (await c.req.json().catch(() => ({}))) as { name?: string; scope?: string };
     const scope: Scope = isScope(body.scope) ? body.scope : "secret";
     const { token, row } = await createToken(auth.userId, (body.name ?? "").trim() || "token", scope);
@@ -1063,7 +1063,14 @@ export function createApp(): Hono<Env> {
     }
     if (err instanceof PaymentRequiredError) {
       return c.json(
-        { error: err.message, code: "payment_required", upgrade_url: err.upgradeUrl },
+        {
+          error: err.message,
+          code: err.extras.code ?? "payment_required",
+          upgrade_url: err.upgradeUrl,
+          used: err.extras.used,
+          limit: err.extras.limit,
+          suggested_tier: err.extras.suggestedTier,
+        },
         402,
       );
     }

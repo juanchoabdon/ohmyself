@@ -73,10 +73,12 @@ export {
   billingEnforced,
   getBillingStatus,
   isPro,
+  requireBasic,
   requirePro,
+  requireNoteRoom,
   upgradeUrl,
 } from "./billing.js";
-export type { BillingStatus, Entitlement, BillingPlan } from "./billing.js";
+export type { BillingStatus, Entitlement, BillingPlan, HostedTier } from "./billing.js";
 export {
   registerClient,
   getClient,

@@ -37,10 +37,11 @@ export default function TermsPage() {
           these terms; continued use means you accept the changes.
         </Section>
         <Section title="Hosted plans">
-          ohmyself.ai may offer a free hosted tier and a paid Pro subscription billed through Stripe.
-          Pro is required to connect agents over MCP, create company wikis, and use connectors on the
-          hosted product. You can cancel anytime in the billing portal. The MIT-licensed code remains
-          free to self-host; self-hosted instances are not billed by us.
+          ohmyself.ai may offer a free hosted tier and paid Basic and Pro subscriptions billed
+          through Stripe. Basic is required to connect agents over MCP. Pro is required for company
+          wikis and connectors on the hosted product. Each paid plan includes a note cap (or
+          unlimited notes on Pro). You can cancel anytime in the billing portal. The MIT-licensed
+          code remains free to self-host; self-hosted instances are not billed by us.
         </Section>
         <Section title="Limitation of liability">
           To the maximum extent permitted by law, ohmyself! is not liable for any indirect,
