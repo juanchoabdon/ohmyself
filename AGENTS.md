@@ -24,5 +24,8 @@ ChatGPT, Claude, OAuth). It is a proxy — the real backend is **Railway**.
   `https://www.ohmyself.ai/mcp`.
 - After deploy, clients cache the tool list — reconnect (ChatGPT/Claude) or reload
   (Cursor) to pick up new tools.
+- Hosted billing: set `STRIPE_*` on Railway and `OMS_ENFORCE_PRO=true` only when
+  you want paywalls live. The webhook path is `POST /webhooks/stripe` (proxied
+  from www). Leave enforcement unset for self-host.
 
 Full topology, runbook, and history: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

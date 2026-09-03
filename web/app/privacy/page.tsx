@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: "How ohmyself! handles your data.",
 };
 
-const UPDATED = "June 28, 2026";
+const UPDATED = "September 3, 2026";
 const SUPPORT = "support@ohmyself.ai";
 
 export default function PrivacyPage() {
@@ -31,6 +31,7 @@ export default function PrivacyPage() {
             <li>The notes you create, and a derived search index of them.</li>
             <li>Access tokens and OAuth grants you create to connect agents (stored only as hashes).</li>
             <li>Minimal operational metadata (timestamps, last-used times).</li>
+            <li>If you subscribe to hosted Pro, Stripe stores payment details. We keep subscription status and Stripe customer/subscription ids on your account — not card numbers.</li>
           </ul>
           We do not sell your data, and we do not use your private notes to train models.
         </Section>

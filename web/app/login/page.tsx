@@ -15,6 +15,7 @@ export default function LoginPage() {
 function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
+  const next = safeNext(params.get("next"));
   const [mode, setMode] = useState<"signin" | "signup">(
     params.get("mode") === "signin" ? "signin" : "signup",
   );
@@ -24,16 +25,16 @@ function LoginInner() {
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
-      if (active && data.session) router.replace("/app");
+      if (active && data.session) router.replace(next);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (session) router.replace("/app");
+      if (session) router.replace(next);
     });
     return () => {
       active = false;
       sub.subscription.unsubscribe();
     };
-  }, [router]);
+  }, [router, next]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,7 +48,9 @@ function LoginInner() {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        },
       });
       if (error) throw error;
       // On success the browser is redirected to Google; nothing else to do here.
@@ -78,7 +81,7 @@ function LoginInner() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
-      router.push("/app");
+      router.push(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -230,4 +233,10 @@ function Field(props: {
       />
     </label>
   );
+}
+
+/** Only in-app paths. Prevents open redirects off the login form. */
+function safeNext(raw: string | null): string {
+  if (raw === "/upgrade" || raw?.startsWith("/upgrade?")) return raw;
+  return "/app";
 }

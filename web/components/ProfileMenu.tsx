@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export type SettingsTab = "space" | "mcp" | "connectors" | "friends";
+export type SettingsTab = "space" | "mcp" | "connectors" | "friends" | "billing";
 
 /** A compact profile / settings menu that lives in the header. Opens the
  *  settings modal on a specific tab (appearance/branding, connectors, tokens,
@@ -63,6 +63,7 @@ export function ProfileMenu({
           <MenuItem icon={<PlugIcon />} label="Connectors" onClick={() => go("connectors")} />
           <MenuItem icon={<KeyIcon />} label="MCP & tokens" onClick={() => go("mcp")} />
           <MenuItem icon={<UsersIcon />} label="Friends" onClick={() => go("friends")} />
+          <MenuItem icon={<CardIcon />} label="Billing" onClick={() => go("billing")} />
           <div className="my-1 border-t border-border" />
           <MenuItem icon={<SignOutIcon />} label="Sign out" onClick={onSignOut} danger />
         </div>
@@ -157,6 +158,15 @@ function UsersIcon() {
       <circle cx="9" cy="7" r="4" />
       <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
       <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
+
+function CardIcon() {
+  return (
+    <svg {...svg}>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
     </svg>
   );
 }

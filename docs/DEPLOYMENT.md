@@ -17,7 +17,8 @@ clients (Cursor, ChatGPT, Claude) and the OAuth flow point at
 Cursor / ChatGPT / Claude  ──►  https://www.ohmyself.ai/mcp
                                         │  (Vercel `web` project: Next.js)
                                         │  rewrites /mcp, /v1, /oauth,
-                                        │  /connectors, /.well-known
+                                        │  /connectors, /webhooks/stripe,
+                                        │  /.well-known
                                         ▼
                     https://ohmyself-api-production.up.railway.app
                                  Railway = the real backend
@@ -25,7 +26,7 @@ Cursor / ChatGPT / Claude  ──►  https://www.ohmyself.ai/mcp
 ```
 
 - **`www.ohmyself.ai`** → Vercel **`web`** project (Next.js frontend). Its
-  `/mcp`, `/v1/*`, `/oauth/*`, `/connectors/*`, `/.well-known/*` are **rewrites**
+  `/mcp`, `/v1/*`, `/oauth/*`, `/connectors/*`, `/webhooks/stripe`, `/.well-known/*` are **rewrites**
   to Railway (see `web/vercel.json`). Nothing MCP is executed here; it is a
   passthrough.
 - **`ohmyself-api-production.up.railway.app`** → **Railway**, running the

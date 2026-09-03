@@ -45,3 +45,13 @@ export class ConflictError extends BrainError {
     super(message, 409);
   }
 }
+
+/** Hosted Pro is required. Self-host and OMS_ENFORCE_PRO=false never throw this. */
+export class PaymentRequiredError extends BrainError {
+  constructor(
+    message = "Pro is required for this",
+    public upgradeUrl = "https://www.ohmyself.ai/upgrade",
+  ) {
+    super(message, 402);
+  }
+}

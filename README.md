@@ -195,6 +195,19 @@ This repo is public. Real keys live only in `.env.local` (gitignored) and your h
 env vars. Only `.env.example` (placeholders) is committed. The browser uses the anon
 key only; the service role key is server-side.
 
+## Hosted billing
+
+`www.ohmyself.ai` can charge for the hosted product (Stripe Checkout + Customer Portal).
+Self-hosting is free: leave `OMS_ENFORCE_PRO` unset (the default). When enforcement is
+on, Pro is required for MCP connections, personal tokens, company wikis, and connectors.
+The web personal brain stays usable on Free.
+
+Existing hosted users are grandfathered Pro for 90 days when the entitlements migration
+is applied. Flip the kill-switch only after Stripe prices, webhook (`/webhooks/stripe`),
+and `OMS_ENFORCE_PRO=true` are set on Railway.
+
+See `specs/hosted-billing/spec.md`.
+
 ## Deploy
 
 > Full topology, runbook, and the "why" behind it live in
@@ -203,7 +216,7 @@ key only; the service role key is server-side.
 
 **`www.ohmyself.ai` is the single public origin for all clients** (web, iOS,
 agents, OAuth). It is a Vercel `web` (Next.js) project that **proxies** `/mcp`,
-`/v1/*`, `/oauth/*`, `/connectors/*`, and `/.well-known/*` to the real backend on
+`/v1/*`, `/oauth/*`, `/connectors/*`, `/webhooks/stripe`, and `/.well-known/*` to the real backend on
 **Railway** (`ohmyself-api-production.up.railway.app`), which runs the `server/`
 code (REST + MCP + OAuth + crons).
 

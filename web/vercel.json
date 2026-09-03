@@ -23,6 +23,10 @@
       "destination": "https://ohmyself-api-production.up.railway.app/connectors/:path*"
     },
     {
+      "source": "/webhooks/stripe",
+      "destination": "https://ohmyself-api-production.up.railway.app/webhooks/stripe"
+    },
+    {
       "source": "/.well-known/:path*",
       "destination": "https://ohmyself-api-production.up.railway.app/.well-known/:path*"
     }

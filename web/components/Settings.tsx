@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, siteBase } from "@/lib/api";
-import type { ApiToken, FriendVisibility, Me, SharedByMe, SharedWithMe, Space, UserSummary, Visibility } from "@/lib/types";
+import type { ApiToken, BillingStatus, FriendVisibility, Me, SharedByMe, SharedWithMe, Space, UserSummary, Visibility } from "@/lib/types";
 import { Sources } from "./Sources";
 import { SpaceSettings } from "./SpaceSettings";
+import { BillingPanel } from "./BillingPanel";
 
-type TabKey = "space" | "mcp" | "connectors" | "friends";
+type TabKey = "space" | "mcp" | "connectors" | "friends" | "billing";
 
 interface Props {
   token: string;
@@ -44,6 +45,7 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
     { key: "mcp", label: "MCP & tokens" },
     { key: "connectors", label: "Connectors" },
     { key: "friends", label: "Friends" },
+    { key: "billing", label: "Billing" },
   ];
   const [tab, setTab] = useState<TabKey>(initialTab ?? "mcp");
   const [tokens, setTokens] = useState<ApiToken[]>([]);
@@ -55,6 +57,7 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
   const [error, setError] = useState<string | null>(null);
 
   const [me, setMe] = useState<Me | null>(null);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [handleInput, setHandleInput] = useState("");
   const [handleSaving, setHandleSaving] = useState(false);
   const [handleError, setHandleError] = useState<string | null>(null);
@@ -85,7 +88,14 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
       .then((m) => {
         setMe(m);
         setHandleInput(m.username ?? "");
+        if (m.billing) setBilling(m.billing);
       })
+      .catch(() => {
+        /* non-fatal */
+      });
+    api
+      .billingStatus(token)
+      .then(setBilling)
       .catch(() => {
         /* non-fatal */
       });
@@ -526,6 +536,21 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
           {/* Claude / MCP setup */}
           {tab === "mcp" && (
           <section>
+            {billing?.enforced && !billing.pro && (
+              <div className="mb-6 rounded-xl border border-border bg-brand-weak/40 p-4">
+                <p className="text-sm font-semibold text-ink">Connecting an agent is Pro</p>
+                <p className="mt-1 text-sm text-muted">
+                  The web brain stays free. Pro unlocks MCP, company wikis, connectors, and deep
+                  research.
+                </p>
+                <a
+                  href="/upgrade"
+                  className="mt-3 inline-flex rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:opacity-95"
+                >
+                  Upgrade to Pro
+                </a>
+              </div>
+            )}
             <h3 className="text-sm font-semibold text-ink">Add to Claude Desktop</h3>
             <p className="mt-1 text-sm text-muted">
               Paste this into your Claude Desktop config (Settings → Developer → Edit config),
@@ -537,6 +562,27 @@ export function Settings({ token, open, onClose, initialTab, activeSpace, onSpac
               <span className="font-mono">Authorization: Bearer &lt;token&gt;</span>.
             </p>
           </section>
+          )}
+
+          {tab === "billing" && (
+            <section>
+              <h3 className="text-sm font-semibold text-ink">Billing</h3>
+              {billing?.enforced ? (
+                <>
+                  <p className="mt-1 text-sm text-muted">
+                    Hosted Pro on ohmyself.ai. Self-hosting the open-source server is always free.
+                  </p>
+                  <div className="mt-4">
+                    <BillingPanel token={token} billing={billing} />
+                  </div>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-muted">
+                  This server is not charging. Paywalls only apply on the hosted product when
+                  enforcement is on.
+                </p>
+              )}
+            </section>
           )}
         </div>
       </div>

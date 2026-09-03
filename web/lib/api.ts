@@ -22,6 +22,7 @@ import type {
   SyncResult,
   UserSummary,
   Visibility,
+  BillingStatus,
 } from "./types.js";
 
 function base(): string {
@@ -62,11 +63,17 @@ function encPath(path: string): string {
  *  "server is down" — a 401 means sign in again, anything else is retryable. */
 export class ApiError extends Error {
   status: number | null;
-  constructor(message: string, status: number | null) {
+  upgradeUrl?: string;
+  constructor(message: string, status: number | null, upgradeUrl?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.upgradeUrl = upgradeUrl;
   }
+}
+
+export function isPaymentRequired(e: unknown): e is ApiError {
+  return e instanceof ApiError && e.status === 402;
 }
 
 /** A 401 that survived the token refresh below — the session is really gone. */
@@ -150,13 +157,15 @@ async function call<T>(
   }
   if (!res.ok) {
     let msg = `${res.status}`;
+    let upgradeUrl: string | undefined;
     try {
-      const j = (await res.json()) as { error?: string };
+      const j = (await res.json()) as { error?: string; upgrade_url?: string };
       if (j.error) msg = j.error;
+      if (j.upgrade_url) upgradeUrl = j.upgrade_url;
     } catch {
       /* ignore */
     }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, upgradeUrl);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -349,6 +358,17 @@ export const api = {
     call<{ revoked: string }>(`/v1/tokens/${id}`, token, { method: "DELETE" }),
 
   me: (token: string) => call<Me>("/v1/me", token),
+
+  billingStatus: (token: string) => call<BillingStatus>("/v1/billing/status", token),
+
+  billingCheckout: (token: string, plan: "monthly" | "annual") =>
+    call<{ url: string }>("/v1/billing/checkout", token, {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+
+  billingPortal: (token: string) =>
+    call<{ url: string }>("/v1/billing/portal", token, { method: "POST" }),
 
   // ── Spaces (personal "self" + company brains) ─────────────────────────────
   listSpaces: (token: string) =>

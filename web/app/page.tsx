@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrainMap } from "@/components/BrainMap";
 import type { IndexedNote } from "@/lib/types";
+import { PRICING } from "@/lib/pricing";
 
 const GITHUB = "https://github.com/juanchoabdon/ohmyself";
 
@@ -113,6 +114,7 @@ export default function Landing() {
         <HowItWorks />
         <BrainPreview />
         <Features />
+        <Pricing />
         <Privacy />
         <FinalCta />
         <Footer />
@@ -242,6 +244,9 @@ function Nav() {
           </a>
           <a href="#features" className="transition-colors hover:text-ink">
             Features
+          </a>
+          <a href="#pricing" className="transition-colors hover:text-ink">
+            Pricing
           </a>
           <a href="#privacy" className="transition-colors hover:text-ink">
             Privacy
@@ -945,6 +950,58 @@ function Features() {
   );
 }
 
+/* ---------------- Pricing ---------------- */
+
+function Pricing() {
+  const startup = useMode() === "startup";
+  return (
+    <section id="pricing" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
+      <div className="reveal mx-auto max-w-2xl text-center">
+        <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
+          Free to start. Pro when you connect agents.
+        </h2>
+        <p className="mt-3 text-pretty text-muted">
+          {startup
+            ? "The wiki is free on the web. Pro is for MCP, team wikis, connectors, and deep research on the hosted product."
+            : "Your second self on the web is free. Pro is for MCP, company wikis, connectors, and deep research on ohmyself.ai."}{" "}
+          Self-hosting the MIT server stays free.
+        </p>
+      </div>
+      <div className="mx-auto mt-12 grid max-w-3xl gap-4 md:grid-cols-2">
+        <div className="reveal rounded-2xl border border-border bg-surface/90 p-6 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-muted">Free</p>
+          <p className="mt-2 font-heading text-3xl font-bold tracking-tight">$0</p>
+          <ul className="mt-4 space-y-2 text-sm text-ink">
+            <li>Personal brain on the web</li>
+            <li>Browse, edit, search, privacy levels</li>
+            <li>Self-host anytime</li>
+          </ul>
+        </div>
+        <div className="reveal rounded-2xl border border-brand bg-surface p-6 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-brand-ink">Pro</p>
+          <p className="mt-2 font-heading text-3xl font-bold tracking-tight">
+            {PRICING.monthly.label}
+            <span className="text-lg font-medium text-muted">/{PRICING.monthly.period}</span>
+          </p>
+          <p className="mt-1 text-sm text-muted">or {PRICING.annual.label}/{PRICING.annual.period} — {PRICING.annual.save}</p>
+          <ul className="mt-4 space-y-2 text-sm text-ink">
+            <li>Connect Claude, ChatGPT, Cursor via MCP</li>
+            <li>Company wikis</li>
+            <li>Connectors and meeting distill</li>
+            <li>Deep research and semantic map</li>
+          </ul>
+          <Link
+            href="/upgrade"
+            className="mt-6 inline-flex rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-95"
+          >
+            Upgrade
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ---------------- Privacy ---------------- */
 
 function Privacy() {
@@ -1055,9 +1112,20 @@ function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-5 py-8 text-sm text-muted sm:flex-row">
         <Logo className="text-base" />
         <p>{startup ? "Your company's brain — view it, search it, ask it." : "Your second self — view it, search it, ask it."}</p>
-        <a href={GITHUB} target="_blank" rel="noreferrer" className="transition-colors hover:text-ink">
-          Open source
-        </a>
+        <div className="flex gap-4">
+          <Link href="/upgrade" className="transition-colors hover:text-ink">
+            Pricing
+          </Link>
+          <Link href="/terms" className="transition-colors hover:text-ink">
+            Terms
+          </Link>
+          <Link href="/privacy" className="transition-colors hover:text-ink">
+            Privacy
+          </Link>
+          <a href={GITHUB} target="_blank" rel="noreferrer" className="transition-colors hover:text-ink">
+            Open source
+          </a>
+        </div>
       </div>
     </footer>
   );
