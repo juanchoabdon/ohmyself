@@ -217,6 +217,46 @@ export interface Me {
   via?: string;
   username: string | null;
   displayName: string | null;
+  billing?: BillingStatus;
+}
+
+export type EntitlementStatus =
+  | "free"
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "canceled"
+  | "grandfathered"
+  | "lifetime";
+
+export type HostedTier = "free" | "basic" | "pro";
+
+export interface Entitlement {
+  userId: string;
+  status: EntitlementStatus;
+  plan: "monthly" | "annual" | null;
+  tier: HostedTier | null;
+  source: string | null;
+  currentPeriodEnd: string | null;
+  trialEnd: string | null;
+  grandfatherUntil: string | null;
+  cancelAtPeriodEnd: boolean;
+  hasCustomer: boolean;
+}
+
+export interface BillingUsage {
+  notes: number;
+  limit: number | null;
+}
+
+export interface BillingStatus {
+  enforced: boolean;
+  pro: boolean;
+  paid: boolean;
+  tier: HostedTier;
+  usage: BillingUsage | null;
+  entitlement: Entitlement | null;
+  upgradeUrl: string;
 }
 
 /** Progress of a server-side historical backfill (fire-and-forget). */

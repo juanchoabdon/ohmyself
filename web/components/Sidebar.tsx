@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Category, IndexedNote, Visibility } from "@/lib/types";
 import { VisibilityBadge } from "./VisibilityBadge";
+import { NoteUsageBar } from "./NoteCap";
 
 interface Props {
   notes: IndexedNote[];
@@ -30,6 +31,7 @@ interface Props {
   onCreateInside?: (folder: string | null) => void;
   onRenameFolder?: (folder: string) => void;
   onDeleteFolder?: (folder: string) => void;
+  usage?: { used: number; limit: number; planName: string } | null;
 }
 
 // Pillars that live in the brain (queried by planning skills / MCP) but are not
@@ -172,6 +174,7 @@ export function Sidebar({
   onCreateInside,
   onRenameFolder,
   onDeleteFolder,
+  usage,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -408,6 +411,11 @@ export function Sidebar({
             <PlusIcon />
             New entry
           </button>
+        )}
+        {usage && (
+          <div className="mb-2.5">
+            <NoteUsageBar used={usage.used} limit={usage.limit} planName={usage.planName} />
+          </div>
         )}
         <div ref={filtersRef} className="relative flex items-center gap-2">
           <div className="relative min-w-0 flex-1">

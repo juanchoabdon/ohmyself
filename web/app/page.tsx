@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { createContext, useContext, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { siClaude, siGooglecalendar, siNotion, siGmail, siWhatsapp } from "simple-icons";
 import { supabase } from "@/lib/supabaseClient";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { BrainMap } from "@/components/BrainMap";
 import type { IndexedNote } from "@/lib/types";
+import { ANNUAL_SAVE, type BillingInterval } from "@/lib/pricing";
+import { IntervalToggle, PlanPicker } from "@/components/PlanPicker";
 
 const GITHUB = "https://github.com/juanchoabdon/ohmyself";
 
@@ -113,6 +116,7 @@ export default function Landing() {
         <HowItWorks />
         <BrainPreview />
         <Features />
+        <Pricing />
         <Privacy />
         <FinalCta />
         <Footer />
@@ -242,6 +246,9 @@ function Nav() {
           </a>
           <a href="#features" className="transition-colors hover:text-ink">
             Features
+          </a>
+          <a href="#pricing" className="transition-colors hover:text-ink">
+            Pricing
           </a>
           <a href="#privacy" className="transition-colors hover:text-ink">
             Privacy
@@ -945,6 +952,41 @@ function Features() {
   );
 }
 
+/* ---------------- Pricing ---------------- */
+
+function Pricing() {
+  const startup = useMode() === "startup";
+  const router = useRouter();
+  const [interval, setInterval] = useState<BillingInterval>("annual");
+  return (
+    <section id="pricing" className="mx-auto max-w-6xl scroll-mt-20 px-5 py-20">
+      <div className="reveal mx-auto max-w-2xl text-center">
+        <h2 className="font-heading text-balance text-3xl font-bold tracking-tight md:text-4xl">
+          Free to start. Pay when you need more notes.
+        </h2>
+        <p className="mt-3 text-pretty text-muted">
+          {startup
+            ? "The wiki starts free. Basic connects your agents. Pro is meetings and more wikis."
+            : "Your second self on the web is free for 100 notes. Basic is 2,000 notes plus your AI apps. Pro is unlimited, with meetings and company wikis."}{" "}
+          Yearly is {ANNUAL_SAVE}. Self-hosting stays free.
+        </p>
+      </div>
+      <div className="reveal mx-auto mt-8 flex justify-center">
+        <IntervalToggle value={interval} onChange={setInterval} />
+      </div>
+      <div className="mx-auto mt-8 max-w-5xl">
+        <PlanPicker
+          interval={interval}
+          highlight="basic"
+          onChoose={(tier) => {
+            router.push(`/upgrade?from=${tier}`);
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 /* ---------------- Privacy ---------------- */
 
 function Privacy() {
@@ -1055,9 +1097,20 @@ function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-5 py-8 text-sm text-muted sm:flex-row">
         <Logo className="text-base" />
         <p>{startup ? "Your company's brain — view it, search it, ask it." : "Your second self — view it, search it, ask it."}</p>
-        <a href={GITHUB} target="_blank" rel="noreferrer" className="transition-colors hover:text-ink">
-          Open source
-        </a>
+        <div className="flex gap-4">
+          <Link href="/upgrade" className="transition-colors hover:text-ink">
+            Pricing
+          </Link>
+          <Link href="/terms" className="transition-colors hover:text-ink">
+            Terms
+          </Link>
+          <Link href="/privacy" className="transition-colors hover:text-ink">
+            Privacy
+          </Link>
+          <a href={GITHUB} target="_blank" rel="noreferrer" className="transition-colors hover:text-ink">
+            Open source
+          </a>
+        </div>
       </div>
     </footer>
   );

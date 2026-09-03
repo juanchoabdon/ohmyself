@@ -217,6 +217,8 @@ export class Brain {
     if (allowed && !allowed.includes(visibility)) {
       throw new ForbiddenError(`your scope can't write ${visibility} notes`);
     }
+    const { requireNoteRoom } = await import("./billing.js");
+    await requireNoteRoom(userId);
     const path =
       input.path?.trim().replace(/^\/+/, "") ??
       `${folderForType(config, type)}/${slugify(input.title)}.md`;

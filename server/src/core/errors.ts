@@ -45,3 +45,19 @@ export class ConflictError extends BrainError {
     super(message, 409);
   }
 }
+
+/** Hosted plan is required. Self-host and OMS_ENFORCE_PRO=false never throw this. */
+export class PaymentRequiredError extends BrainError {
+  constructor(
+    message = "A paid plan is required for this",
+    public upgradeUrl = "https://www.ohmyself.ai/upgrade",
+    public extras: {
+      code?: "payment_required" | "note_cap";
+      used?: number;
+      limit?: number;
+      suggestedTier?: "basic" | "pro";
+    } = {},
+  ) {
+    super(message, 402);
+  }
+}

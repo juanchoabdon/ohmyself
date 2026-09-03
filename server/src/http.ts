@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createApp } from "./api/app.js";
 import { resolveAuth } from "./auth.js";
-import { BrainError } from "./core/errors.js";
+import { BrainError, PaymentRequiredError } from "./core/errors.js";
+import { requireBasic } from "./core/billing.js";
 import { buildMcpServer } from "./mcp/tools.js";
 import { checkRateLimit } from "./middleware/rateLimit.js";
 
@@ -174,6 +175,25 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<voi
     // WWW-Authenticate header that points at the protected-resource metadata.
     if (status === 401) send401Challenge(res, message);
     else sendJson(res, status, { error: message });
+    return;
+  }
+
+  try {
+    await requireBasic(auth.userId, auth.via);
+  } catch (err) {
+    if (err instanceof PaymentRequiredError) {
+      sendJson(res, 402, {
+        error: err.message,
+        code: err.extras.code ?? "payment_required",
+        upgrade_url: err.upgradeUrl,
+        used: err.extras.used,
+        limit: err.extras.limit,
+        suggested_tier: err.extras.suggestedTier,
+      });
+      return;
+    }
+    const status = err instanceof BrainError ? err.status : 500;
+    sendJson(res, status, { error: err instanceof Error ? err.message : "forbidden" });
     return;
   }
 

@@ -70,6 +70,16 @@ export { fetchRemoteMedia } from "./fetch-remote-media.js";
 export { createToken, listTokens, revokeToken, lookupToken } from "./tokens.js";
 export type { ApiTokenRow } from "./tokens.js";
 export {
+  billingEnforced,
+  getBillingStatus,
+  isPro,
+  requireBasic,
+  requirePro,
+  requireNoteRoom,
+  upgradeUrl,
+} from "./billing.js";
+export type { BillingStatus, Entitlement, BillingPlan, HostedTier } from "./billing.js";
+export {
   registerClient,
   getClient,
   createAuthCode,

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Visibility } from "@/lib/types";
+import { NoteCapMessage } from "@/components/NoteCap";
 
 /** Shared modal shell: centered card, backdrop, Escape to close. */
 function Modal({
@@ -154,6 +155,7 @@ export function CreateEntryDialog({
   defaultType,
   busy = false,
   error,
+  cap,
   onSubmit,
   onClose,
 }: {
@@ -161,6 +163,7 @@ export function CreateEntryDialog({
   defaultType: string;
   busy?: boolean;
   error?: string | null;
+  cap?: { tier: "free" | "basic" | "pro"; used: number; limit: number } | null;
   onSubmit: (values: CreateEntryValues) => void;
   onClose: () => void;
 }) {
@@ -170,8 +173,16 @@ export function CreateEntryDialog({
   const [body, setBody] = useState("");
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    ref.current?.focus();
-  }, []);
+    if (!cap) ref.current?.focus();
+  }, [cap]);
+
+  if (cap) {
+    return (
+      <Modal title="Out of notes" onClose={onClose}>
+        <NoteCapMessage tier={cap.tier} used={cap.used} limit={cap.limit} onDismiss={onClose} />
+      </Modal>
+    );
+  }
 
   return (
     <Modal title={folder ? `New entry in ${folder}` : "New entry"} onClose={onClose}>

@@ -19,6 +19,9 @@ export default function AuthCallback() {
 
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const query = new URLSearchParams(window.location.search);
+    const rawNext = query.get("next");
+    const next =
+      rawNext === "/upgrade" || rawNext?.startsWith("/upgrade?") ? rawNext : "/app";
     const urlError =
       hash.get("error_description") ||
       query.get("error_description") ||
@@ -32,7 +35,7 @@ export default function AuthCallback() {
 
     function done(session: unknown) {
       if (!active || !session) return false;
-      router.replace("/app");
+      router.replace(next);
       return true;
     }
 

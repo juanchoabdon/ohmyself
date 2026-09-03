@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   description: "Terms for using ohmyself!.",
 };
 
-const UPDATED = "June 28, 2026";
+const UPDATED = "September 3, 2026";
 const SUPPORT = "support@ohmyself.ai";
 
 export default function TermsPage() {
@@ -35,6 +35,13 @@ export default function TermsPage() {
           The service is provided on an &ldquo;as is&rdquo; and &ldquo;as available&rdquo; basis,
           without warranties of any kind. We may update or discontinue features, and we may update
           these terms; continued use means you accept the changes.
+        </Section>
+        <Section title="Hosted plans">
+          ohmyself.ai may offer a free hosted tier and paid Basic and Pro subscriptions billed
+          through Stripe. Basic is required to connect agents over MCP. Pro is required for company
+          wikis and connectors on the hosted product. Each paid plan includes a note cap (or
+          unlimited notes on Pro). You can cancel anytime in the billing portal. The MIT-licensed
+          code remains free to self-host; self-hosted instances are not billed by us.
         </Section>
         <Section title="Limitation of liability">
           To the maximum extent permitted by law, ohmyself! is not liable for any indirect,

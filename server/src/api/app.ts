@@ -52,7 +52,9 @@ import {
   type Scope,
   type Visibility,
 } from "../core/index.js";
-import { BadRequestError, BrainError, ConflictError, ForbiddenError } from "../core/errors.js";
+import { BadRequestError, BrainError, ConflictError, ForbiddenError, PaymentRequiredError } from "../core/errors.js";
+import { getBillingStatus, requireBasic, requirePro } from "../core/billing.js";
+import { registerBillingRoutes, registerBillingWebhook } from "./billing.js";
 import { subscribeBrainEvents } from "../core/events.js";
 import { embedTexts, embeddingsEnabled, semanticEdges } from "../core/embeddings.js";
 import { connectors, getConnector } from "../connectors/index.js";
@@ -174,6 +176,7 @@ export function createApp(): Hono<Env> {
 
   // OAuth 2.1 authorization server + discovery (public; no /v1 auth guard).
   registerOAuth(app);
+  registerBillingWebhook(app);
 
   // Auth for everything under /v1
   app.use("/v1/*", async (c, next) => {
@@ -189,6 +192,7 @@ export function createApp(): Hono<Env> {
   app.get("/v1/me", async (c) => {
     const auth = c.get("auth");
     const profile = await getProfileSummary(auth.userId);
+    const billing = await getBillingStatus(auth.userId);
     return c.json({
       userId: auth.userId,
       spaceId: auth.spaceId,
@@ -199,8 +203,11 @@ export function createApp(): Hono<Env> {
       via: auth.via,
       username: profile?.username ?? null,
       displayName: profile?.displayName ?? null,
+      billing,
     });
   });
+
+  registerBillingRoutes(app);
 
   app.put("/v1/me/username", async (c) => {
     const auth = c.get("auth");
@@ -231,6 +238,7 @@ export function createApp(): Hono<Env> {
   app.post("/v1/tokens", async (c) => {
     const auth = c.get("auth");
     requireJwt(auth);
+    await requireBasic(auth.userId);
     const body = (await c.req.json().catch(() => ({}))) as { name?: string; scope?: string };
     const scope: Scope = isScope(body.scope) ? body.scope : "secret";
     const { token, row } = await createToken(auth.userId, (body.name ?? "").trim() || "token", scope);
@@ -292,6 +300,7 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireJwt(auth);
     requireWrite(auth);
+    await requirePro(auth.userId);
     const body = (await c.req.json().catch(() => ({}))) as {
       name?: string;
       slug?: string;
@@ -838,6 +847,7 @@ export function createApp(): Hono<Env> {
   // (never full bodies), respects scope, and caches vectors by content hash.
   app.get("/v1/graph/semantic", async (c) => {
     const auth = c.get("auth");
+    await requirePro(auth.userId, auth.via);
     if (!embeddingsEnabled()) return c.json({ enabled: false, edges: [] });
     const allowed = effectiveAllowed(auth);
     const notes = await brain.listNotes(auth.spaceId, { allowed, limit: 400 });
@@ -907,6 +917,7 @@ export function createApp(): Hono<Env> {
   app.post("/v1/connections/:id/sync", async (c) => {
     const auth = c.get("auth");
     requireSpaceAdmin(auth);
+    await requirePro(auth.userId);
     const conn = await getConnectionWithCredential(auth.spaceId, c.req.param("id"));
     if (!conn) throw new BadRequestError("connection not found");
     const body = (await c.req.json().catch(() => ({}))) as {
@@ -936,6 +947,7 @@ export function createApp(): Hono<Env> {
   app.post("/v1/connections/:id/backfill", async (c) => {
     const auth = c.get("auth");
     requireSpaceAdmin(auth);
+    await requirePro(auth.userId);
     const conn = await getConnectionWithCredential(auth.spaceId, c.req.param("id"));
     if (!conn) throw new BadRequestError("connection not found");
     const body = (await c.req.json().catch(() => ({}))) as {
@@ -956,6 +968,7 @@ export function createApp(): Hono<Env> {
   app.get("/v1/connectors/google/authorize", async (c) => {
     const auth = c.get("auth");
     requireSpaceAdmin(auth);
+    await requirePro(auth.userId);
     if (!googleAuthConfigured()) {
       throw new BadRequestError("Google connector is not configured (set GOOGLE_CLIENT_ID/SECRET)");
     }
@@ -1008,6 +1021,7 @@ export function createApp(): Hono<Env> {
   app.post("/v1/connectors/:id/pull", async (c) => {
     const auth = c.get("auth");
     requireCompanyWrite(auth);
+    await requirePro(auth.userId);
     const connector = getConnector(c.req.param("id"));
     if (!connector) throw new BadRequestError(`unknown connector: ${c.req.param("id")}`);
     const options = await c.req.json().catch(() => ({}));
@@ -1045,6 +1059,19 @@ export function createApp(): Hono<Env> {
             "Someone else updated this note first. Merge your changes into markdown, then retry with base_revision set to current_revision.",
         },
         409,
+      );
+    }
+    if (err instanceof PaymentRequiredError) {
+      return c.json(
+        {
+          error: err.message,
+          code: err.extras.code ?? "payment_required",
+          upgrade_url: err.upgradeUrl,
+          used: err.extras.used,
+          limit: err.extras.limit,
+          suggested_tier: err.extras.suggestedTier,
+        },
+        402,
       );
     }
     if (err instanceof BrainError) return c.json({ error: err.message }, err.status as 400);
