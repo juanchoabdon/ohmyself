@@ -5,9 +5,11 @@ import { seedSpaceConfig } from "./config-store.js";
 import { nameOf, resolveIdentifier, usersById } from "./users.js";
 import type { SpaceRole } from "./types.js";
 
-export type SpaceKind = "self" | "company";
+export type SpaceKind = "self" | "company" | "relationship";
 
-/** A brain the user can act in: their personal "self" space or a company space. */
+/** A brain the user can act in: their personal "self" space, a company space,
+ *  or a `relationship` space — the shared brain of one external room (bonds),
+ *  keyed by `externalKey` and owned by the machine account that provisioned it. */
 export interface Space {
   id: string;
   kind: SpaceKind;
@@ -16,6 +18,8 @@ export interface Space {
   ownerUserId: string;
   themeColor: string | null;
   logoUrl: string | null;
+  /** The external system's stable key (e.g. a Matrix room id) — relationship only. */
+  externalKey?: string | null;
   /** The caller's role — present when the space is listed for a specific user. */
   role?: SpaceRole;
 }
@@ -28,6 +32,7 @@ interface SpaceRow {
   owner_user_id: string;
   theme_color: string | null;
   logo_url: string | null;
+  external_key?: string | null;
 }
 
 function mapSpace(r: SpaceRow, role?: SpaceRole): Space {
@@ -39,11 +44,12 @@ function mapSpace(r: SpaceRow, role?: SpaceRole): Space {
     ownerUserId: r.owner_user_id,
     themeColor: r.theme_color,
     logoUrl: r.logo_url,
+    externalKey: r.external_key ?? null,
     ...(role ? { role } : {}),
   };
 }
 
-const SPACE_COLS = "id, kind, slug, name, owner_user_id, theme_color, logo_url";
+const SPACE_COLS = "id, kind, slug, name, owner_user_id, theme_color, logo_url, external_key";
 
 export async function getSpace(spaceId: string): Promise<Space | null> {
   const sb = serviceClient();
@@ -82,8 +88,9 @@ export async function listSpacesForUser(userId: string): Promise<Space[]> {
       return row ? mapSpace(row, r.role) : null;
     })
     .filter((s): s is Space => s !== null);
+  const rank: Record<SpaceKind, number> = { self: 0, company: 1, relationship: 2 };
   spaces.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "self" ? -1 : 1;
+    if (a.kind !== b.kind) return rank[a.kind] - rank[b.kind];
     return a.name.localeCompare(b.name);
   });
   return spaces;
@@ -138,6 +145,74 @@ export async function createCompanySpace(input: CreateSpaceInput): Promise<Space
 
   await seedSpaceConfig(space.id, "company");
   return space;
+}
+
+export interface CreateRelationshipSpaceInput {
+  ownerUserId: string;
+  /** Stable key of the room in the external system (e.g. a Matrix room id). */
+  externalKey: string;
+  name: string;
+}
+
+/** The relationship space for an external key, or null. */
+export async function getSpaceByExternalKey(externalKey: string): Promise<Space | null> {
+  const key = externalKey.trim();
+  if (!key) return null;
+  const sb = serviceClient();
+  const { data, error } = await sb
+    .from("spaces")
+    .select(SPACE_COLS)
+    .eq("external_key", key)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapSpace(data as SpaceRow);
+}
+
+/** Create (or return) the relationship space for one external room. Idempotent
+ *  by `externalKey`: provisioning is fired by room-lifecycle events and by
+ *  backfill sweeps, so double calls must converge on the same space. The owner
+ *  is the machine account doing the provisioning; humans in the room are NOT
+ *  members here — their writes arrive attributed via pass-through labels. */
+export async function createRelationshipSpace(
+  input: CreateRelationshipSpaceInput,
+): Promise<{ space: Space; created: boolean }> {
+  const externalKey = input.externalKey.trim();
+  if (!externalKey) throw new BadRequestError("external_key is required");
+  const name = input.name.trim() || externalKey;
+
+  const existing = await getSpaceByExternalKey(externalKey);
+  if (existing) return { space: existing, created: false };
+
+  const sb = serviceClient();
+  const { data, error } = await sb
+    .from("spaces")
+    .insert({
+      kind: "relationship",
+      slug: null,
+      name,
+      owner_user_id: input.ownerUserId,
+      external_key: externalKey,
+    })
+    .select(SPACE_COLS)
+    .single();
+  if (error || !data) {
+    // A concurrent provision can win the unique-index race; converge on it.
+    const raced = await getSpaceByExternalKey(externalKey);
+    if (raced) return { space: raced, created: false };
+    throw new Error(error?.message ?? "could not create relationship space");
+  }
+  const space = mapSpace(data as SpaceRow, "owner");
+
+  const { error: memberErr } = await sb
+    .from("space_members")
+    .upsert(
+      { space_id: space.id, user_id: input.ownerUserId, role: "owner" },
+      { onConflict: "space_id,user_id" },
+    );
+  if (memberErr) throw new Error(memberErr.message);
+
+  await seedSpaceConfig(space.id, "relationship");
+  return { space, created: true };
 }
 
 export interface UpdateSpaceInput {

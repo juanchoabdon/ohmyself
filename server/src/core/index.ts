@@ -32,6 +32,8 @@ export {
   resolveRole,
   listSpacesForUser,
   createCompanySpace,
+  createRelationshipSpace,
+  getSpaceByExternalKey,
   updateSpace,
   listMembers,
   addMember,
@@ -39,7 +41,29 @@ export {
   removeMember,
   listSelfSpaceIds,
 } from "./spaces.js";
-export type { Space, SpaceKind, CreateSpaceInput, UpdateSpaceInput, SpaceMember } from "./spaces.js";
+export type {
+  Space,
+  SpaceKind,
+  CreateSpaceInput,
+  CreateRelationshipSpaceInput,
+  UpdateSpaceInput,
+  SpaceMember,
+} from "./spaces.js";
+export {
+  scaffoldRelationshipCocina,
+  ingestTranscriptDeltas,
+  pendingJournalDays,
+  readDeltas,
+  markDeltasDigested,
+  KEEPER_ATTRIBUTION,
+} from "./relationship.js";
+export type {
+  TranscriptMessage,
+  IngestDeltasResult,
+  PendingDay,
+  DeltaRow,
+  ScaffoldInput,
+} from "./relationship.js";
 export { serviceClient, brainBucket, logoBucket, assetBucket } from "./supabase.js";
 export {
   createAsset,

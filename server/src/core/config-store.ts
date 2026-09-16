@@ -1,4 +1,10 @@
-import { DEFAULT_CONFIG, DEFAULT_COMPANY_CONFIG, loadConfig, type UserConfig } from "./config.js";
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_COMPANY_CONFIG,
+  DEFAULT_RELATIONSHIP_CONFIG,
+  loadConfig,
+  type UserConfig,
+} from "./config.js";
 import { serviceClient } from "./supabase.js";
 
 function usesSupabase(): boolean {
@@ -7,14 +13,18 @@ function usesSupabase(): boolean {
 
 /** The default taxonomy for a space, chosen by its kind. */
 function defaultConfigForKind(kind: string | null | undefined): UserConfig {
-  return kind === "company" ? DEFAULT_COMPANY_CONFIG : DEFAULT_CONFIG;
+  if (kind === "company") return DEFAULT_COMPANY_CONFIG;
+  if (kind === "relationship") return DEFAULT_RELATIONSHIP_CONFIG;
+  return DEFAULT_CONFIG;
 }
 
-async function spaceKind(spaceId: string): Promise<"self" | "company" | null> {
+type SpaceKindValue = "self" | "company" | "relationship";
+
+async function spaceKind(spaceId: string): Promise<SpaceKindValue | null> {
   const sb = serviceClient();
   const { data, error } = await sb.from("spaces").select("kind").eq("id", spaceId).maybeSingle();
   if (error || !data) return null;
-  return (data as { kind: "self" | "company" }).kind;
+  return (data as { kind: SpaceKindValue }).kind;
 }
 
 /** The active taxonomy/config for a space. Falls back to the kind's default
@@ -68,6 +78,6 @@ export const setUserConfig = setSpaceConfig;
 
 /** Seed a fresh space with the default taxonomy for its kind. Used on company
  *  space creation so it opens pre-populated with the right sections. */
-export async function seedSpaceConfig(spaceId: string, kind: "self" | "company"): Promise<void> {
+export async function seedSpaceConfig(spaceId: string, kind: SpaceKindValue): Promise<void> {
   await setSpaceConfig(spaceId, defaultConfigForKind(kind));
 }

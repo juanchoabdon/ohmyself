@@ -10,6 +10,9 @@ import {
   requireSpaceAdmin,
   addMember,
   createCompanySpace,
+  createRelationshipSpace,
+  scaffoldRelationshipCocina,
+  ingestTranscriptDeltas,
   createToken,
   getProfileSummary,
   getSpace,
@@ -50,6 +53,7 @@ import {
   type AuthContext,
   type CommentActor,
   type Scope,
+  type TranscriptMessage,
   type Visibility,
 } from "../core/index.js";
 import { BadRequestError, BrainError, ConflictError, ForbiddenError, PaymentRequiredError } from "../core/errors.js";
@@ -298,16 +302,48 @@ export function createApp(): Hono<Env> {
   // is seeded automatically, so it opens pre-populated with the right sections.
   app.post("/v1/spaces", async (c) => {
     const auth = c.get("auth");
-    requireJwt(auth);
     requireWrite(auth);
-    await requirePro(auth.userId);
     const body = (await c.req.json().catch(() => ({}))) as {
+      kind?: string;
       name?: string;
       slug?: string;
       themeColor?: string | null;
       logoUrl?: string | null;
+      external_key?: string;
+      members?: string[];
     };
     if (!body.name?.trim()) throw new BadRequestError("space name is required");
+
+    // Relationship spaces (bonds ai-in-chat B2ext): machine-provisioned brains
+    // keyed by the external room id. Token callers are the POINT here (the
+    // bonds service account), so no JWT gate and no Pro gate — these are not
+    // human "company" seats. Idempotent by external_key: lifecycle events and
+    // backfill sweeps re-fire this call and must converge on one space.
+    if (body.kind === "relationship") {
+      if (!body.external_key?.trim()) {
+        throw new BadRequestError("external_key is required for a relationship space");
+      }
+      const { space, created } = await createRelationshipSpace({
+        ownerUserId: auth.userId,
+        externalKey: body.external_key,
+        name: body.name,
+      });
+      if (space.ownerUserId !== auth.userId) {
+        // The key exists but belongs to another provisioner: never leak it.
+        throw new ForbiddenError("this external_key is provisioned by another account");
+      }
+      const config = await getUserConfig(space.id);
+      const scaffold = await scaffoldRelationshipCocina(brain, space.id, config, {
+        name: body.name,
+        members: Array.isArray(body.members)
+          ? body.members.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+          : [],
+      });
+      return c.json({ space, created, scaffolded: scaffold.created }, created ? 201 : 200);
+    }
+
+    requireJwt(auth);
+    await requirePro(auth.userId);
     const space = await createCompanySpace({
       ownerUserId: auth.userId,
       name: body.name,
@@ -316,6 +352,52 @@ export function createApp(): Hono<Env> {
       logoUrl: body.logoUrl ?? null,
     });
     return c.json({ space }, 201);
+  });
+
+  // The keeper's inbox (bonds ai-in-chat B2ext): the room's owner system pushes
+  // message deltas for the ACTIVE relationship space (x-brain-space). Rows with
+  // an external id dedupe on replay, so historical backfill is just a replay.
+  // The journal job distills closed days on the scheduler — nothing is written
+  // to the vault here.
+  app.post("/v1/ingest/transcript", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    if (auth.role !== "owner" && auth.role !== "admin") {
+      throw new ForbiddenError("only the space's provisioner can push transcript deltas");
+    }
+    const space = await getSpace(auth.spaceId);
+    if (!space || space.kind !== "relationship") {
+      throw new BadRequestError("transcript deltas only exist for relationship spaces");
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { messages?: unknown };
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+      throw new BadRequestError("messages[] is required");
+    }
+    if (body.messages.length > 500) {
+      throw new BadRequestError("batch too large — push at most 500 messages per call");
+    }
+    const messages: TranscriptMessage[] = [];
+    for (const raw of body.messages) {
+      const m = raw as Record<string, unknown>;
+      if (typeof m.author !== "string" || !m.author.trim()) {
+        throw new BadRequestError("every message needs an author");
+      }
+      if (typeof m.body !== "string" || !m.body.trim()) {
+        throw new BadRequestError("every message needs a body");
+      }
+      const at = typeof m.at === "string" ? Date.parse(m.at) : NaN;
+      if (Number.isNaN(at)) throw new BadRequestError("every message needs a valid ISO `at`");
+      messages.push({
+        external_id: typeof m.external_id === "string" ? m.external_id : undefined,
+        author: m.author,
+        at: new Date(at).toISOString(),
+        kind: typeof m.kind === "string" ? m.kind : undefined,
+        body: m.body,
+        day: typeof m.day === "string" ? m.day : undefined,
+      });
+    }
+    const result = await ingestTranscriptDeltas(auth.spaceId, messages);
+    return c.json(result, 202);
   });
 
   // Rename / rebrand a space (name, accent color, logo). Owner only.
@@ -652,12 +734,13 @@ export function createApp(): Hono<Env> {
       links?: string[];
       path?: string;
       summary?: string;
+      author_label?: string;
     }>();
     if (body.visibility && !allowed.includes(body.visibility)) {
       throw new ForbiddenError("cannot create a note above your scope");
     }
     const config = await getUserConfig(auth.spaceId);
-    const attr = attributionFromAuth(auth, body.summary);
+    const attr = attributionFromAuth(auth, body.summary, body.author_label);
     // Pass `allowed` so a note can't exceed scope via its type's default visibility.
     const note = await brain.createNote(auth.spaceId, body, config, allowed, attr);
     return c.json({ path: note.path, meta: note.meta }, 201);
@@ -683,8 +766,10 @@ export function createApp(): Hono<Env> {
     requireCompanyWrite(auth);
     const allowed = effectiveAllowed(auth);
     const path = c.req.param("path");
-    const patch = await c.req.json<{ summary?: string; base_revision?: string } & Record<string, unknown>>();
-    const { summary, base_revision, ...notePatch } = patch;
+    const patch = await c.req.json<
+      { summary?: string; base_revision?: string; author_label?: string } & Record<string, unknown>
+    >();
+    const { summary, base_revision, author_label, ...notePatch } = patch;
     if (typeof notePatch.body === "string") {
       const { collabEnabled, isCollabRoomActive } = await import("../collab/index.js");
       if (collabEnabled() && isCollabRoomActive(auth.spaceId, path)) {
@@ -696,7 +781,7 @@ export function createApp(): Hono<Env> {
       const { body, deduped } = repairCollabBody(notePatch.body);
       if (deduped) notePatch.body = body;
     }
-    const attr = attributionFromAuth(auth, summary);
+    const attr = attributionFromAuth(auth, summary, author_label);
     const note = await brain.updateNote(
       auth.spaceId,
       path,
@@ -735,18 +820,19 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireCompanyWrite(auth);
     const allowed = effectiveAllowed(auth);
-    const { path, text, summary, base_revision } = await c.req.json<{
+    const { path, text, summary, base_revision, author_label } = await c.req.json<{
       path: string;
       text: string;
       summary?: string;
       base_revision?: string;
+      author_label?: string;
     }>();
     const note = await brain.appendToNote(
       auth.spaceId,
       path,
       text,
       allowed,
-      attributionFromAuth(auth, summary),
+      attributionFromAuth(auth, summary, author_label),
       base_revision,
     );
     return c.json({ appended: note.path, revision: note.revision });

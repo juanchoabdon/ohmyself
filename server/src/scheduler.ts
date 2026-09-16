@@ -22,6 +22,7 @@ import { embeddingsEnabled } from "./core/embeddings.js";
 import { GOOGLE_DRIVE_MEETINGS_PROVIDER } from "./connectors/google-auth.js";
 import { syncDriveConnection } from "./sync.js";
 import { DISCOVER_MAX, STALL_MS, detach, recordTickOutcome, runBackfillLoop } from "./backfill.js";
+import { journalTick } from "./journal.js";
 import { lintAllUsers, scheduledApplyMode } from "./lint.js";
 
 /** Keep person + concept profiles fresh. People: spaces with Drive sync.
@@ -159,5 +160,23 @@ export function startScheduler(): void {
     setTimeout(embedTickSafe, 60_000); // after boot, once the first sync settles
     setInterval(embedTickSafe, embMs);
     console.log(`[scheduler] embedding reconcile every ${Math.round(embMs / 60000)} min`);
+  }
+
+  // Relationship journals (bonds keeper, loop 2): distill closed days of
+  // transcript deltas. Naturally idle — only spaces with undigested closed
+  // days do any work, so the tick can be frequent. Disable with JOURNAL=off.
+  if (process.env.JOURNAL !== "off") {
+    const jMs = Number(process.env.JOURNAL_INTERVAL_MS ?? String(30 * 60 * 1000)) || 30 * 60 * 1000;
+    const journalTickSafe = () =>
+      journalTick()
+        .then((r) => {
+          if (r.written || r.skipped) {
+            console.log(`[journal] tick: ${r.written} written, ${r.skipped} noise day(s)`);
+          }
+        })
+        .catch((e) => console.error("[journal] tick failed:", (e as Error).message));
+    setTimeout(journalTickSafe, 45_000); // after boot, before the heavier ticks
+    setInterval(journalTickSafe, jMs);
+    console.log(`[scheduler] relationship journals every ${Math.round(jMs / 60000)} min`);
   }
 }
