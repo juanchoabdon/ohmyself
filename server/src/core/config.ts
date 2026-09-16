@@ -72,6 +72,25 @@ export const DEFAULT_COMPANY_CONFIG: UserConfig = {
   ],
 };
 
+/** Default taxonomy for a **relationship** space (bonds ai-in-chat B2ext) —
+ *  the shared brain of one room. Two zones: the engine-maintained "cocina"
+ *  (`journal/`, `memory/`, plus the root `_index.md` / `people.md` / `apps.md`
+ *  scaffolded at provisioning) defaults to `secret`; the members' visible
+ *  mini-wiki (`projects/`, `docs/`) defaults to `private`. The structure stays
+ *  open (D-N20): members and agents can add folders, lint tidies later. */
+export const DEFAULT_RELATIONSHIP_CONFIG: UserConfig = {
+  version: 1,
+  visibilityLevels: ["public", "private", "secret"],
+  defaultVisibility: "private",
+  noteTypes: [
+    { id: "journal", label: "Journal", folder: "journal", defaultVisibility: "secret" },
+    { id: "memory", label: "Memory", folder: "memory", defaultVisibility: "secret" },
+    { id: "project", label: "Project", folder: "projects", defaultVisibility: "private" },
+    { id: "doc", label: "Doc", folder: "docs", defaultVisibility: "private" },
+    { id: "note", label: "Note", folder: "docs", defaultVisibility: "private" },
+  ],
+};
+
 /** Parse/validate an arbitrary config object, falling back to defaults. */
 export function loadConfig(raw: unknown): UserConfig {
   if (raw == null || (typeof raw === "object" && Object.keys(raw).length === 0)) {
@@ -138,7 +157,11 @@ export function undeclaredPillar(config: UserConfig, path: string): string | nul
  *  space's own invention and stays free-form; one inside it has fixed meaning,
  *  so using it where the space doesn't declare it is a mistake. */
 const CANONICAL_TYPES = new Set(
-  [...DEFAULT_CONFIG.noteTypes, ...DEFAULT_COMPANY_CONFIG.noteTypes].map((t) => t.id),
+  [
+    ...DEFAULT_CONFIG.noteTypes,
+    ...DEFAULT_COMPANY_CONFIG.noteTypes,
+    ...DEFAULT_RELATIONSHIP_CONFIG.noteTypes,
+  ].map((t) => t.id),
 );
 
 /**
