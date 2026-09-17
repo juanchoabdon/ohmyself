@@ -329,8 +329,16 @@ export function createApp(): Hono<Env> {
         name: body.name,
       });
       if (space.ownerUserId !== auth.userId) {
-        // The key exists but belongs to another provisioner: never leak it.
-        throw new ForbiddenError("this external_key is provisioned by another account");
+        // The key exists under another owner. A provisioner with admin+ access
+        // ADOPTS the space (a pre-linked human brain — e.g. a company wiki
+        // that IS a room's brain, bonds D-N13) without rescaffolding its
+        // cocina: the brain already has its own structure. Anyone else:
+        // never leak that the key exists.
+        const role = await resolveRole(auth.userId, space.id);
+        if (role !== "owner" && role !== "admin") {
+          throw new ForbiddenError("this external_key is provisioned by another account");
+        }
+        return c.json({ space, created: false, scaffolded: [] }, 200);
       }
       const config = await getUserConfig(space.id);
       const scaffold = await scaffoldRelationshipCocina(brain, space.id, config, {
@@ -365,9 +373,11 @@ export function createApp(): Hono<Env> {
     if (auth.role !== "owner" && auth.role !== "admin") {
       throw new ForbiddenError("only the space's provisioner can push transcript deltas");
     }
+    // La marca de "brain de un room" es external_key, no el kind: un company
+    // wiki adoptado como brain de su room (bonds founders) también ingiere.
     const space = await getSpace(auth.spaceId);
-    if (!space || space.kind !== "relationship") {
-      throw new BadRequestError("transcript deltas only exist for relationship spaces");
+    if (!space || !space.externalKey) {
+      throw new BadRequestError("transcript deltas only exist for provisioned room brains");
     }
     const body = (await c.req.json().catch(() => ({}))) as { messages?: unknown };
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
