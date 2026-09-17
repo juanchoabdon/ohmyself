@@ -49,11 +49,7 @@ function mapSpace(r: SpaceRow, role?: SpaceRole): Space {
   };
 }
 
-// HOTFIX compat: `external_key` sale del select mientras la migración
-// 20260916200000_relationship_spaces no esté aplicada en prod — con la
-// columna en el select, /v1/spaces devolvía 500 y el switcher de spaces
-// moría. Al aplicar la migración, restaurar el campo aquí.
-const SPACE_COLS = "id, kind, slug, name, owner_user_id, theme_color, logo_url";
+const SPACE_COLS = "id, kind, slug, name, owner_user_id, theme_color, logo_url, external_key";
 
 export async function getSpace(spaceId: string): Promise<Space | null> {
   const sb = serviceClient();
