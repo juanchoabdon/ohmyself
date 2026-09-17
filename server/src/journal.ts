@@ -67,6 +67,7 @@ const JournalDaySchema = z.object({
       }),
     )
     .default([]),
+  relationship_update: z.string().default(""),
 });
 type JournalDay = z.infer<typeof JournalDaySchema>;
 
@@ -80,15 +81,30 @@ Rules:
 - memory_facts are only DURABLE facts worth remembering months later
   (preferences, dates, commitments, life facts) — not chit-chat. Skip facts the
   existing memory already covers.
-- Never produce psychological profiles or diagnoses of the members.
+- Beyond logging, DRAW CONCLUSIONS: you maintain the living picture of this
+  relationship in relationship_update. It holds practical, grounded inferences
+  a good friend would keep in mind — the situation (e.g. long distance: she is
+  in Colombia, he is in Mexico), each member's current context (city, job,
+  timezone), recurring dynamics, plans on the horizon, likes and rituals. Every
+  conclusion is an INFERENCE: state the evidence briefly and date it
+  ("(inferido, 2026-09-17: ella mencionó el vuelo a Bogotá)"). Prefer updating
+  or retiring a stale conclusion over piling up contradictions.
+- relationship_update is the FULL replacement body of the note (markdown, short
+  sections like "Situación", "Contexto de cada uno", "Dinámicas", "En el
+  horizonte"). Return "" when the day changes nothing about the picture.
+- Never produce psychological profiles or diagnoses of the members. Conclusions
+  are practical and situational, never clinical or judgmental.
 - Write in the conversation's dominant language.
 - A day of pure noise (stickers, "jaja", logistics with no substance) is
-  worth_keeping=false with everything else empty.
+  worth_keeping=false with everything else empty — but relationship_update may
+  still be non-empty if the noise reveals something practical (a location, a
+  plan).
 
 Answer ONLY a JSON object with keys: worth_keeping (boolean), headline (string,
 one line), summary (string, one short paragraph), moments (string[]),
 decisions ({text, kind: "decided"|"said"}[]), open_threads (string[]),
-memory_facts ({fact, attribution, kind: "decided"|"said"}[]).`;
+memory_facts ({fact, attribution, kind: "decided"|"said"}[]),
+relationship_update (string).`;
 
 function transcriptText(deltas: DeltaRow[]): string {
   const lines = deltas.map((d) => {
@@ -223,7 +239,7 @@ async function refreshPostal(
     ``,
     `${distilled.summary.trim()}${open}`,
     ``,
-    `Where to look: \`journal/\` for the day-by-day, \`memory/facts.md\` for durable facts, \`projects/\` and \`docs/\` for the shared zone.`,
+    `Where to look: \`journal/\` for the day-by-day, \`memory/facts.md\` for durable facts, \`memory/relationship.md\` for the living picture (situation, contexts, dynamics), \`projects/\` and \`docs/\` for the shared zone.`,
   ].join("\n");
   await writeNote(brain, spaceId, config, allowed, {
     path: "_index.md",
@@ -252,6 +268,10 @@ export async function distillJournalDay(
   const memory = await readNoteOrNull(brain, spaceId, "memory/facts.md", allowed);
   const memoryHead = memory ? memory.body.split("\n").slice(-60).join("\n") : "(empty)";
 
+  // The living picture — conclusions the keeper maintains about the
+  // relationship (JD 2026-09-17: "que empiece a sacar conclusiones").
+  const relationship = await readNoteOrNull(brain, spaceId, "memory/relationship.md", allowed);
+
   // A journal already written for this day means these are LATE deltas (an
   // edit, a backfill replay): integrate with it instead of losing the morning.
   const priorJournal = await readNoteOrNull(brain, spaceId, `journal/${day}.md`, allowed);
@@ -261,6 +281,9 @@ export async function distillJournalDay(
     ``,
     `Existing durable memory (tail):`,
     memoryHead,
+    ``,
+    `Current relationship picture (memory/relationship.md — update it via relationship_update only if this day changes it):`,
+    relationship ? relationship.body : "(empty — write the first picture if the day gives you enough)",
     ...(priorJournal
       ? [
           ``,
@@ -294,6 +317,18 @@ export async function distillJournalDay(
     });
     await appendMemoryFacts(brain, spaceId, config, allowed, day, distilled.memory_facts);
     await refreshPostal(brain, spaceId, config, allowed, day, distilled);
+  }
+
+  // The living picture updates even on "noise" days — a location or a plan
+  // can surface in an otherwise skippable day.
+  if (distilled.relationship_update.trim()) {
+    await writeNote(brain, spaceId, config, allowed, {
+      path: "memory/relationship.md",
+      type: "memory",
+      title: "La relación",
+      body: distilled.relationship_update.trim(),
+      summary: `relationship picture ${day}`,
+    });
   }
 
   await markDeltasDigested(spaceId, day);
