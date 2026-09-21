@@ -37,7 +37,7 @@ import {
   shareWith,
   updateMemberRole,
   updateSpace,
-  attributionFromAuth,
+  attributionWithPerson,
   cleanAgentLabel,
   createAsset,
   resolveAssets,
@@ -680,7 +680,7 @@ export function createApp(): Hono<Env> {
     const body = await c.req.json<{ path?: string; version?: string; summary?: string }>();
     if (!body.path?.trim()) throw new BadRequestError("path is required");
     if (!body.version?.trim()) throw new BadRequestError("version is required");
-    const attr = attributionFromAuth(auth, body.summary);
+    const attr = await attributionWithPerson(auth, body.summary);
     const note = await brain.restoreVersion(
       auth.spaceId,
       body.path,
@@ -761,7 +761,7 @@ export function createApp(): Hono<Env> {
       body.extra = { ...(body.extra ?? {}), author: body.author.trim() };
     }
     const config = await getUserConfig(auth.spaceId);
-    const attr = attributionFromAuth(auth, body.summary, body.author_label);
+    const attr = await attributionWithPerson(auth, body.summary, body.author_label, body.author);
     // Pass `allowed` so a note can't exceed scope via its type's default visibility.
     const note = await brain.createNote(auth.spaceId, body, config, allowed, attr);
     return c.json({ path: note.path, meta: note.meta }, 201);
@@ -802,7 +802,7 @@ export function createApp(): Hono<Env> {
       const { body, deduped } = repairCollabBody(notePatch.body);
       if (deduped) notePatch.body = body;
     }
-    const attr = attributionFromAuth(auth, summary, author_label);
+    const attr = await attributionWithPerson(auth, summary, author_label);
     const note = await brain.updateNote(
       auth.spaceId,
       path,
@@ -817,7 +817,7 @@ export function createApp(): Hono<Env> {
     const auth = c.get("auth");
     requireCompanyWrite(auth);
     const allowed = effectiveAllowed(auth);
-    await brain.deleteNote(auth.spaceId, c.req.param("path"), allowed, attributionFromAuth(auth));
+    await brain.deleteNote(auth.spaceId, c.req.param("path"), allowed, await attributionWithPerson(auth));
     return c.json({ deleted: c.req.param("path") });
   });
 
@@ -831,7 +831,7 @@ export function createApp(): Hono<Env> {
       from,
       to,
       allowed,
-      attributionFromAuth(auth, summary),
+      await attributionWithPerson(auth, summary),
       await getUserConfig(auth.spaceId),
     );
     return c.json({ path: note.path, meta: note.meta });
@@ -853,7 +853,7 @@ export function createApp(): Hono<Env> {
       path,
       text,
       allowed,
-      attributionFromAuth(auth, summary, author_label),
+      await attributionWithPerson(auth, summary, author_label),
       base_revision,
     );
     return c.json({ appended: note.path, revision: note.revision });

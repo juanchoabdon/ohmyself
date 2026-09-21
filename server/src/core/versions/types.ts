@@ -5,6 +5,11 @@ export type VersionOp = "create" | "update" | "restore" | "delete" | "move";
 export interface WriteAttribution {
   author: string;
   summary?: string;
+  /** QUIÉN, la persona. `author` dice con qué se escribió ("human",
+   *  "agent:Claude"), que en un brain compartido no distingue a nadie.
+   *  Sale de la cuenta autenticada, así que vale igual desde MCP, desde la
+   *  web o desde la API — el cliente no lo declara y no lo puede falsear. */
+  person?: string;
 }
 
 export interface HistoryEntry {

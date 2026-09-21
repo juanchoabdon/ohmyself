@@ -44,7 +44,7 @@ import {
   upsertPerson,
   upsertProject,
   writeBrain,
-  attributionFromAuth,
+  attributionWithPerson,
   cleanAgentLabel,
   type AuthContext,
   type CommentActor,
@@ -222,7 +222,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       input,
       await config(),
       allowed,
-      mcpAttr(input.append ? `append ${path}` : `upsert ${input.title ?? path}`),
+      await mcpAttr(input.append ? `append ${path}` : `upsert ${input.title ?? path}`),
     );
     return { ok: true, path: note.path, created, visibility: note.meta.visibility };
   }
@@ -1166,7 +1166,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      const note = await brain.createNote(s.id, args, cfg, s.allowed, mcpAttr(`create ${args.title}`));
+      const note = await brain.createNote(s.id, args, cfg, s.allowed, await mcpAttr(`create ${args.title}`));
       return text(withUrl({ space: s.slug, created: note.path, meta: note.meta }, s.id));
     },
   );
@@ -1211,7 +1211,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       });
       if (pending) return text(pending);
       try {
-        const note = await brain.updateNote(s.id, path, patch, s.allowed, mcpAttr(`update ${path}`));
+        const note = await brain.updateNote(s.id, path, patch, s.allowed, await mcpAttr(`update ${path}`));
         return text(withUrl({ space: s.slug, updated: note.path, meta: note.meta, revision: note.revision }, s.id));
       } catch (err) {
         const conflict = revisionConflictText(err);
@@ -1258,7 +1258,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           path,
           content,
           s.allowed,
-          mcpAttr(`append ${path}`),
+          await mcpAttr(`append ${path}`),
           base_revision,
         );
         return text(withUrl({ space: s.slug, appended: note.path, revision: note.revision }, s.id));
@@ -1311,7 +1311,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       const backlinks = await brain
         .getBacklinks(s.id, from, s.allowed, 50)
         .catch(() => [] as { path: string }[]);
-      const note = await brain.moveNote(s.id, from, to, s.allowed, mcpAttr(summary), cfg);
+      const note = await brain.moveNote(s.id, from, to, s.allowed, await mcpAttr(summary), cfg);
       return text(
         withUrl(
           {
@@ -1360,7 +1360,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
-      await brain.deleteNote(s.id, path, s.allowed, mcpAttr(`delete ${path}`));
+      await brain.deleteNote(s.id, path, s.allowed, await mcpAttr(`delete ${path}`));
       return text({ space: s.slug, deleted: path });
     },
   );
@@ -1421,7 +1421,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         },
         await getUserConfig(s.id),
         s.allowed,
-        mcpAttr(`save skill ${name}`),
+        await mcpAttr(`save skill ${name}`),
       );
       return text(
         withUrl(
@@ -1463,7 +1463,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         hint,
         apply,
         visibility,
-        attr: mcpAttr("write_space"),
+        attr: await mcpAttr("write_space"),
       });
       return text(withUrl(res, s.id));
     },
@@ -1647,7 +1647,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         await config(),
         allowed,
         { name, summary, status, tags, append, visibility },
-        mcpAttr(`upsert project ${name}`),
+        await mcpAttr(`upsert project ${name}`),
       );
       return text(withUrl(res));
     },
@@ -1690,7 +1690,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         await config(),
         allowed,
         { project, kind: kind as ProjectKind, title, body, append, visibility, tags },
-        mcpAttr(`add ${kind} to ${project}`),
+        await mcpAttr(`add ${kind} to ${project}`),
       );
       return text(withUrl(res));
     },
@@ -1720,7 +1720,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         await config(),
         allowed,
         { name, relationship, notes, append, visibility, tags },
-        mcpAttr(`upsert person ${name}`),
+        await mcpAttr(`upsert person ${name}`),
       );
       return text(withUrl(res));
     },
@@ -2006,7 +2006,10 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
   /** Attribute writes to the actual agent: the live MCP client name first,
    *  then the token / OAuth client name, then the auth method. */
   function mcpAttr(summary?: string) {
-    return attributionFromAuth(
+    // La PERSONA sale de la cuenta autenticada, así que un write por MCP
+    // queda firmado igual que uno de la web o de la API: el cliente no
+    // declara quién es y no lo puede falsear.
+    return attributionWithPerson(
       { ...auth, clientLabel: mcpClientName() ?? auth.clientLabel },
       summary,
     );
@@ -2046,7 +2049,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     },
     async ({ path, version, summary }) => {
       requireWrite();
-      const note = await brain.restoreVersion(auth.spaceId, path, version, allowed, mcpAttr(summary));
+      const note = await brain.restoreVersion(auth.spaceId, path, version, allowed, await mcpAttr(summary));
       return text({ restored: note.path, version, meta: note.meta });
     },
   );
@@ -2170,7 +2173,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       });
       if (pending) return text(pending);
       // Pass `allowed` so a note can't exceed scope via its type's default visibility.
-      const note = await brain.createNote(auth.spaceId, input, cfg, allowed, mcpAttr(summary));
+      const note = await brain.createNote(auth.spaceId, input, cfg, allowed, await mcpAttr(summary));
       return text(withUrl({ created: note.path, meta: note.meta }));
     },
   );
@@ -2209,7 +2212,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       });
       if (pending) return text(pending);
       try {
-        const note = await brain.updateNote(auth.spaceId, path, patch, allowed, mcpAttr(summary));
+        const note = await brain.updateNote(auth.spaceId, path, patch, allowed, await mcpAttr(summary));
         return text(withUrl({ updated: note.path, meta: note.meta, revision: note.revision }));
       } catch (err) {
         const conflict = revisionConflictText(err);
@@ -2253,7 +2256,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           path,
           t,
           allowed,
-          mcpAttr(summary),
+          await mcpAttr(summary),
           base_revision,
         );
         return text(withUrl({ appended: note.path, revision: note.revision }));
@@ -2300,7 +2303,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         hint,
         apply,
         visibility,
-        attr: mcpAttr("write_brain"),
+        attr: await mcpAttr("write_brain"),
       });
       return text(withUrl(res));
     },
@@ -2626,7 +2629,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           note_path.trim(),
           mediaBlockFor(asset, { alt, caption }),
           target.allowed,
-          mcpAttr(`embedded ${asset.kind}`),
+          await mcpAttr(`embedded ${asset.kind}`),
         );
         embedded = note.path;
       }
