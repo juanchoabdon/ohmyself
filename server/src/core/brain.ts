@@ -82,6 +82,15 @@ const declaredFolders = (config: UserConfig): string =>
 
 /** Ties a content Vault + a derived BrainIndex together and enforces
  *  per-note visibility for a given set of allowed levels. */
+/** Puro: quién cargó la nota, del frontmatter. Se acepta `author` o `by`,
+ *  string y no vacío; cualquier otra cosa es como no tenerlo. */
+export function authorOf(meta: NoteMeta): string | undefined {
+  const raw = (meta.extra?.author ?? meta.extra?.by) as unknown;
+  if (typeof raw !== "string") return undefined;
+  const name = raw.trim();
+  return name.length > 0 && name.length <= 80 ? name : undefined;
+}
+
 export class Brain {
   constructor(
     private vault: Vault,
@@ -100,6 +109,9 @@ export class Brain {
       links: meta.links,
       created: meta.created,
       updated: meta.updated,
+      // `author` vive en el frontmatter (extra, round-trip) y acá se indexa:
+      // un brain compartido necesita saber quién cargó qué, no solo cuándo.
+      author: authorOf(meta),
       excerpt: excerptOf(body),
       content: body,
     };
