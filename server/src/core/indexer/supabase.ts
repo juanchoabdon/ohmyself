@@ -23,6 +23,8 @@ interface Row {
   links: string[];
   created: string | null;
   updated: string | null;
+  indexed_at?: string | null;
+  author?: string | null;
   content: string;
 }
 
@@ -37,13 +39,15 @@ function toIndexed(r: Row): IndexedNote {
     links: r.links ?? [],
     created: r.created ?? undefined,
     updated: r.updated ?? undefined,
+    indexedAt: r.indexed_at ?? undefined,
+    author: r.author ?? undefined,
     excerpt: r.content ? r.content.slice(0, 240) : undefined,
   };
 }
 
-const SELECT = "path, note_id, title, type, visibility, tags, links, created, updated, content";
+const SELECT = "path, note_id, title, type, visibility, tags, links, created, updated, indexed_at, author, content";
 /** Metadata only — skips the heavy `content` blob (sidebar / map listing). */
-const SELECT_META = "path, note_id, title, type, visibility, tags, links, created, updated";
+const SELECT_META = "path, note_id, title, type, visibility, tags, links, created, updated, indexed_at, author";
 
 /** Turn a free-text query into a prefix `to_tsquery` string ("amal:* & mob:*").
  *  Prefix matching makes as-you-type search work (websearch/plainto only match
@@ -97,6 +101,7 @@ export class SupabaseIndex implements BrainIndex {
         content: rec.content,
         created: rec.created ?? null,
         updated: rec.updated ?? null,
+        author: rec.author ?? null,
         indexed_at: new Date().toISOString(),
       },
       { onConflict: "space_id,path" },
@@ -136,6 +141,7 @@ export class SupabaseIndex implements BrainIndex {
       if (prefixFilter) q = q.like("path", prefixFilter);
       const { data, error } = await q
         .order("updated", { ascending: false, nullsFirst: false })
+        .order("indexed_at", { ascending: false })
         .limit(limit);
       if (error || !data) return [];
       return (data as Row[]).map(toIndexed);
@@ -149,6 +155,7 @@ export class SupabaseIndex implements BrainIndex {
     if (prefixFilter) q = q.like("path", prefixFilter);
     const { data, error } = await q
       .order("updated", { ascending: false, nullsFirst: false })
+      .order("indexed_at", { ascending: false })
       .limit(limit);
     if (error || !data) return [];
     return (data as MetaRow[]).map((r) => toIndexed({ ...r, content: "" }));
@@ -411,5 +418,7 @@ interface MissingRow {
   tags: string[] | null;
   created: string | null;
   updated: string | null;
+  indexed_at?: string | null;
+  author?: string | null;
   content: string;
 }

@@ -82,6 +82,15 @@ const declaredFolders = (config: UserConfig): string =>
 
 /** Ties a content Vault + a derived BrainIndex together and enforces
  *  per-note visibility for a given set of allowed levels. */
+/** Puro: quién cargó la nota, del frontmatter. Se acepta `author` o `by`,
+ *  string y no vacío; cualquier otra cosa es como no tenerlo. */
+export function authorOf(meta: NoteMeta): string | undefined {
+  const raw = (meta.extra?.author ?? meta.extra?.by) as unknown;
+  if (typeof raw !== "string") return undefined;
+  const name = raw.trim();
+  return name.length > 0 && name.length <= 80 ? name : undefined;
+}
+
 export class Brain {
   constructor(
     private vault: Vault,
@@ -89,7 +98,7 @@ export class Brain {
     private versions: VersionStore,
   ) {}
 
-  private indexRecord(path: string, meta: NoteMeta, body: string): IndexRecord {
+  private indexRecord(path: string, meta: NoteMeta, body: string, person?: string): IndexRecord {
     return {
       path,
       id: meta.id,
@@ -100,6 +109,11 @@ export class Brain {
       links: meta.links,
       created: meta.created,
       updated: meta.updated,
+      // Quién cargó la nota. El frontmatter manda cuando lo trae — es el
+      // carril de quien escribe POR alguien (bonds guardando lo que pidió un
+      // miembro del room) — y si no, es la persona autenticada, que llega
+      // igual desde MCP, desde la web o desde la API.
+      author: authorOf(meta) ?? person,
       excerpt: excerptOf(body),
       content: body,
     };
@@ -108,8 +122,8 @@ export class Brain {
   /** Persist a note to the derived index: the note_index row (always) and its
    *  chunk embeddings (when the backend supports them). Chunk sync is best-effort
    *  — it never blocks or fails a write, since chunks are rebuildable via backfill. */
-  private async writeIndex(spaceId: string, path: string, meta: NoteMeta, body: string) {
-    const rec = this.indexRecord(path, meta, body);
+  private async writeIndex(spaceId: string, path: string, meta: NoteMeta, body: string, person?: string) {
+    const rec = this.indexRecord(path, meta, body, person);
     await this.index.upsert(spaceId, rec);
     await this.syncChunks(spaceId, rec, body);
   }
@@ -252,10 +266,17 @@ export class Brain {
       updated: todayISO(),
       extra: input.extra && Object.keys(input.extra).length ? input.extra : undefined,
     };
+    // El autor se graba en la NOTA, no solo en el índice: así sobrevive a un
+    // move, a un reindex y a un backfill, y el índice queda siendo lo que
+    // debe ser, algo derivado. Es quien la CREÓ y no cambia; cuándo se tocó
+    // por última vez ya lo dice `written`.
+    if (!authorOf(meta) && attr?.person) {
+      meta.extra = { ...(meta.extra ?? {}), author: attr.person };
+    }
     const body = stripRedundantTitleH1(input.body ?? "", meta.title);
     const raw = serializeNote(meta, body);
     await this.vault.write(userId, path, raw);
-    await this.writeIndex(userId, path, meta, body);
+    await this.writeIndex(userId, path, meta, body, attr?.person);
     await this.recordVersion(userId, path, meta, raw, "create", attr);
     emitBrainEvent({
       type: "note_created",
@@ -356,7 +377,7 @@ export class Brain {
     meta.updated = todayISO();
     const next = serializeNote(meta, body);
     await this.vault.write(userId, path, next);
-    await this.writeIndex(userId, path, meta, body);
+    await this.writeIndex(userId, path, meta, body, attr?.person);
     await this.recordVersion(userId, path, meta, next, "restore", {
       author: attr?.author ?? "human",
       summary: attr?.summary ?? `restore ${version}`,
@@ -381,7 +402,7 @@ export class Brain {
   ): Promise<Note> {
     const { meta, body } = parseNote(raw, path);
     await this.vault.write(userId, path, raw);
-    await this.writeIndex(userId, path, meta, body);
+    await this.writeIndex(userId, path, meta, body, attr?.person);
     await this.recordVersion(userId, path, meta, raw, "update", attr);
     emitBrainEvent({
       type: "note_updated",
@@ -431,7 +452,7 @@ export class Brain {
       notePatch.body !== undefined ? stripRedundantTitleH1(notePatch.body, meta.title) : current.body;
     const raw = serializeNote(meta, body);
     await this.vault.write(userId, path, raw);
-    await this.writeIndex(userId, path, meta, body);
+    await this.writeIndex(userId, path, meta, body, attr?.person);
     const revision = await this.recordVersion(userId, path, meta, raw, "update", attr);
     emitBrainEvent({
       type: "note_updated",

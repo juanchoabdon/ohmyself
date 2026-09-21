@@ -37,6 +37,11 @@ export interface IndexedNote {
   links: string[];
   created?: string;
   updated?: string;
+  /** Cuándo se escribió esta nota, con hora (ISO). `updated` es solo el día,
+   *  así que es lo único que ordena de verdad lo cargado hoy. */
+  indexedAt?: string;
+  /** Quién la cargó, si la nota lo trae en el frontmatter (`author`). */
+  author?: string;
   excerpt?: string;
 }
 
