@@ -745,9 +745,20 @@ export function createApp(): Hono<Env> {
       path?: string;
       summary?: string;
       author_label?: string;
+      /** Frontmatter extra (round-trip). */
+      extra?: Record<string, unknown>;
+      /** QUIÉN cargó la nota, por su nombre. Distinto de `author_label`, que
+       *  dice con qué CLIENTE se escribió ("human", "agent:bondi"): en un
+       *  brain compartido eso es todo el mundo y no responde "¿qué subió
+       *  Sebas?". Azúcar de `extra.author` — el cliente no tiene por qué
+       *  saber que el autor vive en el frontmatter. */
+      author?: string;
     }>();
     if (body.visibility && !allowed.includes(body.visibility)) {
       throw new ForbiddenError("cannot create a note above your scope");
+    }
+    if (typeof body.author === "string" && body.author.trim()) {
+      body.extra = { ...(body.extra ?? {}), author: body.author.trim() };
     }
     const config = await getUserConfig(auth.spaceId);
     const attr = attributionFromAuth(auth, body.summary, body.author_label);
