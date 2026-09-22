@@ -68,6 +68,7 @@ const JournalDaySchema = z.object({
     )
     .default([]),
   relationship_update: z.string().default(""),
+  group_identity: z.string().default(""),
 });
 type JournalDay = z.infer<typeof JournalDaySchema>;
 
@@ -89,38 +90,85 @@ Rules:
   conclusion is an INFERENCE: state the evidence briefly and date it
   ("(inferido, 2026-09-17: ella mencionó el vuelo a Bogotá)"). Prefer updating
   or retiring a stale conclusion over piling up contradictions.
-- The picture OPENS with "Qué es este grupo": what this room IS and what it is
-  FOR — how these people know each other (lifelong friends, a couple, family,
-  people who work together, several of those at once), what they use THIS chat
-  for (dividing work, sending feedback, planning, or just hanging out), and
-  which registers live here (jokes and life alongside the work, or strictly
-  one of them). Write it in two or three sentences, concrete and specific to
-  them; "un grupo de amigos" says nothing.
-- That section changes SLOWLY. It is the accumulation of many days, not the
-  mood of this one: carry it forward almost verbatim, and revise it only when
-  a day genuinely contradicts it or adds something the picture was missing. One
-  busy work day does not turn a group of friends into a work channel, and one
-  night of jokes does not erase that they build something together. If someone
-  STATED it outright ("este grupo es donde repartimos el trabajo"), that is
-  evidence stronger than any inference of yours: keep it and do not overwrite it.
-- relationship_update is the FULL replacement body of the note (markdown, short
-  sections: "Qué es este grupo" first, then "Situación", "Contexto de cada
-  uno", "Dinámicas", "En el horizonte"). It replaces the whole note, so
-  carrying a section forward means WRITING IT AGAIN — anything you leave out
-  is erased. Return "" when the day changes nothing about the picture.
+- group_identity is its own field: what this room IS and what it is FOR.
+  Three things, in two or three sentences: how these people know each other
+  (lifelong friends, a couple, siblings, people who work together, several of
+  those at once), what they use THIS chat for (dividing work, sending each
+  other feedback, planning, or just hanging out), and which registers live
+  here (jokes and life alongside the work, or strictly one).
+- It is NOT the situation. The situation is what is happening to them right
+  now and it changes; this is what they ARE to each other and it barely moves.
+  If it could start with "el grupo está…", it is the wrong thing. Never copy a
+  sentence from relationship_update into it, and never copy a phrasing from
+  these instructions: an answer that could have been written without reading
+  their conversation is wrong.
+- It changes SLOWLY: it is the accumulation of many days, not the mood of this
+  one. One busy work day does not turn a group of friends into a work channel,
+  and one night of jokes does not erase that they build something together.
+  You are given the identity already on file: return "" to keep it as is, and
+  only write a new one when this day genuinely contradicts it or adds
+  something it was missing. If there is none on file, write the first one from
+  whatever the day and the picture give you; if they give you nothing about
+  what these people are to each other, return "".
+- If someone STATED it outright ("este grupo es donde repartimos el trabajo"),
+  that is evidence stronger than any inference of yours: keep it.
+- relationship_update is the FULL replacement body of the REST of the note
+  (markdown, short sections like "Situación", "Contexto de cada uno",
+  "Dinámicas", "En el horizonte"). Do NOT include "Qué es este grupo" there —
+  that is group_identity and the note is composed for you. It replaces the
+  whole rest, so carrying a section forward means WRITING IT AGAIN; anything
+  you leave out is erased. Return "" when the day changes nothing.
 - Never produce psychological profiles or diagnoses of the members. Conclusions
   are practical and situational, never clinical or judgmental.
 - Write in the conversation's dominant language.
 - A day of pure noise (stickers, "jaja", logistics with no substance) is
   worth_keeping=false with everything else empty — but relationship_update may
   still be non-empty if the noise reveals something practical (a location, a
-  plan).
+  plan), or if the picture is still missing "Qué es este grupo".
 
 Answer ONLY a JSON object with keys: worth_keeping (boolean), headline (string,
 one line), summary (string, one short paragraph), moments (string[]),
 decisions ({text, kind: "decided"|"said"}[]), open_threads (string[]),
 memory_facts ({fact, attribution, kind: "decided"|"said"}[]),
-relationship_update (string).`;
+relationship_update (string), group_identity (string).`;
+
+/// El encabezado de la sección de identidad dentro de la foto.
+export const GROUP_IDENTITY_HEADING = "# Qué es este grupo";
+
+/** Puro: la identidad que ya está en la foto, o "" si la nota no la trae. */
+export function identityFromPicture(body: string): string {
+  const i = body.indexOf(GROUP_IDENTITY_HEADING);
+  if (i < 0) return "";
+  const after = body.slice(i + GROUP_IDENTITY_HEADING.length);
+  const next = after.search(/\n#{1,2} /);
+  return (next < 0 ? after : after.slice(0, next)).trim();
+}
+
+/** Puro: el resto de la foto, sin la sección de identidad. */
+export function pictureWithoutIdentity(body: string): string {
+  const i = body.indexOf(GROUP_IDENTITY_HEADING);
+  if (i < 0) return body.trim();
+  const after = body.slice(i + GROUP_IDENTITY_HEADING.length);
+  const next = after.search(/\n#{1,2} /);
+  const rest = next < 0 ? "" : after.slice(next);
+  return `${body.slice(0, i)}${rest}`.trim();
+}
+
+/**
+ * Puro: la foto completa = identidad arriba, el resto debajo.
+ *
+ * La identidad se compone acá y no la escribe el modelo dentro del cuerpo: un
+ * párrafo de instrucciones se lo salta cualquiera (gpt-4o-mini copiaba la
+ * "Situación" tal cual; el modelo grande devolvía vacío), un campo propio no.
+ * Y componerla acá es lo que hace que sobreviva: el cuerpo se reemplaza entero
+ * cada día, la identidad no.
+ */
+export function composePicture(previousBody: string, identity: string, rest: string): string {
+  const keptIdentity = identity.trim() || identityFromPicture(previousBody);
+  const body = (rest.trim() ? pictureWithoutIdentity(rest) : pictureWithoutIdentity(previousBody)).trim();
+  if (!keptIdentity) return body;
+  return [`${GROUP_IDENTITY_HEADING}`, ``, keptIdentity, ``, body].join("\n").trim();
+}
 
 function transcriptText(deltas: DeltaRow[]): string {
   const lines = deltas.map((d) => {
@@ -298,8 +346,11 @@ export async function distillJournalDay(
     `Existing durable memory (tail):`,
     memoryHead,
     ``,
-    `Current relationship picture (memory/relationship.md — update it via relationship_update only if this day changes it):`,
-    relationship ? relationship.body : "(empty — write the first picture if the day gives you enough)",
+    `Identity already on file for this room (group_identity — return "" to keep it):`,
+    relationship && identityFromPicture(relationship.body) ? identityFromPicture(relationship.body) : "(none yet — write the first one if the day gives you enough)",
+    ``,
+    `Rest of the current picture (memory/relationship.md — update it via relationship_update only if this day changes it):`,
+    relationship ? pictureWithoutIdentity(relationship.body) : "(empty — write the first picture if the day gives you enough)",
     ...(priorJournal
       ? [
           ``,
@@ -336,15 +387,20 @@ export async function distillJournalDay(
   }
 
   // The living picture updates even on "noise" days — a location or a plan
-  // can surface in an otherwise skippable day.
-  if (distilled.relationship_update.trim()) {
-    await writeNote(brain, spaceId, config, allowed, {
-      path: "memory/relationship.md",
-      type: "memory",
-      title: "La relación",
-      body: distilled.relationship_update.trim(),
-      summary: `relationship picture ${day}`,
-    });
+  // can surface in an otherwise skippable day. And the identity section is
+  // composed here, never left to the model's diligence inside the body.
+  const previousPicture = relationship?.body ?? "";
+  if (distilled.relationship_update.trim() || distilled.group_identity.trim()) {
+    const next = composePicture(previousPicture, distilled.group_identity, distilled.relationship_update);
+    if (next && next !== previousPicture.trim()) {
+      await writeNote(brain, spaceId, config, allowed, {
+        path: "memory/relationship.md",
+        type: "memory",
+        title: "La relación",
+        body: next,
+        summary: `relationship picture ${day}`,
+      });
+    }
   }
 
   await markDeltasDigested(spaceId, day);
