@@ -89,9 +89,25 @@ Rules:
   conclusion is an INFERENCE: state the evidence briefly and date it
   ("(inferido, 2026-09-17: ella mencionó el vuelo a Bogotá)"). Prefer updating
   or retiring a stale conclusion over piling up contradictions.
+- The picture OPENS with "Qué es este grupo": what this room IS and what it is
+  FOR — how these people know each other (lifelong friends, a couple, family,
+  people who work together, several of those at once), what they use THIS chat
+  for (dividing work, sending feedback, planning, or just hanging out), and
+  which registers live here (jokes and life alongside the work, or strictly
+  one of them). Write it in two or three sentences, concrete and specific to
+  them; "un grupo de amigos" says nothing.
+- That section changes SLOWLY. It is the accumulation of many days, not the
+  mood of this one: carry it forward almost verbatim, and revise it only when
+  a day genuinely contradicts it or adds something the picture was missing. One
+  busy work day does not turn a group of friends into a work channel, and one
+  night of jokes does not erase that they build something together. If someone
+  STATED it outright ("este grupo es donde repartimos el trabajo"), that is
+  evidence stronger than any inference of yours: keep it and do not overwrite it.
 - relationship_update is the FULL replacement body of the note (markdown, short
-  sections like "Situación", "Contexto de cada uno", "Dinámicas", "En el
-  horizonte"). Return "" when the day changes nothing about the picture.
+  sections: "Qué es este grupo" first, then "Situación", "Contexto de cada
+  uno", "Dinámicas", "En el horizonte"). It replaces the whole note, so
+  carrying a section forward means WRITING IT AGAIN — anything you leave out
+  is erased. Return "" when the day changes nothing about the picture.
 - Never produce psychological profiles or diagnoses of the members. Conclusions
   are practical and situational, never clinical or judgmental.
 - Write in the conversation's dominant language.
