@@ -112,6 +112,10 @@ Rules:
   what these people are to each other, return "".
 - If someone STATED it outright ("este grupo es donde repartimos el trabajo"),
   that is evidence stronger than any inference of yours: keep it.
+- Go by the ROSTER, not by who happened to talk. A member who said nothing
+  today, or nothing all week, is still in this room: never describe the group
+  as if only the speakers were in it, and never leave a member out of
+  group_identity because they are quiet.
 - relationship_update is the FULL replacement body of the REST of the note
   (markdown, short sections like "Situación", "Contexto de cada uno",
   "Dinámicas", "En el horizonte"). Do NOT include "Qué es este grupo" there —
@@ -336,6 +340,13 @@ export async function distillJournalDay(
   // relationship (JD 2026-09-17: "que empiece a sacar conclusiones").
   const relationship = await readNoteOrNull(brain, spaceId, "memory/relationship.md", allowed);
 
+  // QUIÉN está en el room, que no es lo mismo que quién habló. El día solo
+  // trae a los que escribieron, así que un miembro callado desaparecía de la
+  // foto: en amiwos (2026-09-22) la identidad enumeraba a los que hablaron y
+  // dejaba a Vale afuera, que lleva meses en el grupo sin escribir. El roster
+  // ya vive en el brain (`people.md`, lo escribe bonds), solo faltaba leerlo.
+  const people = await readNoteOrNull(brain, spaceId, "people.md", allowed);
+
   // A journal already written for this day means these are LATE deltas (an
   // edit, a backfill replay): integrate with it instead of losing the morning.
   const priorJournal = await readNoteOrNull(brain, spaceId, `journal/${day}.md`, allowed);
@@ -345,6 +356,9 @@ export async function distillJournalDay(
     ``,
     `Existing durable memory (tail):`,
     memoryHead,
+    ``,
+    `Who is in this room (roster — the transcript only shows who SPOKE today):`,
+    people ? people.body : "(unknown — go by the transcript)",
     ``,
     `Identity already on file for this room (group_identity — return "" to keep it):`,
     relationship && identityFromPicture(relationship.body) ? identityFromPicture(relationship.body) : "(none yet — write the first one if the day gives you enough)",
