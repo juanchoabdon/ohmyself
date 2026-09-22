@@ -84,7 +84,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
  *  then for move_space_note + delete_space_note, then for media (add_media /
  *  get_media / list_media and the oms-asset: reference scheme). Kept stable
  *  even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.16";
+const CONTRACT_VERSION = "2.17";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -372,7 +372,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Recall about a topic",
       description:
-        "Recall everything relevant about a topic or question using hybrid retrieval. Returns `text` (aggregated context to ground an answer), `notes`, `sources` (per-hit path/section/score/match_reasons), `coverage` (high|medium|low retrieval confidence), `graph_hints` (one-hop related notes from top hits), and `suggested_followups`. Use before answering questions about the person; if `coverage` is low, treat the context as incomplete rather than authoritative.",
+        "Recall everything relevant about a topic or question using hybrid retrieval. Returns `text` (aggregated context to ground an answer), `notes`, `sources` (per-hit path/section/score/match_reasons), `coverage` (high|medium|low retrieval confidence), `graph_hints` (one-hop related notes from top hits), and `suggested_followups`. Each note comes back as the PASSAGE that matched with its surroundings, under the heading it lives in — `partial: true` and `chars` say the document is bigger, and `read_note` brings it whole. Use before answering questions about the person; if `coverage` is low, treat the context as incomplete rather than authoritative.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         topic: z.string().describe("the topic or question to recall context for"),

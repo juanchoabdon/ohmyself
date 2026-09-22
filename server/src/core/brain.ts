@@ -11,6 +11,7 @@ import { embedQuery, embedTexts, embeddingsEnabled } from "./embeddings.js";
 import { emitBrainEvent } from "./events.js";
 import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from "./errors.js";
 import { excerptOf, parseNote, serializeNote, todayISO } from "./frontmatter.js";
+import { passageBudget, passageOf } from "./passages.js";
 import { stripRedundantTitleH1 } from "./titleBody.js";
 import type { BrainIndex } from "./indexer/types.js";
 import type {
@@ -761,9 +762,22 @@ export class Brain {
     topic: string,
     allowed: Visibility[],
     limit = 6,
+    /** `whole: true` brings the notes entire, like this did before passages
+     *  (2026-09-22). Callers that only need to ANSWER should leave it off. */
+    opts: { whole?: boolean } = {},
   ): Promise<{
     topic: string;
-    notes: { path: string; title: string; body: string; created?: string; updated?: string }[];
+    notes: {
+      path: string;
+      title: string;
+      body: string;
+      created?: string;
+      updated?: string;
+      /** The body is the passage that matched, not the whole note. */
+      partial?: boolean;
+      /** Size of the whole note, so a caller knows what read_note would bring. */
+      chars?: number;
+    }[];
     text: string;
     sources: {
       path: string;
@@ -783,16 +797,33 @@ export class Brain {
     const hits = (await this.search(userId, topic, { allowed, limit })) as (IndexedNote &
       Partial<HybridHit>)[];
 
-    const notes: { path: string; title: string; body: string; created?: string; updated?: string }[] = [];
+    // The passage, not the whole note. Six real specs came back as 138,763
+    // characters (~35k tokens) in one call, with the answer buried inside; and
+    // a caller that trims the blob keeps the first note and a half and drops
+    // the rest in silence. Retrieval already knows where it matched, so each
+    // note comes back around that, and the whole document stays one read_note
+    // away. `whole: true` restores the old behaviour.
+    const budget = passageBudget(hits.length);
+    const notes: {
+      path: string;
+      title: string;
+      body: string;
+      created?: string;
+      updated?: string;
+      partial?: boolean;
+      chars?: number;
+    }[] = [];
     for (const h of hits) {
       try {
         const n = await this.readNote(userId, h.path, allowed);
+        const body = opts.whole ? n.body : passageOf(n.body, h.excerpt, budget);
         notes.push({
           path: n.path,
           title: n.meta.title,
-          body: n.body,
+          body,
           created: n.meta.created,
           updated: n.meta.updated,
+          ...(body.length < n.body.length ? { partial: true, chars: n.body.length } : {}),
         });
       } catch {
         /* skip */
@@ -825,8 +856,14 @@ export class Brain {
     else if (top1 >= 0.4 || hits.length >= 3) coverage = "medium";
     else coverage = "low";
 
+    // Each block says where it came from: the note, and the heading the hit
+    // lives under — an excerpt without an address is half a sentence.
+    const sectionOf = new Map(hits.map((h) => [h.path, h.section]));
     const text = notes
-      .map((n) => `## ${n.title}\n(${n.path})\n\n${n.body}`)
+      .map((n) => {
+        const where = sectionOf.get(n.path);
+        return `## ${n.title}\n(${n.path}${where ? ` — ${where}` : ""})\n\n${n.body}`;
+      })
       .join("\n\n---\n\n");
 
     const { graphHintsFromHits, followupsFromGraph } = await import("./link-intelligence.js");
