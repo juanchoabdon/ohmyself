@@ -1,4 +1,5 @@
 import { toVectorLiteral } from "../embeddings.js";
+import { matchExcerpt } from "../passages.js";
 import { serviceClient } from "../supabase.js";
 import type {
   ChunkRecord,
@@ -221,7 +222,15 @@ export class SupabaseIndex implements BrainIndex {
     q = q.limit(opts.limit ?? 50);
     const { data, error } = await q;
     if (error || !data) return [];
-    return (data as Row[]).map(toIndexed);
+    // The excerpt of a lexical hit is the piece that MATCHED, not the note's
+    // opening (2026-09-22): this is the path that runs when embeddings are off
+    // or hybrid errors out, and "here is how the document starts" answers
+    // nothing about what was asked.
+    return (data as Row[]).map((row) => {
+      const note = toIndexed(row);
+      const excerpt = row.content ? matchExcerpt(row.content, trimmed) : undefined;
+      return excerpt ? { ...note, excerpt } : note;
+    });
   }
 
   // ── Hybrid retrieval (chunk embeddings + vector search) ──────────────────────

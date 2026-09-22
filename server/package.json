@@ -22,7 +22,8 @@
     "eval:retrieval": "tsx src/scripts/eval-retrieval.ts",
     "eval:gen-corpus": "tsx src/scripts/gen-eval-corpus.ts",
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/core/*.test.ts"
   },
   "dependencies": {
     "@hocuspocus/server": "^2.15.2",

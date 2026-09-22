@@ -975,8 +975,10 @@ export function createApp(): Hono<Env> {
   app.post("/v1/context", async (c) => {
     const auth = c.get("auth");
     const allowed = effectiveAllowed(auth);
-    const { topic, limit } = await c.req.json<{ topic: string; limit?: number }>();
-    const ctx = await brain.getContext(auth.spaceId, topic, allowed, limit ?? 6);
+    const { topic, limit, whole } = await c.req.json<{ topic: string; limit?: number; whole?: boolean }>();
+    // Notes come back as the passage that matched; `whole: true` for a caller
+    // that really wants the documents entire (2026-09-22).
+    const ctx = await brain.getContext(auth.spaceId, topic, allowed, limit ?? 6, { whole: whole === true });
     return c.json(ctx);
   });
 
