@@ -122,6 +122,9 @@ export class Brain {
   /** Persist a note to the derived index: the note_index row (always) and its
    *  chunk embeddings (when the backend supports them). Chunk sync is best-effort
    *  — it never blocks or fails a write, since chunks are rebuildable via backfill. */
+  /** `person` SOLO en la creación: el autor es quien creó la nota y una
+   *  reescritura no lo cambia. En un update el autor sale del frontmatter si
+   *  lo trae, y si no, la columna no viaja y conserva lo que ya tenía. */
   private async writeIndex(spaceId: string, path: string, meta: NoteMeta, body: string, person?: string) {
     const rec = this.indexRecord(path, meta, body, person);
     await this.index.upsert(spaceId, rec);
@@ -377,7 +380,7 @@ export class Brain {
     meta.updated = todayISO();
     const next = serializeNote(meta, body);
     await this.vault.write(userId, path, next);
-    await this.writeIndex(userId, path, meta, body, attr?.person);
+    await this.writeIndex(userId, path, meta, body);
     await this.recordVersion(userId, path, meta, next, "restore", {
       author: attr?.author ?? "human",
       summary: attr?.summary ?? `restore ${version}`,
@@ -402,7 +405,7 @@ export class Brain {
   ): Promise<Note> {
     const { meta, body } = parseNote(raw, path);
     await this.vault.write(userId, path, raw);
-    await this.writeIndex(userId, path, meta, body, attr?.person);
+    await this.writeIndex(userId, path, meta, body);
     await this.recordVersion(userId, path, meta, raw, "update", attr);
     emitBrainEvent({
       type: "note_updated",
@@ -452,7 +455,7 @@ export class Brain {
       notePatch.body !== undefined ? stripRedundantTitleH1(notePatch.body, meta.title) : current.body;
     const raw = serializeNote(meta, body);
     await this.vault.write(userId, path, raw);
-    await this.writeIndex(userId, path, meta, body, attr?.person);
+    await this.writeIndex(userId, path, meta, body);
     const revision = await this.recordVersion(userId, path, meta, raw, "update", attr);
     emitBrainEvent({
       type: "note_updated",

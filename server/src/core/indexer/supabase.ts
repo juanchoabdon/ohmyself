@@ -101,7 +101,10 @@ export class SupabaseIndex implements BrainIndex {
         content: rec.content,
         created: rec.created ?? null,
         updated: rec.updated ?? null,
-        author: rec.author ?? null,
+        // Sin autor la columna NO viaja: un upsert de PostgREST solo pisa las
+        // columnas que van en el payload, así que omitirla conserva la que ya
+        // estaba. Mandar null acá borraba el autor en cada reescritura.
+        ...(rec.author ? { author: rec.author } : {}),
         indexed_at: new Date().toISOString(),
       },
       { onConflict: "space_id,path" },
