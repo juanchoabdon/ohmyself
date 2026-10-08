@@ -182,6 +182,82 @@ The taxonomy (folders, note types, default visibilities) is **per user**, stored
 `templates/default-config.json` / `server/src/core/config.ts`. New notes are validated
 against the user's config, not a global schema.
 
+## Machine-provisioned brains (service token, `external_key`)
+
+An external system can own brains without any human signing in. Today that is
+**bonds** (ai-in-chat): a service account holds an `oms_` token (minted with
+`server/src/scripts/provision-bonds-service.ts`) and provisions one brain per
+room and one per person. Two kinds are provisionable this way:
+
+| `kind`         | what it is                                   | `external_key`            | taxonomy / scaffold                                                                  |
+| -------------- | -------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `relationship` | the shared brain of ONE room (B2ext)         | the Matrix room id        | journal/, memory/, projects/, docs/ · `_index.md`, `people.md`, `apps.md`            |
+| `self`         | ONE person's private brain (adenda 8, W-S1)  | the person's Matrix mxid  | personal: identity/, people/, projects/, goals/, journal/, … · `_index.md`, `identity/about-me.md` |
+
+`company` is not provisionable: it stays a human, Pro-gated seat.
+
+**Provision (idempotent by `external_key`):**
+
+```http
+POST /v1/spaces
+Authorization: Bearer oms_…            # the service token
+Content-Type: application/json
+
+{ "kind": "self", "external_key": "@juandi:bonds.im", "name": "Juandi" }
+```
+
+```json
+201 Created  (first call)  /  200 OK  (every call after)
+{
+  "space": { "id": "<uuid>", "kind": "self", "name": "Juandi", "slug": null,
+             "ownerUserId": "<service user id>", "externalKey": "@juandi:bonds.im",
+             "themeColor": null, "logoUrl": null, "role": "owner" },
+  "created": true,
+  "scaffolded": ["_index.md", "identity/about-me.md"],   // [] when it already existed
+  "structure": ["identity", "goals", "projects", "people", "journal", "finance", "notes", "todos", "meetings", "concepts", "commitments", "skills"]
+}
+```
+
+- Calling it again with the same `external_key` returns the same `space.id`
+  with `created: false` and no rescaffold. `name` is only used on creation.
+- `400` — `external_key` missing. `409` — the key is already provisioned as the
+  other kind (a room id is not a person). `403` — the key belongs to another
+  account (never leaks whether it exists).
+- A `self` provisioned here has **no ohmyself account**: `space.id` is a fresh
+  uuid, not a user id. The provisioner is its `owner` through `space_members`.
+- For `relationship`, `members: string[]` (display names) seeds `people.md`.
+
+**Talk to the brain:** every `/v1/*` and `/mcp` call carries
+`X-Brain-Space: <space.id>`. Only the provisioning account (or an admin it
+joined) resolves it — anyone else gets `401 not a member of this space`. All
+personal tools apply to a provisioned `self` exactly as to a human's brain:
+`who_am_i` / `update_identity` (`identity/about-me.md`), `log_journal`
+(`journal/<yyyy>/<date>.md`), `remember` (`memory/log.md`), `recall`,
+`search_brain`, `add_person`, `upsert_project`, `set_goal`, …
+
+**Feed it (the inbox):** `POST /v1/ingest/transcript` with `X-Brain-Space`,
+`{ "messages": [{ "external_id", "author", "at", "kind"?, "body", "day"? }] }`
+(≤ 500 per call; `external_id` dedupes replays) → `202 { accepted, duplicates }`.
+Works for any brain with an `external_key` (`self` or `relationship`).
+
+**The journal job** (scheduler, every `JOURNAL_INTERVAL_MS`, default 30 min)
+distills each **closed** day (14 h past midnight UTC) once:
+
+- `self` → `journal/<yyyy>/<day>.md` (the same note `log_journal` appends to),
+  durable facts appended to `memory/log.md` in `remember`'s bullet format, and
+  the `_index.md` postal. The keeper never touches `identity/`.
+- `relationship` → `journal/<day>.md`, `memory/facts.md`, the living picture
+  `memory/relationship.md`, and the postal.
+
+So B-V0 holds: a `self` provisioned by machine receives a transcript today and
+has `journal/<yyyy>/<day>.md` after the next tick that finds the day closed.
+Wiki-lint also walks every machine-provisioned `self` (once a day per brain),
+not only brains with a Drive connection.
+
+Tests: `server/src/api/provision-self.test.ts` runs this whole flow against
+the real app with an in-memory Supabase stand-in and a stub model
+(`pnpm --filter @ohmyself/server test`).
+
 ## Add a connector
 
 Connectors ingest data into (and optionally out of) the brain. Implement the

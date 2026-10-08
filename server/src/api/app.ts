@@ -10,7 +10,9 @@ import {
   requireSpaceAdmin,
   addMember,
   createCompanySpace,
-  createRelationshipSpace,
+  createProvisionedSpace,
+  isProvisionableKind,
+  scaffoldPersonalCocina,
   scaffoldRelationshipCocina,
   ingestTranscriptDeltas,
   createToken,
@@ -314,16 +316,21 @@ export function createApp(): Hono<Env> {
     };
     if (!body.name?.trim()) throw new BadRequestError("space name is required");
 
-    // Relationship spaces (bonds ai-in-chat B2ext): machine-provisioned brains
-    // keyed by the external room id. Token callers are the POINT here (the
-    // bonds service account), so no JWT gate and no Pro gate — these are not
-    // human "company" seats. Idempotent by external_key: lifecycle events and
-    // backfill sweeps re-fire this call and must converge on one space.
-    if (body.kind === "relationship") {
+    // Machine-provisioned brains (bonds ai-in-chat): `relationship` (B2ext,
+    // the shared brain of one room, keyed by the room id) and `self` (adenda 8
+    // W-S1, one person's private brain, keyed by their mxid). Token callers
+    // are the POINT here (the bonds service account), so no JWT gate and no
+    // Pro gate — these are not human "company" seats, and a `self` provisioned
+    // here has no ohmyself account behind it. Idempotent by external_key:
+    // lifecycle events and backfill sweeps re-fire this call and must
+    // converge on one space.
+    if (isProvisionableKind(body.kind)) {
+      const kind = body.kind;
       if (!body.external_key?.trim()) {
-        throw new BadRequestError("external_key is required for a relationship space");
+        throw new BadRequestError(`external_key is required for a ${kind} space`);
       }
-      const { space, created } = await createRelationshipSpace({
+      const { space, created } = await createProvisionedSpace({
+        kind,
         ownerUserId: auth.userId,
         externalKey: body.external_key,
         name: body.name,
@@ -341,13 +348,20 @@ export function createApp(): Hono<Env> {
         return c.json({ space, created: false, scaffolded: [] }, 200);
       }
       const config = await getUserConfig(space.id);
-      const scaffold = await scaffoldRelationshipCocina(brain, space.id, config, {
-        name: body.name,
-        members: Array.isArray(body.members)
-          ? body.members.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
-          : [],
-      });
-      return c.json({ space, created, scaffolded: scaffold.created }, created ? 201 : 200);
+      const structure = [...new Set(config.noteTypes.map((t) => t.folder))];
+      const scaffold =
+        kind === "self"
+          ? await scaffoldPersonalCocina(brain, space.id, config, { name: body.name })
+          : await scaffoldRelationshipCocina(brain, space.id, config, {
+              name: body.name,
+              members: Array.isArray(body.members)
+                ? body.members.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+                : [],
+            });
+      return c.json(
+        { space, created, scaffolded: scaffold.created, structure },
+        created ? 201 : 200,
+      );
     }
 
     requireJwt(auth);
@@ -373,11 +387,13 @@ export function createApp(): Hono<Env> {
     if (auth.role !== "owner" && auth.role !== "admin") {
       throw new ForbiddenError("only the space's provisioner can push transcript deltas");
     }
-    // La marca de "brain de un room" es external_key, no el kind: un company
-    // wiki adoptado como brain de su room (bonds founders) también ingiere.
+    // La marca de "brain provisionado por máquina" es external_key, no el
+    // kind: un room (`relationship`), una persona de bonds (`self` por mxid)
+    // o un company wiki adoptado como brain de su room (bonds founders)
+    // ingieren igual. Un self humano (sin external_key) no tiene inbox.
     const space = await getSpace(auth.spaceId);
     if (!space || !space.externalKey) {
-      throw new BadRequestError("transcript deltas only exist for provisioned room brains");
+      throw new BadRequestError("transcript deltas only exist for machine-provisioned brains");
     }
     const body = (await c.req.json().catch(() => ({}))) as { messages?: unknown };
     if (!Array.isArray(body.messages) || body.messages.length === 0) {

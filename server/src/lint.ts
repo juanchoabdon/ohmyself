@@ -29,6 +29,7 @@ import {
   buildCore,
   getUserConfig,
   listActiveConnectionsForProvider,
+  listProvisionedSelfSpaceIds,
   listConnections,
   personPath,
   projectIndexPath,
@@ -933,7 +934,12 @@ export async function applyLintRehome(
 export async function lintAllUsers(): Promise<{ linted: number }> {
   if (!embeddingsEnabled()) return { linted: 0 };
   const conns = await listActiveConnectionsForProvider(GOOGLE_DRIVE_MEETINGS_PROVIDER);
-  const userIds = Array.from(new Set(conns.map((c) => c.userId)));
+  // Brains with a Drive connection (humans whose meetings feed the wiki) plus
+  // the personal brains bonds provisions by machine (adenda 8): nobody signs
+  // in to those, so nothing else would ever lint them. `runWikiLint` takes a
+  // space id — for a human it is their user id.
+  const provisioned = await listProvisionedSelfSpaceIds();
+  const userIds = Array.from(new Set([...conns.map((c) => c.userId), ...provisioned]));
   const allowed = allowedVisibilities("secret");
   const apply = scheduledApplyMode();
   let linted = 0;

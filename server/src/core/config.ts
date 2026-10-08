@@ -150,6 +150,12 @@ export function isPersonalBrain(config: UserConfig): boolean {
 export function undeclaredPillar(config: UserConfig, path: string): string | null {
   const top = path.trim().replace(/^\/+/, "").split("/")[0] ?? "";
   if (!PERSONAL_PILLARS.includes(top)) return null;
+  // `memory/` is never a declared type — `remember` and the keeper write
+  // straight to memory/log.md — so in a PERSONAL brain it is always fine. It
+  // only has to be refused where the rest of the personal pillars are: a
+  // company wiki. (Before 2026-10-08 a brain on the default taxonomy refused
+  // its own memory log, which broke `remember` on every fresh brain.)
+  if (top === "memory" && isPersonalBrain(config)) return null;
   return config.noteTypes.some((t) => t.folder === top) ? null : top;
 }
 

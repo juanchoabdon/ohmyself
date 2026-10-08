@@ -1,8 +1,20 @@
 /**
- * The relationship journal job (bonds ai-in-chat B2ext — keeper loop 2 of 3).
+ * The journal job (bonds ai-in-chat B2ext — keeper loop 2 of 3).
  *
- * For every relationship space, each CLOSED day of transcript deltas (pushed by
- * the room's owner system) is distilled once into:
+ * For every machine-provisioned space with an inbox, each CLOSED day of
+ * transcript deltas (pushed by the owner system) is distilled once. What gets
+ * written depends on the KIND of brain:
+ *
+ * `self` (adenda 8 — one person's private brain, keyed by their mxid):
+ *   - `journal/<yyyy>/<day>.md` — the personal journal, same path `log_journal`
+ *     writes, so a day the agent logged and a day the keeper distilled are one;
+ *   - `memory/log.md`           — durable facts about the person, as the dated
+ *     bullets `remember` writes;
+ *   - `_index.md`               — the postal, refreshed with the freshest day.
+ *   No living picture: the person's identity is `identity/` and belongs to
+ *   `update_identity`, never to the keeper.
+ *
+ * `relationship` (one room):
  *   - `journal/<day>.md` — what happened, what was decided, what stayed open;
  *   - `memory/facts.md`  — durable, attributed facts (`decided` vs `said`);
  *   - `memory/relationship.md` — the living picture: the ACCUMULATED, dated
@@ -19,6 +31,7 @@ import type { Brain } from "./core/brain.js";
 import {
   allowedVisibilities,
   buildCore,
+  getSpace,
   getUserConfig,
   markDeltasDigested,
   pendingJournalDays,
@@ -234,7 +247,7 @@ function transcriptText(deltas: DeltaRow[]): string {
   return text;
 }
 
-function journalBody(day: JournalDay): string {
+function journalBody(day: Pick<JournalDay, "summary" | "moments" | "decisions" | "open_threads">): string {
   const parts: string[] = [];
   if (day.summary.trim()) parts.push(day.summary.trim());
   if (day.moments.length) {
@@ -451,12 +464,208 @@ async function refreshPostal(
   });
 }
 
-/** Distill one space+day. Returns whether a journal note was written. */
+// ── Personal brains (self, machine-provisioned) ──────────────────────────────
+
+const PersonalJournalSchema = z.object({
+  worth_keeping: z.boolean(),
+  headline: z.string().default(""),
+  summary: z.string().default(""),
+  moments: z.array(z.string()).default([]),
+  decisions: z
+    .array(
+      z.object({
+        text: z.string(),
+        kind: z.enum(["decided", "said"]).default("said"),
+      }),
+    )
+    .default([]),
+  open_threads: z.array(z.string()).default([]),
+  memory_facts: z
+    .array(
+      z.object({
+        fact: z.string(),
+        kind: z.enum(["decided", "said"]).default("said"),
+      }),
+    )
+    .default([]),
+});
+type PersonalJournalDay = z.infer<typeof PersonalJournalSchema>;
+
+const PERSONAL_SYSTEM = `You distill ONE day of a person's conversations (with
+their assistant, or in chats they take part in) into THEIR private journal.
+This is the person's own second brain: everything is from their point of view.
+You are a careful archivist, not a commentator.
+
+Rules:
+- Only what actually happened in the transcript. Never invent, never pad.
+- The person is the owner of this brain (their name is given). Other speakers
+  are people in their life: attribute what THEY said by their name, but write
+  the journal about the owner's day.
+- "decided" is reserved for something the owner explicitly decided or agreed
+  to; everything else is "said".
+- memory_facts are only DURABLE facts about the owner worth remembering months
+  later (preferences, people in their life and who they are to them, dates,
+  commitments, life facts, how they like things done) — not chit-chat. Skip
+  facts the existing memory already covers. Each fact is a standalone
+  statement that makes sense out of context ("Prefers to train in the
+  morning", "Her sister Vale lives in Medellín").
+- Never produce psychological profiles or diagnoses. Facts are practical.
+- Write in the conversation's dominant language.
+- A day of pure noise (stickers, "jaja", logistics with no substance) is
+  worth_keeping=false with everything else empty.
+
+Answer ONLY a JSON object with keys: worth_keeping (boolean), headline (string,
+one line), summary (string, one short paragraph), moments (string[]),
+decisions ({text, kind: "decided"|"said"}[]), open_threads (string[]),
+memory_facts ({fact, kind: "decided"|"said"}[]).`;
+
+/** The personal journal lives where `log_journal` writes it. */
+export function personalJournalPath(day: string): string {
+  return `journal/${day.slice(0, 4)}/${day}.md`;
+}
+
+/** Durable facts of a personal brain, in the dated-bullet form `remember` uses. */
+export function personalMemoryLines(day: string, facts: PersonalJournalDay["memory_facts"]): string {
+  return facts
+    .map((f) => `- ${day} — ${f.fact.trim()} _(#keeper #${f.kind})_`)
+    .join("\n");
+}
+
+async function appendPersonalMemory(
+  brain: Brain,
+  spaceId: string,
+  config: UserConfig,
+  allowed: Visibility[],
+  day: string,
+  facts: PersonalJournalDay["memory_facts"],
+): Promise<void> {
+  if (facts.length === 0) return;
+  const lines = personalMemoryLines(day, facts);
+  await brain.upsertNote(
+    spaceId,
+    "memory/log.md",
+    { type: "note", title: "Memory log", body: lines, append: true, visibility: "private", tags: ["memory"] },
+    config,
+    allowed,
+    { ...KEEPER_ATTRIBUTION, summary: `memory ${day}` },
+  );
+}
+
+async function refreshPersonalPostal(
+  brain: Brain,
+  spaceId: string,
+  config: UserConfig,
+  allowed: Visibility[],
+  name: string,
+  day: string,
+  distilled: PersonalJournalDay,
+): Promise<void> {
+  const headline = distilled.headline.trim() || distilled.summary.trim().slice(0, 140);
+  const open = distilled.open_threads.length
+    ? `\n\nOpen threads:\n${distilled.open_threads.map((t) => `- ${t}`).join("\n")}`
+    : "";
+  const path = personalJournalPath(day).replace(/\.md$/, "");
+  const body = [
+    `Postal of ${name}'s brain — regenerated by the keeper.`,
+    ``,
+    `**Last journal:** [[${path}]] — ${headline}`,
+    ``,
+    `${distilled.summary.trim()}${open}`,
+    ``,
+    `Where to look: \`identity/\` for who this person is, \`journal/\` for the day-by-day, \`memory/log.md\` for durable facts, \`people/\`, \`projects/\` and \`goals/\` for their world.`,
+  ].join("\n");
+  await writeNote(brain, spaceId, config, allowed, {
+    path: "_index.md",
+    type: "note",
+    title: name,
+    body,
+    summary: `postal after ${day}`,
+  });
+}
+
+/** Distill one day of a PERSONAL brain. Returns whether a journal was written. */
+export async function distillPersonalJournalDay(
+  brain: Brain,
+  spaceId: string,
+  day: string,
+  name: string,
+): Promise<boolean> {
+  const deltas = await readDeltas(spaceId, day);
+  if (deltas.length === 0) {
+    await markDeltasDigested(spaceId, day);
+    return false;
+  }
+  const config = await getUserConfig(spaceId);
+  const allowed = allowedVisibilities("secret");
+
+  const memory = await readNoteOrNull(brain, spaceId, "memory/log.md", allowed);
+  const memoryHead = memory ? memory.body.split("\n").slice(-60).join("\n") : "(empty)";
+  const identity = await readNoteOrNull(brain, spaceId, "identity/about-me.md", allowed);
+  const journalPath = personalJournalPath(day);
+  const priorJournal = await readNoteOrNull(brain, spaceId, journalPath, allowed);
+
+  const user = [
+    `Owner of this brain: ${name}`,
+    `Day: ${day}`,
+    ``,
+    `Who the owner is (identity/about-me.md):`,
+    identity?.body.trim() || "(nothing on file yet)",
+    ``,
+    `Existing durable memory (tail of memory/log.md):`,
+    memoryHead,
+    ...(priorJournal
+      ? [
+          ``,
+          `Journal already written for this day (INTEGRATE it — the output replaces it, so keep everything still true):`,
+          priorJournal.body,
+        ]
+      : []),
+    ``,
+    `Transcript of the day:`,
+    transcriptText(deltas),
+  ].join("\n");
+
+  const raw = await chatJSON<unknown>({
+    tier: "route",
+    system: PERSONAL_SYSTEM,
+    user,
+    timeoutMs: JOURNAL_TIMEOUT_MS,
+  });
+  if (raw == null) throw new Error("journal distillation returned nothing");
+  const parsed = PersonalJournalSchema.safeParse(raw);
+  if (!parsed.success) throw new Error(`journal distillation shape invalid: ${parsed.error.message}`);
+  const distilled = parsed.data;
+
+  if (distilled.worth_keeping && (distilled.summary.trim() || distilled.moments.length)) {
+    await writeNote(brain, spaceId, config, allowed, {
+      path: journalPath,
+      type: "journal",
+      title: day,
+      body: journalBody(distilled),
+      summary: `journal ${day}`,
+    });
+    await appendPersonalMemory(brain, spaceId, config, allowed, day, distilled.memory_facts);
+    await refreshPersonalPostal(brain, spaceId, config, allowed, name, day, distilled);
+  }
+
+  await markDeltasDigested(spaceId, day);
+  return distilled.worth_keeping;
+}
+
+// ── Relationship brains (one room) ───────────────────────────────────────────
+
+/** Distill one space+day. Returns whether a journal note was written. Routes
+ *  by the KIND of brain: a personal brain gets the personal journal, a room
+ *  gets the relationship journal + living picture. */
 export async function distillJournalDay(
   brain: Brain,
   spaceId: string,
   day: string,
 ): Promise<boolean> {
+  const space = await getSpace(spaceId);
+  if (space?.kind === "self") {
+    return distillPersonalJournalDay(brain, spaceId, day, space.name);
+  }
   const deltas = await readDeltas(spaceId, day);
   if (deltas.length === 0) {
     await markDeltasDigested(spaceId, day);

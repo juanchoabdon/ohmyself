@@ -1,6 +1,6 @@
 import { serviceClient } from "./supabase.js";
 import { slugify } from "./brain.js";
-import { BadRequestError, NotFoundError } from "./errors.js";
+import { BadRequestError, ConflictError, NotFoundError } from "./errors.js";
 import { seedSpaceConfig } from "./config-store.js";
 import { nameOf, resolveIdentifier, usersById } from "./users.js";
 import type { SpaceRole } from "./types.js";
@@ -154,6 +154,21 @@ export interface CreateRelationshipSpaceInput {
   name: string;
 }
 
+/** Kinds a machine account may provision by `external_key` (bonds ai-in-chat):
+ *  `relationship` — the shared brain of one room (keyed by the room id);
+ *  `self` — one person's private brain (keyed by their mxid, adenda 8 W-S1),
+ *  with no ohmyself account behind it. `company` stays a human, Pro-gated seat. */
+export const PROVISIONABLE_KINDS = ["self", "relationship"] as const;
+export type ProvisionableKind = (typeof PROVISIONABLE_KINDS)[number];
+
+export function isProvisionableKind(v: unknown): v is ProvisionableKind {
+  return (PROVISIONABLE_KINDS as readonly unknown[]).includes(v);
+}
+
+export interface CreateProvisionedSpaceInput extends CreateRelationshipSpaceInput {
+  kind: ProvisionableKind;
+}
+
 /** The relationship space for an external key, or null. */
 export async function getSpaceByExternalKey(externalKey: string): Promise<Space | null> {
   const key = externalKey.trim();
@@ -168,26 +183,47 @@ export async function getSpaceByExternalKey(externalKey: string): Promise<Space 
   return mapSpace(data as SpaceRow);
 }
 
-/** Create (or return) the relationship space for one external room. Idempotent
- *  by `externalKey`: provisioning is fired by room-lifecycle events and by
- *  backfill sweeps, so double calls must converge on the same space. The owner
- *  is the machine account doing the provisioning; humans in the room are NOT
- *  members here — their writes arrive attributed via pass-through labels. */
-export async function createRelationshipSpace(
-  input: CreateRelationshipSpaceInput,
+/** Create (or return) the machine-provisioned space for one external key.
+ *  Idempotent by `externalKey`: provisioning is fired by lifecycle events
+ *  (room created, user registered) and by backfill sweeps, so double calls
+ *  must converge on the same space. The owner is the machine account doing
+ *  the provisioning; the humans behind the key are NOT members here — their
+ *  writes arrive attributed via pass-through labels.
+ *
+ *  A `self` space provisioned this way is a personal brain whose id is NOT a
+ *  user id (there is no account): it is addressed with `X-Brain-Space` and
+ *  the provisioner acts in it as `owner` through `space_members`, exactly like
+ *  a relationship space. Everything that keys on `kind === "self"` (taxonomy,
+ *  concept pillar, personal conventions) applies; everything that keys on
+ *  `spaceId === userId` (a human's own brain) does not.
+ *
+ *  Re-provisioning an existing key under a DIFFERENT kind is a contract error
+ *  (a room id is not a person): the caller gets a 409, never a silent reuse. */
+export async function createProvisionedSpace(
+  input: CreateProvisionedSpaceInput,
 ): Promise<{ space: Space; created: boolean }> {
   const externalKey = input.externalKey.trim();
   if (!externalKey) throw new BadRequestError("external_key is required");
+  if (!isProvisionableKind(input.kind)) {
+    throw new BadRequestError(`kind must be one of: ${PROVISIONABLE_KINDS.join(", ")}`);
+  }
   const name = input.name.trim() || externalKey;
 
   const existing = await getSpaceByExternalKey(externalKey);
-  if (existing) return { space: existing, created: false };
+  if (existing) {
+    if (existing.kind !== input.kind) {
+      throw new ConflictError(
+        `external_key is already provisioned as a ${existing.kind} space, not ${input.kind}`,
+      );
+    }
+    return { space: existing, created: false };
+  }
 
   const sb = serviceClient();
   const { data, error } = await sb
     .from("spaces")
     .insert({
-      kind: "relationship",
+      kind: input.kind,
       slug: null,
       name,
       owner_user_id: input.ownerUserId,
@@ -198,8 +234,15 @@ export async function createRelationshipSpace(
   if (error || !data) {
     // A concurrent provision can win the unique-index race; converge on it.
     const raced = await getSpaceByExternalKey(externalKey);
-    if (raced) return { space: raced, created: false };
-    throw new Error(error?.message ?? "could not create relationship space");
+    if (raced) {
+      if (raced.kind !== input.kind) {
+        throw new ConflictError(
+          `external_key is already provisioned as a ${raced.kind} space, not ${input.kind}`,
+        );
+      }
+      return { space: raced, created: false };
+    }
+    throw new Error(error?.message ?? `could not create ${input.kind} space`);
   }
   const space = mapSpace(data as SpaceRow, "owner");
 
@@ -211,8 +254,16 @@ export async function createRelationshipSpace(
     );
   if (memberErr) throw new Error(memberErr.message);
 
-  await seedSpaceConfig(space.id, "relationship");
+  await seedSpaceConfig(space.id, input.kind);
   return { space, created: true };
+}
+
+/** Create (or return) the relationship space for one external room. See
+ *  `createProvisionedSpace` — kept as the named entry point for room brains. */
+export async function createRelationshipSpace(
+  input: CreateRelationshipSpaceInput,
+): Promise<{ space: Space; created: boolean }> {
+  return createProvisionedSpace({ ...input, kind: "relationship" });
 }
 
 export interface UpdateSpaceInput {
@@ -316,6 +367,29 @@ export async function removeMember(spaceId: string, userId: string): Promise<voi
   }
   const { error } = await sb.from("space_members").delete().eq("space_id", spaceId).eq("user_id", userId);
   if (error) throw new Error(error.message);
+}
+
+/** Self spaces provisioned by machine (bonds personal brains): `kind = self`
+ *  with an `external_key`. These have no human account behind them, so the
+ *  jobs that walk "users" (lint) have to walk them explicitly. */
+export async function listProvisionedSelfSpaceIds(): Promise<string[]> {
+  const sb = serviceClient();
+  const ids: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from("spaces")
+      .select("id")
+      .eq("kind", "self")
+      .not("external_key", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`listProvisionedSelfSpaceIds: ${error.message}`);
+    const batch = (data as { id: string }[] | null) ?? [];
+    ids.push(...batch.map((r) => r.id));
+    if (batch.length < PAGE) break;
+  }
+  return ids;
 }
 
 /** All self-space ids (personal brains). Paginated; optional single-id filter. */

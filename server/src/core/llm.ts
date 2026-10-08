@@ -14,6 +14,8 @@
 export type ModelTier = "route" | "research" | "escalate";
 
 const apiKey = () => process.env.OPENAI_API_KEY ?? "";
+/** OpenAI-compatible API root — overridable for proxies and for tests. */
+const baseUrl = () => (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
 
 /** Base model shared by every tier unless a tier is overridden. */
 const BASE_MODEL = () => process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -59,7 +61,7 @@ async function chat(opts: ChatOpts): Promise<string | null> {
   const ac = new AbortController();
   const to = setTimeout(() => ac.abort(), opts.timeoutMs ?? 45000);
   try {
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(`${baseUrl()}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
