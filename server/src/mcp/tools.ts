@@ -24,6 +24,7 @@ import {
   folderForType,
   isPersonalBrain,
   getDisplayName,
+  getSpace,
   getUserConfig,
   projectDocPath,
   ingest,
@@ -505,7 +506,10 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       inputSchema: {},
     },
     async () => {
-      const name = await getDisplayName(auth.spaceId);
+      // A human's brain is named by their profile; a brain provisioned by
+      // machine (bonds, keyed by mxid) has no profile — its space name is the
+      // person's name.
+      const name = (await getDisplayName(auth.spaceId)) ?? (await getSpace(auth.spaceId))?.name ?? null;
       // Framing instruction so the agent answers in-character as the second self.
       const persona = name
         ? `You are speaking as the second self of ${name}. Begin your reply with "I'm the second self of ${name}." then summarize who they are using only the profile below.`

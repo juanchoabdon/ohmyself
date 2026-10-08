@@ -1,6 +1,6 @@
 import { serviceClient } from "./supabase.js";
 import { slugify } from "./brain.js";
-import { BadRequestError, NotFoundError } from "./errors.js";
+import { BadRequestError, ConflictError, NotFoundError } from "./errors.js";
 import { seedSpaceConfig } from "./config-store.js";
 import { nameOf, resolveIdentifier, usersById } from "./users.js";
 import type { SpaceRole } from "./types.js";
@@ -154,6 +154,21 @@ export interface CreateRelationshipSpaceInput {
   name: string;
 }
 
+/** Kinds a machine account may provision by `external_key` (bonds ai-in-chat):
+ *  `relationship` — the shared brain of one room (keyed by the room id);
+ *  `self` — one person's private brain (keyed by their mxid, adenda 8 W-S1),
+ *  with no ohmyself account behind it. `company` stays a human, Pro-gated seat. */
+export const PROVISIONABLE_KINDS = ["self", "relationship"] as const;
+export type ProvisionableKind = (typeof PROVISIONABLE_KINDS)[number];
+
+export function isProvisionableKind(v: unknown): v is ProvisionableKind {
+  return (PROVISIONABLE_KINDS as readonly unknown[]).includes(v);
+}
+
+export interface CreateProvisionedSpaceInput extends CreateRelationshipSpaceInput {
+  kind: ProvisionableKind;
+}
+
 /** The relationship space for an external key, or null. */
 export async function getSpaceByExternalKey(externalKey: string): Promise<Space | null> {
   const key = externalKey.trim();
@@ -168,26 +183,47 @@ export async function getSpaceByExternalKey(externalKey: string): Promise<Space 
   return mapSpace(data as SpaceRow);
 }
 
-/** Create (or return) the relationship space for one external room. Idempotent
- *  by `externalKey`: provisioning is fired by room-lifecycle events and by
- *  backfill sweeps, so double calls must converge on the same space. The owner
- *  is the machine account doing the provisioning; humans in the room are NOT
- *  members here — their writes arrive attributed via pass-through labels. */
-export async function createRelationshipSpace(
-  input: CreateRelationshipSpaceInput,
+/** Create (or return) the machine-provisioned space for one external key.
+ *  Idempotent by `externalKey`: provisioning is fired by lifecycle events
+ *  (room created, user registered) and by backfill sweeps, so double calls
+ *  must converge on the same space. The owner is the machine account doing
+ *  the provisioning; the humans behind the key are NOT members here — their
+ *  writes arrive attributed via pass-through labels.
+ *
+ *  A `self` space provisioned this way is a personal brain whose id is NOT a
+ *  user id (there is no account): it is addressed with `X-Brain-Space` and
+ *  the provisioner acts in it as `owner` through `space_members`, exactly like
+ *  a relationship space. Everything that keys on `kind === "self"` (taxonomy,
+ *  concept pillar, personal conventions) applies; everything that keys on
+ *  `spaceId === userId` (a human's own brain) does not.
+ *
+ *  Re-provisioning an existing key under a DIFFERENT kind is a contract error
+ *  (a room id is not a person): the caller gets a 409, never a silent reuse. */
+export async function createProvisionedSpace(
+  input: CreateProvisionedSpaceInput,
 ): Promise<{ space: Space; created: boolean }> {
   const externalKey = input.externalKey.trim();
   if (!externalKey) throw new BadRequestError("external_key is required");
+  if (!isProvisionableKind(input.kind)) {
+    throw new BadRequestError(`kind must be one of: ${PROVISIONABLE_KINDS.join(", ")}`);
+  }
   const name = input.name.trim() || externalKey;
 
   const existing = await getSpaceByExternalKey(externalKey);
-  if (existing) return { space: existing, created: false };
+  if (existing) {
+    if (existing.kind !== input.kind) {
+      throw new ConflictError(
+        `external_key is already provisioned as a ${existing.kind} space, not ${input.kind}`,
+      );
+    }
+    return { space: existing, created: false };
+  }
 
   const sb = serviceClient();
   const { data, error } = await sb
     .from("spaces")
     .insert({
-      kind: "relationship",
+      kind: input.kind,
       slug: null,
       name,
       owner_user_id: input.ownerUserId,
@@ -198,8 +234,15 @@ export async function createRelationshipSpace(
   if (error || !data) {
     // A concurrent provision can win the unique-index race; converge on it.
     const raced = await getSpaceByExternalKey(externalKey);
-    if (raced) return { space: raced, created: false };
-    throw new Error(error?.message ?? "could not create relationship space");
+    if (raced) {
+      if (raced.kind !== input.kind) {
+        throw new ConflictError(
+          `external_key is already provisioned as a ${raced.kind} space, not ${input.kind}`,
+        );
+      }
+      return { space: raced, created: false };
+    }
+    throw new Error(error?.message ?? `could not create ${input.kind} space`);
   }
   const space = mapSpace(data as SpaceRow, "owner");
 
@@ -211,8 +254,16 @@ export async function createRelationshipSpace(
     );
   if (memberErr) throw new Error(memberErr.message);
 
-  await seedSpaceConfig(space.id, "relationship");
+  await seedSpaceConfig(space.id, input.kind);
   return { space, created: true };
+}
+
+/** Create (or return) the relationship space for one external room. See
+ *  `createProvisionedSpace` — kept as the named entry point for room brains. */
+export async function createRelationshipSpace(
+  input: CreateRelationshipSpaceInput,
+): Promise<{ space: Space; created: boolean }> {
+  return createProvisionedSpace({ ...input, kind: "relationship" });
 }
 
 export interface UpdateSpaceInput {
@@ -316,6 +367,140 @@ export async function removeMember(spaceId: string, userId: string): Promise<voi
   }
   const { error } = await sb.from("space_members").delete().eq("space_id", spaceId).eq("user_id", userId);
   if (error) throw new Error(error.message);
+}
+
+/** A `self` space created by machine (no account behind it) as opposed to a
+ *  human's own brain — which has `id === ownerUserId` — even when that human
+ *  brain carries an `external_key` because it was LINKED to bonds. */
+export function isMachineSelf(space: Pick<Space, "kind" | "id" | "ownerUserId">): boolean {
+  return space.kind === "self" && space.id !== space.ownerUserId;
+}
+
+/** Self spaces provisioned by machine (bonds personal brains): `kind = self`
+ *  with an `external_key` and no account behind them. The jobs that walk
+ *  "users" (lint) have to walk these explicitly. Linked HUMAN brains are not
+ *  here: they are their owner's, and get whatever their owner gets. */
+export async function listProvisionedSelfSpaceIds(): Promise<string[]> {
+  const sb = serviceClient();
+  const ids: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from("spaces")
+      .select("id, owner_user_id")
+      .eq("kind", "self")
+      .not("external_key", "is", null)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`listProvisionedSelfSpaceIds: ${error.message}`);
+    const batch = (data as { id: string; owner_user_id: string }[] | null) ?? [];
+    ids.push(...batch.filter((r) => r.id !== r.owner_user_id).map((r) => r.id));
+    if (batch.length < PAGE) break;
+  }
+  return ids;
+}
+
+/** Drop a space row. Everything keyed by it in the database (members, index,
+ *  chunks, versions, comments, assets, config, transcript deltas) cascades;
+ *  the vault's files are the caller's to remove first (`brain.deleteNote`). */
+export async function deleteSpaceRow(spaceId: string): Promise<void> {
+  const sb = serviceClient();
+  const { error } = await sb.from("spaces").delete().eq("id", spaceId);
+  if (error) throw new Error(`delete space failed: ${error.message}`);
+}
+
+// ── Linking a human's own brain to an external system ────────────────────────
+
+export interface SelfLink {
+  provider: "bonds";
+  externalKey: string;
+  spaceId: string;
+}
+
+/** The link on a user's own self brain, or null. One slot: `external_key`. */
+export async function getSelfLink(userId: string): Promise<SelfLink | null> {
+  const space = await getSpace(userId);
+  if (!space || space.kind !== "self" || !space.externalKey) return null;
+  return { provider: "bonds", externalKey: space.externalKey, spaceId: space.id };
+}
+
+export interface LinkSelfSpaceInput {
+  /** The human whose own brain (`spaces.id === userId`) is being linked. */
+  userId: string;
+  /** The external system's key for this person (bonds: their Matrix mxid). */
+  externalKey: string;
+  /** The provider's machine account, joined as `admin` so it can act in the
+   *  brain with `X-Brain-Space`. Omit to link without granting access. */
+  grantUserId?: string | null;
+}
+
+/**
+ * Attach an `external_key` to a user's OWN brain so the provider's machine
+ * account finds it when it provisions `kind: "self"` for that key — instead
+ * of creating a second, empty brain for someone who already has one (JD
+ * 2026-10-08: the founders' bonds brains ARE their ohmyself brains).
+ *
+ * The key is a single slot: a brain already linked to a different key keeps
+ * it (409 — unlink first), and a key already on another space is refused
+ * without saying whose it is. Idempotent for the same key.
+ */
+export async function linkSelfSpace(input: LinkSelfSpaceInput): Promise<SelfLink> {
+  const externalKey = input.externalKey.trim();
+  if (!externalKey) throw new BadRequestError("external_key is required");
+  const space = await getSpace(input.userId);
+  if (!space || space.kind !== "self" || space.ownerUserId !== input.userId) {
+    throw new NotFoundError("no personal brain for this account");
+  }
+  if (space.externalKey && space.externalKey !== externalKey) {
+    throw new ConflictError("this brain is already linked to a different external_key — unlink it first");
+  }
+  const taken = await getSpaceByExternalKey(externalKey);
+  if (taken && taken.id !== space.id) {
+    throw new ConflictError("this external_key is already linked to another brain");
+  }
+
+  const sb = serviceClient();
+  if (!space.externalKey) {
+    const { error } = await sb.from("spaces").update({ external_key: externalKey }).eq("id", space.id);
+    if (error) {
+      // Lost a race against another link/provision of the same key.
+      const raced = await getSpaceByExternalKey(externalKey);
+      if (raced && raced.id !== space.id) {
+        throw new ConflictError("this external_key is already linked to another brain");
+      }
+      throw new Error(`link failed: ${error.message}`);
+    }
+  }
+  if (input.grantUserId && input.grantUserId !== input.userId) {
+    const { error } = await sb
+      .from("space_members")
+      .upsert(
+        { space_id: space.id, user_id: input.grantUserId, role: "admin" },
+        { onConflict: "space_id,user_id" },
+      );
+    if (error) throw new Error(`grant failed: ${error.message}`);
+  }
+  return { provider: "bonds", externalKey, spaceId: space.id };
+}
+
+/** Detach the external key from a user's own brain and revoke the provider's
+ *  machine account. The brain and everything in it stay. */
+export async function unlinkSelfSpace(input: { userId: string; revokeUserId?: string | null }): Promise<void> {
+  const space = await getSpace(input.userId);
+  if (!space || space.kind !== "self" || space.ownerUserId !== input.userId) {
+    throw new NotFoundError("no personal brain for this account");
+  }
+  const sb = serviceClient();
+  const { error } = await sb.from("spaces").update({ external_key: null }).eq("id", space.id);
+  if (error) throw new Error(`unlink failed: ${error.message}`);
+  if (input.revokeUserId && input.revokeUserId !== input.userId) {
+    const { error: revokeErr } = await sb
+      .from("space_members")
+      .delete()
+      .eq("space_id", space.id)
+      .eq("user_id", input.revokeUserId);
+    if (revokeErr) throw new Error(`revoke failed: ${revokeErr.message}`);
+  }
 }
 
 /** All self-space ids (personal brains). Paginated; optional single-id filter. */

@@ -3,6 +3,12 @@ import ws from "ws";
 
 let _service: SupabaseClient | null = null;
 
+/** Test seam: swap the service client for an in-memory fake (or null to reset
+ *  to env-based construction). Never used by production code paths. */
+export function __setServiceClientForTests(client: SupabaseClient | null): void {
+  _service = client;
+}
+
 /** Service-role client. Server-side only — bypasses RLS. The server is the
  *  trusted gateway and always scopes queries by a verified userId. */
 export function serviceClient(): SupabaseClient {

@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 
 const MODEL = process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small";
 const apiKey = () => process.env.OPENAI_API_KEY ?? "";
+const baseUrl = () => (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
 
 /** Vector width of the configured embedding model. Must match the pgvector
  *  column dimension in the note_chunks migration (text-embedding-3-small: 1536). */
@@ -41,7 +42,7 @@ async function callOpenAI(inputs: string[]): Promise<number[][] | null> {
   const ac = new AbortController();
   const to = setTimeout(() => ac.abort(), EMBED_TIMEOUT_MS);
   try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
+    const res = await fetch(`${baseUrl()}/embeddings`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: MODEL, input: inputs }),

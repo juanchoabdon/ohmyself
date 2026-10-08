@@ -33,6 +33,9 @@ export {
   listSpacesForUser,
   createCompanySpace,
   createRelationshipSpace,
+  createProvisionedSpace,
+  isProvisionableKind,
+  PROVISIONABLE_KINDS,
   getSpaceByExternalKey,
   updateSpace,
   listMembers,
@@ -40,12 +43,22 @@ export {
   updateMemberRole,
   removeMember,
   listSelfSpaceIds,
+  listProvisionedSelfSpaceIds,
+  isMachineSelf,
+  deleteSpaceRow,
+  getSelfLink,
+  linkSelfSpace,
+  unlinkSelfSpace,
 } from "./spaces.js";
 export type {
   Space,
   SpaceKind,
   CreateSpaceInput,
   CreateRelationshipSpaceInput,
+  CreateProvisionedSpaceInput,
+  ProvisionableKind,
+  SelfLink,
+  LinkSelfSpaceInput,
   UpdateSpaceInput,
   SpaceMember,
 } from "./spaces.js";
@@ -64,6 +77,8 @@ export type {
   DeltaRow,
   ScaffoldInput,
 } from "./relationship.js";
+export { scaffoldPersonalCocina, PERSONAL_SCAFFOLD_PATHS } from "./personal.js";
+export type { PersonalScaffoldInput } from "./personal.js";
 export { serviceClient, brainBucket, logoBucket, assetBucket } from "./supabase.js";
 export {
   createAsset,

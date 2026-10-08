@@ -10,13 +10,21 @@ import {
   requireSpaceAdmin,
   addMember,
   createCompanySpace,
-  createRelationshipSpace,
+  createProvisionedSpace,
+  isProvisionableKind,
+  scaffoldPersonalCocina,
   scaffoldRelationshipCocina,
   ingestTranscriptDeltas,
   createToken,
   getProfileSummary,
+  deleteSpaceRow,
+  getSelfLink,
   getSpace,
+  getSpaceByExternalKey,
+  isMachineSelf,
   getUserConfig,
+  linkSelfSpace,
+  unlinkSelfSpace,
   isFriendVisibility,
   isScope,
   listMembers,
@@ -56,7 +64,23 @@ import {
   type TranscriptMessage,
   type Visibility,
 } from "../core/index.js";
-import { BadRequestError, BrainError, ConflictError, ForbiddenError, PaymentRequiredError } from "../core/errors.js";
+import {
+  BadRequestError,
+  BrainError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  PaymentRequiredError,
+} from "../core/errors.js";
+
+/** The machine account of a linkable provider — joined as `admin` to a brain
+ *  when its owner links it. Only bonds today: `BONDS_SERVICE_USER_ID` is the
+ *  user id `scripts/provision-bonds-service.ts` created. */
+function providerServiceUserId(provider: string): string | null {
+  if (provider === "bonds") return process.env.BONDS_SERVICE_USER_ID?.trim() || null;
+  return null;
+}
+const LINK_PROVIDERS = ["bonds"] as const;
 import { getBillingStatus, requireBasic, requirePro } from "../core/billing.js";
 import { registerBillingRoutes, registerBillingWebhook } from "./billing.js";
 import { subscribeBrainEvents } from "../core/events.js";
@@ -222,6 +246,46 @@ export function createApp(): Hono<Env> {
     return c.json({ username: saved });
   });
 
+  // ── Links: this account's own brain as the brain of an external system ───
+  // bonds (adenda 8): a person who already has an ohmyself account keeps THEIR
+  // brain as their bonds brain. Linking attaches the provider's key (the
+  // Matrix mxid) to the self space and joins the provider's machine account
+  // as admin, so `POST /v1/spaces kind=self external_key=<mxid>` from that
+  // account finds this brain instead of creating an empty one. JWT-only, like
+  // tokens and shares: a leaked personal token must not be able to hand the
+  // brain to a machine.
+  app.get("/v1/me/links", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const link = await getSelfLink(auth.userId);
+    return c.json({ links: link ? [link] : [] });
+  });
+
+  app.post("/v1/me/links", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const body = (await c.req.json().catch(() => ({}))) as { provider?: string; external_key?: string };
+    const provider = (body.provider ?? "bonds").trim();
+    if (!(LINK_PROVIDERS as readonly string[]).includes(provider)) {
+      throw new BadRequestError(`provider must be one of: ${LINK_PROVIDERS.join(", ")}`);
+    }
+    if (!body.external_key?.trim()) throw new BadRequestError("external_key is required");
+    const grantUserId = providerServiceUserId(provider);
+    const link = await linkSelfSpace({ userId: auth.userId, externalKey: body.external_key, grantUserId });
+    return c.json({ link, serviceGranted: Boolean(grantUserId) }, 200);
+  });
+
+  app.delete("/v1/me/links/:provider", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const provider = c.req.param("provider");
+    if (!(LINK_PROVIDERS as readonly string[]).includes(provider)) {
+      throw new BadRequestError(`provider must be one of: ${LINK_PROVIDERS.join(", ")}`);
+    }
+    await unlinkSelfSpace({ userId: auth.userId, revokeUserId: providerServiceUserId(provider) });
+    return c.json({ unlinked: provider });
+  });
+
   // Find people to share your brain with — matches @handle or display name,
   // never raw email. Requires a signed-in session (not a leaked personal token).
   app.get("/v1/users/search", async (c) => {
@@ -293,9 +357,53 @@ export function createApp(): Hono<Env> {
 
   // ── Spaces (personal "self" + company brains) ─────────────────────────────
   // Every space the caller belongs to (self first). Powers the header switcher.
+  //
+  // With `?external_key=<key>[&kind=<kind>]` it is instead a READ-ONLY lookup
+  // of one machine-keyed brain (bonds backfill dry-runs: "how many users
+  // already have a self?" without provisioning anything): the space the
+  // caller can act in under that key, or 404 — also when the key exists but
+  // belongs to another account, or carries the other kind. Nothing is created.
   app.get("/v1/spaces", async (c) => {
     const auth = c.get("auth");
+    const externalKey = c.req.query("external_key")?.trim();
+    if (externalKey) {
+      const kind = c.req.query("kind")?.trim();
+      if (kind && !isProvisionableKind(kind)) {
+        throw new BadRequestError("kind must be self or relationship");
+      }
+      const space = await getSpaceByExternalKey(externalKey);
+      const role = space ? await resolveRole(auth.userId, space.id) : null;
+      if (!space || (kind && space.kind !== kind) || (role !== "owner" && role !== "admin")) {
+        throw new NotFoundError("no space for this external_key");
+      }
+      return c.json({ space, linked: space.ownerUserId !== auth.userId });
+    }
     return c.json({ spaces: await listSpacesForUser(auth.userId), activeSpaceId: auth.spaceId });
+  });
+
+  // Delete a brain the caller's machine account created (bonds stubs: a key
+  // provisioned as `relationship` that must become a `self`). Only for spaces
+  // created by provisioning — never a human's own brain (even when linked),
+  // never a company wiki — and only by their owner. Every note goes through
+  // the normal delete (vault, index, chunks, versions, collab); the row's
+  // dependents cascade. Terminal: the key is free again afterwards.
+  app.delete("/v1/spaces/:id", async (c) => {
+    const auth = c.get("auth");
+    requireWrite(auth);
+    const id = c.req.param("id");
+    const space = await getSpace(id);
+    const role = space ? await resolveRole(auth.userId, id) : null;
+    if (!space || (role !== "owner" && role !== "admin")) throw new NotFoundError("space not found");
+    if (role !== "owner") throw new ForbiddenError("only the space's provisioner can delete it");
+    if (space.kind === "company" || !space.externalKey || (space.kind === "self" && !isMachineSelf(space))) {
+      throw new BadRequestError("only a brain provisioned by machine can be deleted this way");
+    }
+    const all: Visibility[] = ["public", "private", "secret"];
+    const notes = await brain.listNotes(id, { allowed: all, limit: 100_000 });
+    const attr = await attributionWithPerson(auth, `delete space ${id}`);
+    for (const n of notes) await brain.deleteNote(id, n.path, all, attr);
+    await deleteSpaceRow(id);
+    return c.json({ deleted: id, kind: space.kind, externalKey: space.externalKey, notes: notes.length });
   });
 
   // Create a company space and become its owner. The default company taxonomy
@@ -314,40 +422,53 @@ export function createApp(): Hono<Env> {
     };
     if (!body.name?.trim()) throw new BadRequestError("space name is required");
 
-    // Relationship spaces (bonds ai-in-chat B2ext): machine-provisioned brains
-    // keyed by the external room id. Token callers are the POINT here (the
-    // bonds service account), so no JWT gate and no Pro gate — these are not
-    // human "company" seats. Idempotent by external_key: lifecycle events and
-    // backfill sweeps re-fire this call and must converge on one space.
-    if (body.kind === "relationship") {
+    // Machine-provisioned brains (bonds ai-in-chat): `relationship` (B2ext,
+    // the shared brain of one room, keyed by the room id) and `self` (adenda 8
+    // W-S1, one person's private brain, keyed by their mxid). Token callers
+    // are the POINT here (the bonds service account), so no JWT gate and no
+    // Pro gate — these are not human "company" seats, and a `self` provisioned
+    // here has no ohmyself account behind it. Idempotent by external_key:
+    // lifecycle events and backfill sweeps re-fire this call and must
+    // converge on one space.
+    if (isProvisionableKind(body.kind)) {
+      const kind = body.kind;
       if (!body.external_key?.trim()) {
-        throw new BadRequestError("external_key is required for a relationship space");
+        throw new BadRequestError(`external_key is required for a ${kind} space`);
       }
-      const { space, created } = await createRelationshipSpace({
+      const { space, created } = await createProvisionedSpace({
+        kind,
         ownerUserId: auth.userId,
         externalKey: body.external_key,
         name: body.name,
       });
+      const config = await getUserConfig(space.id);
+      const structure = [...new Set(config.noteTypes.map((t) => t.folder))];
       if (space.ownerUserId !== auth.userId) {
         // The key exists under another owner. A provisioner with admin+ access
-        // ADOPTS the space (a pre-linked human brain — e.g. a company wiki
-        // that IS a room's brain, bonds D-N13) without rescaffolding its
-        // cocina: the brain already has its own structure. Anyone else:
+        // ADOPTS the space without rescaffolding its cocina: the brain already
+        // has its own structure. That is the LINKED case — a human's own brain
+        // tied to their mxid via POST /v1/me/links (bonds adenda 8), or a
+        // company wiki that IS a room's brain (bonds D-N13). Anyone else:
         // never leak that the key exists.
         const role = await resolveRole(auth.userId, space.id);
         if (role !== "owner" && role !== "admin") {
           throw new ForbiddenError("this external_key is provisioned by another account");
         }
-        return c.json({ space, created: false, scaffolded: [] }, 200);
+        return c.json({ space, created: false, linked: true, scaffolded: [], structure }, 200);
       }
-      const config = await getUserConfig(space.id);
-      const scaffold = await scaffoldRelationshipCocina(brain, space.id, config, {
-        name: body.name,
-        members: Array.isArray(body.members)
-          ? body.members.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
-          : [],
-      });
-      return c.json({ space, created, scaffolded: scaffold.created }, created ? 201 : 200);
+      const scaffold =
+        kind === "self"
+          ? await scaffoldPersonalCocina(brain, space.id, config, { name: body.name })
+          : await scaffoldRelationshipCocina(brain, space.id, config, {
+              name: body.name,
+              members: Array.isArray(body.members)
+                ? body.members.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+                : [],
+            });
+      return c.json(
+        { space, created, linked: false, scaffolded: scaffold.created, structure },
+        created ? 201 : 200,
+      );
     }
 
     requireJwt(auth);
@@ -373,11 +494,13 @@ export function createApp(): Hono<Env> {
     if (auth.role !== "owner" && auth.role !== "admin") {
       throw new ForbiddenError("only the space's provisioner can push transcript deltas");
     }
-    // La marca de "brain de un room" es external_key, no el kind: un company
-    // wiki adoptado como brain de su room (bonds founders) también ingiere.
+    // La marca de "brain provisionado por máquina" es external_key, no el
+    // kind: un room (`relationship`), una persona de bonds (`self` por mxid)
+    // o un company wiki adoptado como brain de su room (bonds founders)
+    // ingieren igual. Un self humano (sin external_key) no tiene inbox.
     const space = await getSpace(auth.spaceId);
     if (!space || !space.externalKey) {
-      throw new BadRequestError("transcript deltas only exist for provisioned room brains");
+      throw new BadRequestError("transcript deltas only exist for machine-provisioned brains");
     }
     const body = (await c.req.json().catch(() => ({}))) as { messages?: unknown };
     if (!Array.isArray(body.messages) || body.messages.length === 0) {

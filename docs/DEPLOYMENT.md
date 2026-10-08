@@ -109,6 +109,17 @@ out survive, and horizon dates that have passed retire into "Cerrado
 recientemente" on their own (`server/src/core/picture.ts`, tested without a
 model in `picture.test.ts`).
 
+- **Personal brains (bonds adenda 8, since 2026-10-08):** the same tick also
+  distills `self` spaces with an `external_key` (= mxid, see the README's
+  "Machine-provisioned brains"): brains bonds created by machine AND accounts
+  that linked their own brain (`POST /v1/me/links`, or
+  `scripts/link-bonds-brains.ts` for the founders — needs
+  `BONDS_SERVICE_USER_ID` on Railway so linking grants the service account).
+  Those get the PERSONAL shape — `journal/<yyyy>/<day>.md`, facts into
+  `memory/log.md`, no living picture — routed by the space's kind in
+  `distillJournalDay`. Their transcripts arrive through the same
+  `POST /v1/ingest/transcript` inbox. Wiki-lint walks the machine-created ones
+  (a linked human brain is linted as its owner is).
 - **Deploying a prompt/keeper change** is a normal Railway deploy (above). No
   MCP contract bump: the keeper has no tool surface. The next tick picks up the
   new prompt; already-distilled days are not re-run.
