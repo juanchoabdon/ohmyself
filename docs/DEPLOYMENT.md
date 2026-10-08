@@ -97,6 +97,35 @@ Even after the server is updated, clients cache the tool list:
   old `mcp-remote` wrapper cached aggressively — that was the source of a past
   "new tools not showing" scare.)
 
+## Keeper: the living picture of a room (`memory/relationship.md`)
+
+The relationship keeper (`server/src/journal.ts`, scheduler tick) distills each
+closed day of a room into `journal/<day>.md` and MERGES what it learns into the
+room's living picture. Since 2026-10-07 the picture is an **accumulated, dated
+state** (Situación · Contexto de cada uno · Dinámicas · En el horizonte ·
+Cerrado recientemente): the model receives the picture on file plus the last 14
+journal headlines and returns only the sections it changes; sections it leaves
+out survive, and horizon dates that have passed retire into "Cerrado
+recientemente" on their own (`server/src/core/picture.ts`, tested without a
+model in `picture.test.ts`).
+
+- **Deploying a prompt/keeper change** is a normal Railway deploy (above). No
+  MCP contract bump: the keeper has no tool surface. The next tick picks up the
+  new prompt; already-distilled days are not re-run.
+- **Model:** the keeper uses tier `route`, which on Railway is
+  `OHMY_MODEL_ROUTE=gpt-5.2` (the base `OPENAI_MODEL` is only the fallback).
+- **Rebuilding a room's picture** after it was lost or flattened (journals are
+  only read, nothing else is touched; the identity on file is kept):
+
+  ```bash
+  cd server && railway run --service ohmyself-api -- pnpm rebuild:picture \
+    --space <space-id> --from 2026-09-07 --to 2026-10-06 --dry --out /tmp/picture-<space>
+  ```
+
+  Check the printed result (and `--expect "a,b,c"` for the terms it must hold),
+  then run again without `--dry` to write it. Every write is versioned, so the
+  previous picture stays restorable from the note's history.
+
 ## History / why this doc exists
 
 We shipped contract 2.1 (company-space retrieval tools) and deployed only to the
