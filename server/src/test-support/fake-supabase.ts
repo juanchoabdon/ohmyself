@@ -250,6 +250,14 @@ class FakeQuery implements PromiseLike<Result> {
 
     const rows = this.matching(table);
     for (const r of rows) table.splice(table.indexOf(r), 1);
+    if (this.name === "spaces") {
+      // `references public.spaces (id) on delete cascade` on every dependent.
+      const gone = new Set(rows.map((r) => r.id));
+      for (const [name, t] of this.db.tables) {
+        if (name === "spaces") continue;
+        for (let i = t.length - 1; i >= 0; i--) if (gone.has(t[i]?.space_id)) t.splice(i, 1);
+      }
+    }
     return { data: null, error: null };
   }
 

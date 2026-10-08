@@ -331,6 +331,9 @@ function seedHuman(userId: string, name: string): void {
 }
 seedHuman(HUMAN, "Jess");
 const humanJwt = db.jwtFor(HUMAN);
+// The service account is an auth user too: signup gave it a self space of its own.
+db.table("spaces").push({ id: BONDS, kind: "self", slug: null, name: "bonds service", owner_user_id: BONDS, external_key: null });
+db.table("space_members").push({ space_id: BONDS, user_id: BONDS, role: "owner" });
 
 test("linking: a human attaches their mxid to their own brain and bonds gets in as admin", async () => {
   const company = await createCompanySpace({ ownerUserId: HUMAN, name: "Jess Co" });
@@ -448,4 +451,79 @@ test("unlinking keeps the brain and revokes bonds", async () => {
   const f = (await fresh.json()) as { space: { id: string }; linked: boolean };
   assert.notEqual(f.space.id, HUMAN);
   assert.equal(f.linked, false);
+});
+
+// ── Read-only lookup, and what happens to a key that already has another kind ─
+
+test("GET /v1/spaces?external_key= looks a brain up without creating anything", async () => {
+  const SEBAS = randomUUID();
+  const SEBAS_MXID = "@sebas:matrix.bonds.chat";
+  seedHuman(SEBAS, "Sebas");
+
+  const before = db.table("spaces").length;
+  const missing = await call(bondsToken, "GET", `/v1/spaces?kind=self&external_key=${encodeURIComponent(SEBAS_MXID)}`);
+  assert.equal(missing.status, 404);
+  assert.equal(db.table("spaces").length, before, "a lookup never provisions");
+
+  await call(db.jwtFor(SEBAS), "POST", "/v1/me/links", { body: { external_key: SEBAS_MXID } });
+  const found = await call(bondsToken, "GET", `/v1/spaces?kind=self&external_key=${encodeURIComponent(SEBAS_MXID)}`);
+  assert.equal(found.status, 200);
+  const f = (await found.json()) as { space: { id: string; kind: string }; linked: boolean };
+  assert.equal(f.space.id, SEBAS);
+  assert.equal(f.linked, true);
+
+  const machine = await call(bondsToken, "GET", `/v1/spaces?external_key=${encodeURIComponent(MXID)}`);
+  assert.equal(machine.status, 200);
+  const m = (await machine.json()) as { space: { id: string }; linked: boolean };
+  assert.equal(m.space.id, selfId);
+  assert.equal(m.linked, false);
+
+  const wrongKind = await call(bondsToken, "GET", `/v1/spaces?kind=relationship&external_key=${encodeURIComponent(SEBAS_MXID)}`);
+  assert.equal(wrongKind.status, 404, "a kind filter that does not match is a miss, not a leak");
+  const badKind = await call(bondsToken, "GET", `/v1/spaces?kind=company&external_key=x`);
+  assert.equal(badKind.status, 400);
+  const foreign = await call(otherToken, "GET", `/v1/spaces?external_key=${encodeURIComponent(SEBAS_MXID)}`);
+  assert.equal(foreign.status, 404, "another account cannot tell the key exists");
+
+  const plain = await call(bondsToken, "GET", "/v1/spaces");
+  assert.equal(plain.status, 200);
+  assert.ok(Array.isArray(((await plain.json()) as { spaces: unknown[] }).spaces), "without a key it is still the listing");
+});
+
+test("a key stuck on the other kind is terminal: delete the stub, then provision again", async () => {
+  const DANI_MXID = "@dani:matrix.bonds.chat";
+  // The old bonds API used a relationship space as the per-user stub.
+  const stub = await call(bondsToken, "POST", "/v1/spaces", {
+    body: { kind: "relationship", external_key: DANI_MXID, name: "stub" },
+  });
+  assert.equal(stub.status, 201);
+  const stubId = ((await stub.json()) as { space: { id: string } }).space.id;
+  await call(bondsToken, "POST", "/v1/ingest/transcript", {
+    space: stubId,
+    body: { messages: [{ external_id: "$d1", author: "Dani", at: "2026-01-09T10:00:00Z", body: "hola" }] },
+  });
+
+  const asSelf = await call(bondsToken, "POST", "/v1/spaces", { body: { kind: "self", external_key: DANI_MXID, name: "Dani" } });
+  assert.equal(asSelf.status, 409);
+
+  // Guard rails on delete: not other accounts, not a human's brain, not the service's own brain.
+  assert.equal((await call(otherToken, "DELETE", `/v1/spaces/${stubId}`)).status, 404);
+  assert.equal((await call(bondsToken, "DELETE", `/v1/spaces/${HUMAN}`)).status, 404, "bonds was revoked from Jess's brain");
+  assert.equal((await call(humanJwt, "DELETE", `/v1/spaces/${HUMAN}`)).status, 400, "a human's own brain is not deletable here");
+  assert.equal((await call(bondsToken, "DELETE", `/v1/spaces/${BONDS}`)).status, 400);
+
+  const del = await call(bondsToken, "DELETE", `/v1/spaces/${stubId}`);
+  assert.equal(del.status, 200);
+  assert.deepEqual(await del.json(), { deleted: stubId, kind: "relationship", externalKey: DANI_MXID, notes: 3 });
+  assert.equal(db.table("spaces").some((r) => r.id === stubId), false);
+  assert.equal(db.table("space_members").some((r) => r.space_id === stubId), false, "cascade");
+  assert.equal(db.table("transcript_deltas").some((r) => r.space_id === stubId), false, "cascade");
+  assert.equal((await call(bondsToken, "GET", "/v1/notes", { space: stubId })).status, 401, "gone");
+
+  const fresh = await call(bondsToken, "POST", "/v1/spaces", { body: { kind: "self", external_key: DANI_MXID, name: "Dani" } });
+  assert.equal(fresh.status, 201);
+  const f = (await fresh.json()) as { space: { id: string; kind: string } };
+  assert.equal(f.space.kind, "self");
+  assert.notEqual(f.space.id, stubId);
+  assert.equal((await call(bondsToken, "GET", "/v1/notes", { space: f.space.id })).status, 200);
 });

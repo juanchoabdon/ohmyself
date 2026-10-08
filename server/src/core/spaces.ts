@@ -400,6 +400,15 @@ export async function listProvisionedSelfSpaceIds(): Promise<string[]> {
   return ids;
 }
 
+/** Drop a space row. Everything keyed by it in the database (members, index,
+ *  chunks, versions, comments, assets, config, transcript deltas) cascades;
+ *  the vault's files are the caller's to remove first (`brain.deleteNote`). */
+export async function deleteSpaceRow(spaceId: string): Promise<void> {
+  const sb = serviceClient();
+  const { error } = await sb.from("spaces").delete().eq("id", spaceId);
+  if (error) throw new Error(`delete space failed: ${error.message}`);
+}
+
 // ── Linking a human's own brain to an external system ────────────────────────
 
 export interface SelfLink {

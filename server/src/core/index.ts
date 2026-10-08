@@ -45,6 +45,7 @@ export {
   listSelfSpaceIds,
   listProvisionedSelfSpaceIds,
   isMachineSelf,
+  deleteSpaceRow,
   getSelfLink,
   linkSelfSpace,
   unlinkSelfSpace,

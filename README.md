@@ -231,6 +231,35 @@ Content-Type: application/json
   provisioner is its `owner` through `space_members`.
 - For `relationship`, `members: string[]` (display names) seeds `people.md`.
 
+**Look one up without provisioning** (backfill dry-runs — "how many users
+already have a brain?"):
+
+```http
+GET /v1/spaces?kind=self&external_key=@juandi:matrix.bonds.chat
+→ 200 { "space": { … }, "linked": true }      // the brain the caller can act in under that key
+→ 404                                          // nobody linked or provisioned it — OR it is another
+                                               //   account's, OR it carries the other kind (no leak)
+```
+
+Without `external_key` the route is still the caller's space listing.
+
+**A key that already exists with the other kind is terminal.** Provisioning
+`self` for a key that was created as `relationship` (the old per-user stub)
+answers `409` and never converts: a room brain's cocina (`people.md`,
+`journal/<day>.md`, `memory/relationship.md`) is not a person's. The
+consumer deletes the stub first, then provisions again:
+
+```http
+DELETE /v1/spaces/<stub id>          # the stub's provisioner only
+→ 200 { "deleted": "<id>", "kind": "relationship", "externalKey": "…", "notes": 3 }
+```
+
+Only a brain created by provisioning can be deleted this way — never a
+human's own brain (linked or not), never a company wiki — and only by its
+owner. Every note goes through the normal delete (vault, index, versions);
+members, transcript deltas, comments and config cascade. Media objects in the
+asset bucket are not swept.
+
 **Link an existing account's brain (the person does it, signed in):**
 
 ```http
