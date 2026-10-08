@@ -310,15 +310,16 @@ export async function requirePro(userId: string, via?: string | null): Promise<v
 export async function requireNoteRoom(spaceId: string): Promise<void> {
   if (!billingEnforced()) return;
   const sb = serviceClient();
-  const { data } = await sb.from("spaces").select("kind, external_key").eq("id", spaceId).maybeSingle();
-  const row = data as { kind?: string; external_key?: string | null } | null;
+  const { data } = await sb.from("spaces").select("kind, owner_user_id").eq("id", spaceId).maybeSingle();
+  const row = data as { kind?: string; owner_user_id?: string } | null;
   const kind = row?.kind;
   if (kind && kind !== "self") return;
   // A `self` provisioned by machine (bonds personal brain, keyed by mxid) has
   // no account behind it — the space id is not a user id and there is no
   // entitlement to look up. It is billed through the provisioner's contract,
-  // not through the personal note cap.
-  if (row?.external_key) return;
+  // not through the personal note cap. A human's brain LINKED to bonds is
+  // still the human's (id === owner) and keeps their plan's cap.
+  if (row?.owner_user_id && row.owner_user_id !== spaceId) return;
   const userId = spaceId;
   const tier = await hostedTier(userId);
   const limit = NOTE_LIMIT[tier];

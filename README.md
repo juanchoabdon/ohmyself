@@ -223,9 +223,58 @@ Content-Type: application/json
 - `400` — `external_key` missing. `409` — the key is already provisioned as the
   other kind (a room id is not a person). `403` — the key belongs to another
   account (never leaks whether it exists).
-- A `self` provisioned here has **no ohmyself account**: `space.id` is a fresh
-  uuid, not a user id. The provisioner is its `owner` through `space_members`.
+- **If a person already has an ohmyself account and linked it** (below), the
+  call returns THEIR brain: `200`, `space.id` = their user id, `ownerUserId` =
+  them, `linked: true`, `created: false`, `scaffolded: []`. Nothing in it is
+  touched. Only a key nobody linked gets a new, empty brain (`linked: false`),
+  which has **no ohmyself account**: `space.id` is a fresh uuid, and the
+  provisioner is its `owner` through `space_members`.
 - For `relationship`, `members: string[]` (display names) seeds `people.md`.
+
+**Link an existing account's brain (the person does it, signed in):**
+
+```http
+POST /v1/me/links
+Authorization: Bearer <session JWT>         # a personal `oms_` token is refused (403)
+
+{ "provider": "bonds", "external_key": "@juandi:matrix.bonds.chat" }
+```
+
+```json
+200 { "link": { "provider": "bonds", "externalKey": "@juandi:matrix.bonds.chat", "spaceId": "<their user id>" },
+      "serviceGranted": true }
+```
+
+`GET /v1/me/links` lists it (`{ links: [...] }`); `DELETE /v1/me/links/bonds`
+unlinks — the brain and everything written in it stay, bonds' access is
+revoked. The key is one slot per brain: linking a second key is `409` until the
+first is unlinked, and a key already linked elsewhere is `409`. Linking joins
+the provider's machine account (`BONDS_SERVICE_USER_ID`, the user
+`scripts/provision-bonds-service.ts` created) as `admin` of the brain, which is
+what lets it act there; without that env var the key is attached and
+`serviceGranted` is `false`.
+
+To set the founders' links by hand (same operation, run as admin — pass the
+real mxids, the script does not guess them):
+
+```bash
+cd server && railway run --service ohmyself-api -- pnpm tsx src/scripts/link-bonds-brains.ts \
+  --link juandi@globa.ai='@juandi:matrix.bonds.chat' --link <email|@handle|id>='<mxid>' --dry
+```
+
+Drop `--dry` to write. `--unlink <account>` detaches.
+
+**What bonds may do in a linked brain, and what stays the person's.** The
+person stays `owner`: name, branding, sharing, tokens, connections, lint
+apply and the link itself are theirs alone (JWT-only routes). bonds acts as
+`admin` **only with `X-Brain-Space` set to that brain's id** — a service token
+with the id of any other space of that person (their company wiki, a brain
+shared with them) is `401 not a member`, and a different machine account is
+`401` on the linked brain too. As admin it can push transcripts, and read and
+write notes: the journal (`log_journal`, the keeper), `identity/`
+(`update_identity`), `memory/log.md` (`remember`), `people/`, `projects/`,
+`goals/`, free notes. Admin reads include `secret` notes; a provider that
+should not see them sends `X-Brain-Scope: private` on its calls.
 
 **Talk to the brain:** every `/v1/*` and `/mcp` call carries
 `X-Brain-Space: <space.id>`. Only the provisioning account (or an admin it

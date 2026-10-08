@@ -44,6 +44,10 @@ export {
   removeMember,
   listSelfSpaceIds,
   listProvisionedSelfSpaceIds,
+  isMachineSelf,
+  getSelfLink,
+  linkSelfSpace,
+  unlinkSelfSpace,
 } from "./spaces.js";
 export type {
   Space,
@@ -52,6 +56,8 @@ export type {
   CreateRelationshipSpaceInput,
   CreateProvisionedSpaceInput,
   ProvisionableKind,
+  SelfLink,
+  LinkSelfSpaceInput,
   UpdateSpaceInput,
   SpaceMember,
 } from "./spaces.js";

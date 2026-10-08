@@ -369,9 +369,17 @@ export async function removeMember(spaceId: string, userId: string): Promise<voi
   if (error) throw new Error(error.message);
 }
 
+/** A `self` space created by machine (no account behind it) as opposed to a
+ *  human's own brain — which has `id === ownerUserId` — even when that human
+ *  brain carries an `external_key` because it was LINKED to bonds. */
+export function isMachineSelf(space: Pick<Space, "kind" | "id" | "ownerUserId">): boolean {
+  return space.kind === "self" && space.id !== space.ownerUserId;
+}
+
 /** Self spaces provisioned by machine (bonds personal brains): `kind = self`
- *  with an `external_key`. These have no human account behind them, so the
- *  jobs that walk "users" (lint) have to walk them explicitly. */
+ *  with an `external_key` and no account behind them. The jobs that walk
+ *  "users" (lint) have to walk these explicitly. Linked HUMAN brains are not
+ *  here: they are their owner's, and get whatever their owner gets. */
 export async function listProvisionedSelfSpaceIds(): Promise<string[]> {
   const sb = serviceClient();
   const ids: string[] = [];
@@ -379,17 +387,111 @@ export async function listProvisionedSelfSpaceIds(): Promise<string[]> {
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await sb
       .from("spaces")
-      .select("id")
+      .select("id, owner_user_id")
       .eq("kind", "self")
       .not("external_key", "is", null)
       .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`listProvisionedSelfSpaceIds: ${error.message}`);
-    const batch = (data as { id: string }[] | null) ?? [];
-    ids.push(...batch.map((r) => r.id));
+    const batch = (data as { id: string; owner_user_id: string }[] | null) ?? [];
+    ids.push(...batch.filter((r) => r.id !== r.owner_user_id).map((r) => r.id));
     if (batch.length < PAGE) break;
   }
   return ids;
+}
+
+// ── Linking a human's own brain to an external system ────────────────────────
+
+export interface SelfLink {
+  provider: "bonds";
+  externalKey: string;
+  spaceId: string;
+}
+
+/** The link on a user's own self brain, or null. One slot: `external_key`. */
+export async function getSelfLink(userId: string): Promise<SelfLink | null> {
+  const space = await getSpace(userId);
+  if (!space || space.kind !== "self" || !space.externalKey) return null;
+  return { provider: "bonds", externalKey: space.externalKey, spaceId: space.id };
+}
+
+export interface LinkSelfSpaceInput {
+  /** The human whose own brain (`spaces.id === userId`) is being linked. */
+  userId: string;
+  /** The external system's key for this person (bonds: their Matrix mxid). */
+  externalKey: string;
+  /** The provider's machine account, joined as `admin` so it can act in the
+   *  brain with `X-Brain-Space`. Omit to link without granting access. */
+  grantUserId?: string | null;
+}
+
+/**
+ * Attach an `external_key` to a user's OWN brain so the provider's machine
+ * account finds it when it provisions `kind: "self"` for that key — instead
+ * of creating a second, empty brain for someone who already has one (JD
+ * 2026-10-08: the founders' bonds brains ARE their ohmyself brains).
+ *
+ * The key is a single slot: a brain already linked to a different key keeps
+ * it (409 — unlink first), and a key already on another space is refused
+ * without saying whose it is. Idempotent for the same key.
+ */
+export async function linkSelfSpace(input: LinkSelfSpaceInput): Promise<SelfLink> {
+  const externalKey = input.externalKey.trim();
+  if (!externalKey) throw new BadRequestError("external_key is required");
+  const space = await getSpace(input.userId);
+  if (!space || space.kind !== "self" || space.ownerUserId !== input.userId) {
+    throw new NotFoundError("no personal brain for this account");
+  }
+  if (space.externalKey && space.externalKey !== externalKey) {
+    throw new ConflictError("this brain is already linked to a different external_key — unlink it first");
+  }
+  const taken = await getSpaceByExternalKey(externalKey);
+  if (taken && taken.id !== space.id) {
+    throw new ConflictError("this external_key is already linked to another brain");
+  }
+
+  const sb = serviceClient();
+  if (!space.externalKey) {
+    const { error } = await sb.from("spaces").update({ external_key: externalKey }).eq("id", space.id);
+    if (error) {
+      // Lost a race against another link/provision of the same key.
+      const raced = await getSpaceByExternalKey(externalKey);
+      if (raced && raced.id !== space.id) {
+        throw new ConflictError("this external_key is already linked to another brain");
+      }
+      throw new Error(`link failed: ${error.message}`);
+    }
+  }
+  if (input.grantUserId && input.grantUserId !== input.userId) {
+    const { error } = await sb
+      .from("space_members")
+      .upsert(
+        { space_id: space.id, user_id: input.grantUserId, role: "admin" },
+        { onConflict: "space_id,user_id" },
+      );
+    if (error) throw new Error(`grant failed: ${error.message}`);
+  }
+  return { provider: "bonds", externalKey, spaceId: space.id };
+}
+
+/** Detach the external key from a user's own brain and revoke the provider's
+ *  machine account. The brain and everything in it stay. */
+export async function unlinkSelfSpace(input: { userId: string; revokeUserId?: string | null }): Promise<void> {
+  const space = await getSpace(input.userId);
+  if (!space || space.kind !== "self" || space.ownerUserId !== input.userId) {
+    throw new NotFoundError("no personal brain for this account");
+  }
+  const sb = serviceClient();
+  const { error } = await sb.from("spaces").update({ external_key: null }).eq("id", space.id);
+  if (error) throw new Error(`unlink failed: ${error.message}`);
+  if (input.revokeUserId && input.revokeUserId !== input.userId) {
+    const { error: revokeErr } = await sb
+      .from("space_members")
+      .delete()
+      .eq("space_id", space.id)
+      .eq("user_id", input.revokeUserId);
+    if (revokeErr) throw new Error(`revoke failed: ${revokeErr.message}`);
+  }
 }
 
 /** All self-space ids (personal brains). Paginated; optional single-id filter. */

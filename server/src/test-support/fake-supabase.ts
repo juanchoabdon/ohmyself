@@ -43,9 +43,20 @@ export class FakeSupabase {
     return new FakeQuery(this, name);
   }
 
-  /** Mirrors `sb.auth.getUser` for the JWT path — never valid here. */
+  /** Fake session tokens: `jwtFor(userId)` returns a bearer `auth.getUser`
+   *  resolves to that user, so JWT-only routes can be exercised. */
+  readonly jwts = new Map<string, string>();
+  jwtFor(userId: string): string {
+    const token = `jwt-${userId}`;
+    this.jwts.set(token, userId);
+    return token;
+  }
   readonly auth = {
-    getUser: async () => ({ data: { user: null }, error: { message: "jwt not supported in tests" } }),
+    getUser: async (token: string) => {
+      const id = this.jwts.get(token);
+      if (!id) return { data: { user: null }, error: { message: "invalid jwt" } };
+      return { data: { user: { id } }, error: null };
+    },
   };
 
   readonly storage = {

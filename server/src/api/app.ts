@@ -17,8 +17,11 @@ import {
   ingestTranscriptDeltas,
   createToken,
   getProfileSummary,
+  getSelfLink,
   getSpace,
   getUserConfig,
+  linkSelfSpace,
+  unlinkSelfSpace,
   isFriendVisibility,
   isScope,
   listMembers,
@@ -59,6 +62,15 @@ import {
   type Visibility,
 } from "../core/index.js";
 import { BadRequestError, BrainError, ConflictError, ForbiddenError, PaymentRequiredError } from "../core/errors.js";
+
+/** The machine account of a linkable provider — joined as `admin` to a brain
+ *  when its owner links it. Only bonds today: `BONDS_SERVICE_USER_ID` is the
+ *  user id `scripts/provision-bonds-service.ts` created. */
+function providerServiceUserId(provider: string): string | null {
+  if (provider === "bonds") return process.env.BONDS_SERVICE_USER_ID?.trim() || null;
+  return null;
+}
+const LINK_PROVIDERS = ["bonds"] as const;
 import { getBillingStatus, requireBasic, requirePro } from "../core/billing.js";
 import { registerBillingRoutes, registerBillingWebhook } from "./billing.js";
 import { subscribeBrainEvents } from "../core/events.js";
@@ -224,6 +236,46 @@ export function createApp(): Hono<Env> {
     return c.json({ username: saved });
   });
 
+  // ── Links: this account's own brain as the brain of an external system ───
+  // bonds (adenda 8): a person who already has an ohmyself account keeps THEIR
+  // brain as their bonds brain. Linking attaches the provider's key (the
+  // Matrix mxid) to the self space and joins the provider's machine account
+  // as admin, so `POST /v1/spaces kind=self external_key=<mxid>` from that
+  // account finds this brain instead of creating an empty one. JWT-only, like
+  // tokens and shares: a leaked personal token must not be able to hand the
+  // brain to a machine.
+  app.get("/v1/me/links", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const link = await getSelfLink(auth.userId);
+    return c.json({ links: link ? [link] : [] });
+  });
+
+  app.post("/v1/me/links", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const body = (await c.req.json().catch(() => ({}))) as { provider?: string; external_key?: string };
+    const provider = (body.provider ?? "bonds").trim();
+    if (!(LINK_PROVIDERS as readonly string[]).includes(provider)) {
+      throw new BadRequestError(`provider must be one of: ${LINK_PROVIDERS.join(", ")}`);
+    }
+    if (!body.external_key?.trim()) throw new BadRequestError("external_key is required");
+    const grantUserId = providerServiceUserId(provider);
+    const link = await linkSelfSpace({ userId: auth.userId, externalKey: body.external_key, grantUserId });
+    return c.json({ link, serviceGranted: Boolean(grantUserId) }, 200);
+  });
+
+  app.delete("/v1/me/links/:provider", async (c) => {
+    const auth = c.get("auth");
+    requireJwt(auth);
+    const provider = c.req.param("provider");
+    if (!(LINK_PROVIDERS as readonly string[]).includes(provider)) {
+      throw new BadRequestError(`provider must be one of: ${LINK_PROVIDERS.join(", ")}`);
+    }
+    await unlinkSelfSpace({ userId: auth.userId, revokeUserId: providerServiceUserId(provider) });
+    return c.json({ unlinked: provider });
+  });
+
   // Find people to share your brain with — matches @handle or display name,
   // never raw email. Requires a signed-in session (not a leaked personal token).
   app.get("/v1/users/search", async (c) => {
@@ -335,20 +387,21 @@ export function createApp(): Hono<Env> {
         externalKey: body.external_key,
         name: body.name,
       });
+      const config = await getUserConfig(space.id);
+      const structure = [...new Set(config.noteTypes.map((t) => t.folder))];
       if (space.ownerUserId !== auth.userId) {
         // The key exists under another owner. A provisioner with admin+ access
-        // ADOPTS the space (a pre-linked human brain — e.g. a company wiki
-        // that IS a room's brain, bonds D-N13) without rescaffolding its
-        // cocina: the brain already has its own structure. Anyone else:
+        // ADOPTS the space without rescaffolding its cocina: the brain already
+        // has its own structure. That is the LINKED case — a human's own brain
+        // tied to their mxid via POST /v1/me/links (bonds adenda 8), or a
+        // company wiki that IS a room's brain (bonds D-N13). Anyone else:
         // never leak that the key exists.
         const role = await resolveRole(auth.userId, space.id);
         if (role !== "owner" && role !== "admin") {
           throw new ForbiddenError("this external_key is provisioned by another account");
         }
-        return c.json({ space, created: false, scaffolded: [] }, 200);
+        return c.json({ space, created: false, linked: true, scaffolded: [], structure }, 200);
       }
-      const config = await getUserConfig(space.id);
-      const structure = [...new Set(config.noteTypes.map((t) => t.folder))];
       const scaffold =
         kind === "self"
           ? await scaffoldPersonalCocina(brain, space.id, config, { name: body.name })
@@ -359,7 +412,7 @@ export function createApp(): Hono<Env> {
                 : [],
             });
       return c.json(
-        { space, created, scaffolded: scaffold.created, structure },
+        { space, created, linked: false, scaffolded: scaffold.created, structure },
         created ? 201 : 200,
       );
     }

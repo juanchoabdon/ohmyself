@@ -88,9 +88,10 @@ const { buildMcpServer } = await import("../mcp/tools.js");
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
 
-const app = createApp();
 const BONDS = randomUUID(); // the bonds service account
 const OTHER = randomUUID(); // some other machine account
+process.env.BONDS_SERVICE_USER_ID = BONDS;
+const app = createApp();
 const { token: bondsToken } = await createToken(BONDS, "bonds-service", "secret");
 const { token: otherToken } = await createToken(OTHER, "other-service", "secret");
 
@@ -313,4 +314,138 @@ test("the personal MCP tools work against the brain through X-Brain-Space", asyn
 
   // The same tools, from the other account, see nothing.
   await assert.rejects(mcpClient(otherToken, selfId), /not a member/);
+});
+
+// ── A person who already has an account keeps THEIR brain as their bonds brain ─
+const { createCompanySpace } = await import("../core/spaces.js");
+
+const HUMAN = randomUUID();
+const HUMAN_MXID = "@jess:matrix.bonds.chat";
+let humanCompanyId = "";
+
+function seedHuman(userId: string, name: string): void {
+  // What `handle_new_user` does on signup: a self space whose id IS the user id.
+  db.table("spaces").push({ id: userId, kind: "self", slug: null, name, owner_user_id: userId, external_key: null });
+  db.table("space_members").push({ space_id: userId, user_id: userId, role: "owner" });
+  db.table("profiles").push({ id: userId, email: `${name.toLowerCase()}@example.com`, display_name: name, username: name.toLowerCase() });
+}
+seedHuman(HUMAN, "Jess");
+const humanJwt = db.jwtFor(HUMAN);
+
+test("linking: a human attaches their mxid to their own brain and bonds gets in as admin", async () => {
+  const company = await createCompanySpace({ ownerUserId: HUMAN, name: "Jess Co" });
+  humanCompanyId = company.id;
+
+  const none = await call(humanJwt, "GET", "/v1/me/links");
+  assert.deepEqual(await none.json(), { links: [] });
+
+  const linked = await call(humanJwt, "POST", "/v1/me/links", { body: { provider: "bonds", external_key: HUMAN_MXID } });
+  assert.equal(linked.status, 200);
+  assert.deepEqual(await linked.json(), {
+    link: { provider: "bonds", externalKey: HUMAN_MXID, spaceId: HUMAN },
+    serviceGranted: true,
+  });
+  const again = await call(humanJwt, "POST", "/v1/me/links", { body: { provider: "bonds", external_key: HUMAN_MXID } });
+  assert.equal(again.status, 200, "idempotent for the same key");
+
+  const list = await call(humanJwt, "GET", "/v1/me/links");
+  assert.deepEqual(await list.json(), { links: [{ provider: "bonds", externalKey: HUMAN_MXID, spaceId: HUMAN }] });
+
+  // A personal token cannot hand the brain to a machine; only a session can.
+  const { token: humanToken } = await createToken(HUMAN, "cursor", "secret");
+  const viaToken = await call(humanToken, "POST", "/v1/me/links", { body: { external_key: "@x:bonds" } });
+  assert.equal(viaToken.status, 403);
+  const unknownProvider = await call(humanJwt, "POST", "/v1/me/links", { body: { provider: "slack", external_key: "U1" } });
+  assert.equal(unknownProvider.status, 400);
+});
+
+test("provisioning kind=self for a linked mxid returns the human's existing brain, never a new one", async () => {
+  const res = await call(bondsToken, "POST", "/v1/spaces", {
+    body: { kind: "self", external_key: HUMAN_MXID, name: "Jess (from bonds)" },
+  });
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as {
+    space: { id: string; kind: string; name: string; ownerUserId: string; externalKey: string };
+    created: boolean;
+    linked: boolean;
+    scaffolded: string[];
+    structure: string[];
+  };
+  assert.equal(body.space.id, HUMAN, "the brain IS the human's self space");
+  assert.equal(body.space.ownerUserId, HUMAN, "the human stays the owner");
+  assert.equal(body.space.name, "Jess", "the name is not overwritten by the provisioner");
+  assert.equal(body.created, false);
+  assert.equal(body.linked, true);
+  assert.deepEqual(body.scaffolded, [], "a brain that exists is never rescaffolded");
+  assert.ok(body.structure.includes("identity"));
+  assert.equal(db.table("spaces").filter((r) => r.external_key === HUMAN_MXID).length, 1, "no second space");
+
+  // bonds acts in it as admin with X-Brain-Space…
+  const me = await call(bondsToken, "GET", "/v1/me", { space: HUMAN });
+  const meBody = (await me.json()) as { spaceId: string; role: string };
+  assert.equal(meBody.spaceId, HUMAN);
+  assert.equal(meBody.role, "admin");
+  const push = await call(bondsToken, "POST", "/v1/ingest/transcript", {
+    space: HUMAN,
+    body: { messages: [{ external_id: "$h1", author: "Jess", at: "2026-01-07T09:00:00Z", body: "Hoy corro 15k con Vale" }] },
+  });
+  assert.equal(push.status, 202);
+  const tick = await journalTick();
+  assert.equal(tick.written, 1);
+  const journal = await call(humanJwt, "GET", "/v1/notes/journal/2026/2026-01-07.md");
+  assert.equal(journal.status, 200, "the human sees the keeper's journal in their own brain");
+
+  const { tool, close } = await mcpClient(bondsToken, HUMAN);
+  try {
+    assert.match(await tool("who_am_i"), /second self of Jess/);
+    assert.match(await tool("log_journal", { entry: "nota de bonds", date: "2026-01-08" }), /journal\/2026\/2026-01-08\.md/);
+  } finally {
+    await close();
+  }
+});
+
+test("a linked brain is one slot: another mxid cannot claim it, and the key cannot be reused", async () => {
+  const other = await call(humanJwt, "POST", "/v1/me/links", { body: { external_key: "@jess2:matrix.bonds.chat" } });
+  assert.equal(other.status, 409, "already linked to a different key — unlink first");
+
+  const DANI = randomUUID();
+  seedHuman(DANI, "Dani");
+  const steal = await call(db.jwtFor(DANI), "POST", "/v1/me/links", { body: { external_key: HUMAN_MXID } });
+  assert.equal(steal.status, 409, "the key is already another brain's");
+
+  // And provisioning cannot turn a human brain into a room either.
+  const asRoom = await call(bondsToken, "POST", "/v1/spaces", {
+    body: { kind: "relationship", external_key: HUMAN_MXID, name: "x" },
+  });
+  assert.equal(asRoom.status, 409);
+});
+
+test("the service token only reaches the linked brain — never the person's other spaces", async () => {
+  const company = await call(bondsToken, "GET", "/v1/notes", { space: humanCompanyId });
+  assert.equal(company.status, 401, "the human's company wiki is not bonds' to read");
+  const companyMcp = mcpClient(bondsToken, humanCompanyId);
+  await assert.rejects(companyMcp, /not a member/);
+
+  // Nor can another machine account read the linked brain.
+  const peek = await call(otherToken, "GET", "/v1/notes", { space: HUMAN });
+  assert.equal(peek.status, 401);
+  const claim = await call(otherToken, "POST", "/v1/spaces", { body: { kind: "self", external_key: HUMAN_MXID, name: "x" } });
+  assert.equal(claim.status, 403);
+});
+
+test("unlinking keeps the brain and revokes bonds", async () => {
+  const res = await call(humanJwt, "DELETE", "/v1/me/links/bonds");
+  assert.equal(res.status, 200);
+  assert.deepEqual(await (await call(humanJwt, "GET", "/v1/me/links")).json(), { links: [] });
+  const gone = await call(bondsToken, "GET", "/v1/notes", { space: HUMAN });
+  assert.equal(gone.status, 401);
+  const still = await call(humanJwt, "GET", "/v1/notes/journal/2026/2026-01-07.md");
+  assert.equal(still.status, 200, "what the keeper wrote stays with the person");
+
+  // Provisioning that mxid now creates a NEW machine brain (nobody claims it).
+  const fresh = await call(bondsToken, "POST", "/v1/spaces", { body: { kind: "self", external_key: HUMAN_MXID, name: "Jess" } });
+  assert.equal(fresh.status, 201);
+  const f = (await fresh.json()) as { space: { id: string }; linked: boolean };
+  assert.notEqual(f.space.id, HUMAN);
+  assert.equal(f.linked, false);
 });
