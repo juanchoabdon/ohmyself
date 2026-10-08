@@ -31,6 +31,7 @@ import { NotFoundError } from "./core/errors.js";
 import type { UserConfig } from "./core/config.js";
 import type { Visibility } from "./core/types.js";
 import {
+  annotateIds,
   identityFromPicture,
   nextPicture,
   pictureWithoutIdentity,
@@ -89,6 +90,7 @@ const JournalDaySchema = z.object({
     )
     .default([]),
   relationship_update: z.string().default(""),
+  picture_drop: z.array(z.string()).default([]),
   group_identity: z.string().default(""),
 });
 type JournalDay = z.infer<typeof JournalDaySchema>;
@@ -109,7 +111,10 @@ export const PICTURE_RULES = `- relationship_update is the ACCUMULATED state of 
 - The rule is MERGE, never rewrite from today:
     · every conclusion still in force is carried forward (word for word or
       refined) — a day on which nobody mentions the marathon does not mean
-      the marathon stopped mattering;
+      the marathon stopped mattering. When you rewrite a section, account for
+      EVERY item of the version on file: it reappears (possibly refined), it
+      moves to "Cerrado recientemente", or it was contradicted. Nothing just
+      vanishes;
     · what today ADDS is added, dated with the day's date;
     · what today CONTRADICTS or supersedes is updated in place with the new
       date — the stale version is not kept alongside;
@@ -119,23 +124,43 @@ export const PICTURE_RULES = `- relationship_update is the ACCUMULATED state of 
       ~8 items; the oldest fall off.
   Delete something ONLY when the day shows it was wrong. Return "" when the
   day changes nothing — the picture then stays exactly as it is.
+- Every bullet of the picture on file comes tagged with an id like [S2] or
+  [C5]. When you return a section, tag each bullet that CONTINUES an item
+  with its id ("- [S2] …"; several if you folded items: "- [S2][S4] …"); a
+  new item has no tag; an item that ended goes to "Cerrado recientemente"
+  WITH its id. Any item whose id appears nowhere in your answer is kept by
+  the keeper exactly as it was, under its own heading — so the only way to
+  remove an item as wrong or contradicted is to list its id in picture_drop.
+  Nothing vanishes silently. The tags are stripped before the note is saved.
 - Write the sections you are CHANGING, each one complete (merged: old + new).
   A section you leave out is kept on file exactly as it was, so do not copy a
   section just to keep it. Sections and what goes in each:
     "## Situación" — what is happening to the relationship right now (where
-      each one is, what they are in the middle of together), every item dated
-      with its evidence: "(inferido, 2026-09-17: ella mencionó el vuelo a
-      Bogotá)". The month's thread, not the day's.
+      each one is, whether they are together or apart, what they are in the
+      middle of together, the big open fronts), every item dated with its
+      evidence: "(inferido, 2026-09-17: ella mencionó el vuelo a Bogotá)".
+      It is the MONTH's thread, not a log of the days: a payment made, a seat
+      swap, where to meet at 12:30, a link shared — that lives in the journal
+      and does NOT enter the picture unless it is still open and will matter
+      next week. Keep it to the ~6-10 items that matter; when adding one,
+      fold it into an existing item or drop the lesser one.
     "## Contexto de cada uno" — one "### Name" per ROSTER member (the quiet
-      ones too): mood as it shows in what they say, work, the plan currently
-      in force, each with evidence and date.
+      ones too), 3-6 items each: mood as it shows in what they say, work,
+      health/body (training, an injury), the plan currently in force, each
+      with evidence and date. A new day REFINES these items (the mood today
+      updates the mood item), it does not append one bullet per day. The
+      room's AI (bondi) is not a member: never describe it or its behavior.
     "## Dinámicas" — recurring patterns of how they talk and decide, rituals,
-      likes. Slow-moving.
+      likes, between the MEMBERS. Slow-moving; 3-6 items, refined over weeks,
+      not one per day.
     "## En el horizonte" — only CONCRETE future things (trips, races,
-      deadlines, visits, decisions with a date), one bullet each, and every
-      bullet STARTS with the target date as YYYY-MM-DD (YYYY-MM when only the
-      month is known), then the item, then its evidence:
-      "- 2026-11-15 — Juandi planea renunciar (dicho, 2026-10-02)". Past
+      deadlines, visits, moves, decisions with a date), one bullet each, and
+      every bullet STARTS with the target date as YYYY-MM-DD (YYYY-MM when
+      only the month is known), then the EVENT, then its evidence:
+      "- 2026-11-15 — Juandi planea renunciar (dicho, 2026-10-02)". Events,
+      not reminders or chores ("revisar entradas" is a chore; "viaje a Roma"
+      is the event). Something mentioned as coming up ("en noviembre nos
+      vamos a Ámsterdam") belongs here even if the exact day is unknown. Past
       dates are moved to "Cerrado recientemente" by you and by the keeper.
     "## Cerrado recientemente" — what was in the picture and has ended, one
       dated line each, so the past is not mistaken for the present.
@@ -196,7 +221,7 @@ Answer ONLY a JSON object with keys: worth_keeping (boolean), headline (string,
 one line), summary (string, one short paragraph), moments (string[]),
 decisions ({text, kind: "decided"|"said"}[]), open_threads (string[]),
 memory_facts ({fact, attribution, kind: "decided"|"said"}[]),
-relationship_update (string), group_identity (string).`;
+relationship_update (string), picture_drop (string[] of ids), group_identity (string).`;
 
 function transcriptText(deltas: DeltaRow[]): string {
   const lines = deltas.map((d) => {
@@ -345,8 +370,8 @@ export function pictureContextBlock(input: {
     `Identity already on file for this room (group_identity; it is composed into the note for you):`,
     identity || "(none yet — write the first one if the day gives you enough)",
     ``,
-    `Picture currently on file (memory/relationship.md minus the identity). relationship_update MERGES into this: sections you do not return are kept exactly as they are; a section you return replaces the one here, so write it complete (old + new):`,
-    rest || "(empty — write the first picture if the day gives you enough)",
+    `Picture currently on file (memory/relationship.md minus the identity), every bullet tagged with its id. relationship_update MERGES into this: sections you do not return are kept as they are; in a section you return, tag the bullets you continue with their ids — any id missing from your whole answer is kept verbatim by the keeper; to remove one, name it in picture_drop:`,
+    rest ? annotateIds(rest) : "(empty — write the first picture if the day gives you enough)",
     ``,
     `What the last ${PICTURE_CONTEXT_DAYS} days looked like (journal headlines, oldest first — build the picture from the month, not from today alone):`,
     input.headlines || "(no earlier journals)",
@@ -521,6 +546,7 @@ export async function distillJournalDay(
     previous: previousPicture,
     identity: distilled.group_identity,
     update: distilled.relationship_update,
+    drop: distilled.picture_drop,
     day,
   });
   if (next && next !== previousPicture.trim()) {

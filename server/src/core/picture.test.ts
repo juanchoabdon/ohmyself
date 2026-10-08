@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   CLOSED_HEADING,
+  annotateIds,
+  dedupeItems,
   GROUP_IDENTITY_HEADING,
   MAX_CLOSED_ITEMS,
   composePicture,
@@ -79,23 +81,86 @@ test("el modelo no puede borrar la foto devolviendo prosa suelta sin secciones",
 
 // ── Un día que contradice la actualiza con fecha ─────────────────────────────
 
-test("una sección que vuelve reemplaza a la anterior: la contradicción gana, con su fecha", () => {
+test("un ítem que vuelve con su id reemplaza al anterior: la contradicción gana, con su fecha", () => {
   const update = `## Situación
 
-- Ya no están a distancia: los dos en Roma desde el 3 de octubre (dicho, 2026-10-03: foto en el Coliseo).
-- Juandi cerró el tema de la carta a Flimp-Globa: "the job is done" (dicho, 2026-10-05).`;
+- [S1] Ya no están a distancia: los dos en Roma desde el 3 de octubre (dicho, 2026-10-03: foto en el Coliseo).
+- [S2] Juandi cerró el tema de la carta a Flimp-Globa: "the job is done" (dicho, 2026-10-05).`;
   const next = nextPicture({ previous: PREVIOUS, identity: "", update, day: "2026-10-05" });
   assert.ok(next.includes("los dos en Roma desde el 3 de octubre"));
   assert.ok(next.includes("(dicho, 2026-10-05)"), "la actualización trae su fecha");
   assert.ok(!next.includes("Están a distancia"), "la versión vieja de la Situación no queda al lado");
+  assert.ok(!next.includes("[S1]"), "los ids no se guardan");
   assert.ok(next.includes("### Juandi"), "las otras secciones siguen");
   assert.ok(next.includes("- 2026-11-15 — Juandi planea renunciar"), "el horizonte vigente sigue");
 });
 
 test("las claves de sección ignoran tildes, mayúsculas y nivel de encabezado", () => {
-  const merged = mergePictureRest(`## Situación\n\n- vieja`, `# situacion\n\n- nueva`);
+  const merged = mergePictureRest(`## Situación\n\n- vieja`, `# situacion\n\n- [S1] nueva`);
   assert.ok(merged.includes("- nueva"));
   assert.ok(!merged.includes("- vieja"));
+});
+
+// ── Nada desaparece en silencio: ids ─────────────────────────────────────────
+
+test("la foto va al modelo con cada bullet etiquetado, por sección y por orden", () => {
+  const tagged = annotateIds(pictureWithoutIdentity(PREVIOUS));
+  assert.ok(tagged.includes("- [S1] Están a distancia"));
+  assert.ok(tagged.includes("- [S2] Juandi anda tenso"));
+  assert.ok(tagged.includes("- [C1] Entrenando para el maratón"));
+  assert.ok(tagged.includes("- [C2] Reuniones con los abogados"));
+  assert.ok(tagged.includes("- [D1] Se mandan audios"));
+  assert.ok(tagged.includes("- [H3] 2026-11-15"));
+  assert.ok(tagged.includes("### Jess"), "los sub-encabezados no se etiquetan ni se pierden");
+  assert.equal(annotateIds(pictureWithoutIdentity(PREVIOUS)), tagged, "determinista");
+});
+
+test("un ítem que el modelo omite al reescribir la sección se conserva igual", () => {
+  const update = `## Situación\n\n- [S2] Juandi ya cerró lo de la carta (dicho, 2026-10-05).\n- Jess consiguió apartamento más barato (dicho, 2026-10-05).`;
+  const next = nextPicture({ previous: PREVIOUS, identity: "", update, day: "2026-10-05" });
+  assert.ok(next.includes("Están a distancia: Jess en Berlín"), "S1 no volvió → se conserva");
+  assert.ok(next.includes("Juandi ya cerró lo de la carta"), "S2 refinado");
+  assert.ok(!next.includes("Juandi anda tenso con Arnold"), "la versión vieja de S2 no queda");
+  assert.ok(next.includes("Jess consiguió apartamento"), "lo nuevo entra");
+  assert.ok(!/\[[A-Z]\d+\]/.test(next), "sin ids en la nota guardada");
+});
+
+test("un ítem conservado vuelve bajo SU persona en Contexto de cada uno", () => {
+  const update = `## Contexto de cada uno\n\n### Jess\n\n- [C1] Corrió el maratón; ahora descansa (dicho, 2026-09-28).`;
+  const next = nextPicture({ previous: PREVIOUS, identity: "", update, day: "2026-09-28" });
+  const ctx = splitSections(pictureWithoutIdentity(next)).sections.find((s) => s.title === "Contexto de cada uno")!;
+  const jess = ctx.body.indexOf("### Jess");
+  const juandi = ctx.body.indexOf("### Juandi");
+  const abogados = ctx.body.indexOf("Reuniones con los abogados");
+  assert.ok(jess >= 0 && juandi > jess, "el sub-encabezado de Juandi se recreó después del de Jess");
+  assert.ok(abogados > juandi, "C2 quedó bajo Juandi, no bajo Jess");
+  assert.ok(ctx.body.includes("ahora descansa"));
+  assert.equal(ctx.body.match(/### Juandi/g)?.length, 1);
+});
+
+test("un ítem movido a Cerrado con su id sale de su sección aunque esa sección no vuelva", () => {
+  const update = `## Cerrado recientemente\n\n- [H1] 2026-09-27 — Jess corrió el maratón de Berlín: 05:03:32 (dicho, 2026-09-28).`;
+  const next = nextPicture({ previous: PREVIOUS, identity: "", update, day: "2026-09-28" });
+  const rest = pictureWithoutIdentity(next);
+  const horizon = splitSections(rest).sections.find((s) => s.heading === "## En el horizonte")!;
+  assert.ok(!horizon.body.includes("maratón"), "ya no está en el horizonte");
+  assert.ok(horizon.body.includes("2026-11-15"), "lo demás del horizonte sigue");
+  assert.ok(rest.includes("05:03:32"));
+  assert.equal(rest.match(/maratón de Berlín/g)?.length, 2, "una vez en cerrado, una en el contexto de Jess");
+});
+
+test("borrar exige nombrar el id en drop; sin update también funciona", () => {
+  const next = nextPicture({ previous: PREVIOUS, identity: "", update: "", drop: ["S2"], day: "2026-09-26" });
+  assert.ok(!next.includes("Juandi anda tenso con Arnold"));
+  assert.ok(next.includes("Están a distancia"));
+});
+
+test("dos ítems plegados en uno dan cuenta de ambos ids", () => {
+  const update = `## Situación\n\n- [S1][S2] A distancia y Juandi tenso por la carta, las dos cosas siguen (inferido, 2026-10-01).`;
+  const next = nextPicture({ previous: PREVIOUS, identity: "", update, day: "2026-10-01" });
+  const sit = splitSections(pictureWithoutIdentity(next)).sections.find((s) => s.title === "Situación")!;
+  assert.equal(splitBullets(sit.body).length, 1);
+  assert.ok(sit.body.startsWith("- A distancia y Juandi tenso"));
 });
 
 test("una sección nueva se agrega al final sin tocar el orden de las demás", () => {
@@ -143,7 +208,8 @@ test("un bullet sin fecha al frente no se toca aunque mencione fechas viejas", (
 });
 
 test("Cerrado recientemente se recorta: lo nuevo arriba, lo más viejo cae", () => {
-  const old = Array.from({ length: MAX_CLOSED_ITEMS }, (_, i) => `- viejo ${i}`).join("\n");
+  const words = ["alfa", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "julieta"];
+  const old = Array.from({ length: MAX_CLOSED_ITEMS }, (_, i) => `- viejo ${i} ${words[i]} ${words[i + 1]}`).join("\n");
   const rest = `## En el horizonte\n\n- 2026-09-01 — algo.\n\n${CLOSED_HEADING}\n\n${old}`;
   const closed = splitSections(retireExpiredHorizon(rest, "2026-09-10")).sections.find((s) => s.heading === CLOSED_HEADING)!;
   const items = splitBullets(closed.body);
@@ -173,4 +239,29 @@ test("la primera foto de un room sin nada arranca de lo que trae el modelo", () 
   const next = nextPicture({ previous: "", identity: "Son hermanos.", update: "## Situación\n\n- a", day: "2026-09-26" });
   assert.equal(next, composePicture("", "Son hermanos.", "## Situación\n\n- a"));
   assert.ok(next.startsWith(GROUP_IDENTITY_HEADING));
+});
+
+// ── Duplicados ───────────────────────────────────────────────────────────────
+
+test("el mismo cierre escrito dos veces (modelo + retiro automático) queda una vez", () => {
+  const rest = `## En el horizonte
+
+- 2026-09-27 — Jess corre el BMW Berlin Marathon (dicho, 2026-09-20).
+
+${CLOSED_HEADING}
+
+- 2026-09-27 — Jess terminó el BMW Berlin Marathon con tiempo neto 05:03:32 (dicho, 2026-09-28: certificado).`;
+  const out = retireExpiredHorizon(rest, "2026-09-28");
+  assert.equal(out.match(/Berlin Marathon/g)?.length, 1);
+  assert.ok(out.includes("05:03:32"), "se queda el que ya estaba en cerrado");
+});
+
+test("dos ítems distintos con la misma fecha no se confunden", () => {
+  const items = dedupeItems([
+    "- 2026-11 — Viaje a Europa, incluye Ámsterdam (dicho, 2026-09-19).",
+    "- 2026-11 — Jess reagenda la cita médica (decidido, 2026-09-10).",
+    "- 2026-11 — Viaje a Europa (Ámsterdam y otros destinos por definir) (dicho, 2026-09-21).",
+  ]);
+  assert.equal(items.length, 2);
+  assert.ok(items[1]?.includes("cita médica"));
 });
