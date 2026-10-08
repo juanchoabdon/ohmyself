@@ -52,8 +52,12 @@ ${PICTURE_RULES}
 - Write in the journal's dominant language.
 - Dates: the journal of day D describes what happened on D; date your
   inferences with D unless the journal names another date.
+- The journal's "Open threads" are that day's loose ends, not the situation:
+  most of them do not belong in the picture. Only what still matters next
+  week enters it.
 
-Answer ONLY a JSON object with one key: relationship_update (string).`;
+Answer ONLY a JSON object with keys: relationship_update (string),
+picture_drop (string[] of ids removed as wrong or contradicted).`;
 
 async function main(): Promise<void> {
   const spaceId = argFor("--space");
@@ -133,10 +137,12 @@ async function main(): Promise<void> {
       raw && typeof raw === "object" && typeof (raw as { relationship_update?: unknown }).relationship_update === "string"
         ? (raw as { relationship_update: string }).relationship_update
         : "";
+    const dropRaw = raw && typeof raw === "object" ? (raw as { picture_drop?: unknown }).picture_drop : undefined;
+    const drop = Array.isArray(dropRaw) ? dropRaw.filter((d): d is string => typeof d === "string") : [];
     if (raw == null) console.warn(`[rebuild] ${day}: model returned nothing — day skipped, picture kept`);
-    picture = nextPicture({ previous: picture, identity: "", update, day });
+    picture = nextPicture({ previous: picture, identity: "", update, drop, day });
     const sections = splitSections(picture).sections.map((s) => s.title).join(" | ");
-    console.log(`[rebuild] ${day}: update ${update.length} chars → picture ${picture.length} chars [${sections}]`);
+    console.log(`[rebuild] ${day}: update ${update.length} chars, drop ${drop.length} → picture ${picture.length} chars [${sections}]`);
     save(`${day}.md`, picture);
   }
 
