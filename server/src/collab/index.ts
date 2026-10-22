@@ -20,7 +20,7 @@ import { stripRedundantTitleH1 } from "../core/titleBody.js";
 import type { Visibility } from "../core/types.js";
 import { hydrateYDocOnce, replaceYDocMarkdown } from "./hydrate.js";
 import { collabFieldName, roundTripMarkdown, yDocToMarkdown } from "./schema.js";
-import { loadCollabState, saveCollabState, getCollabStateMeta } from "./state-store.js";
+import { loadCollabState, saveCollabState, getCollabStateMeta, latestNoteVersionAt } from "./state-store.js";
 
 const ALL_VISIBILITIES: Visibility[] = ["public", "private", "secret"];
 
@@ -67,9 +67,19 @@ export function isCollabRoomActive(spaceId: string, path: string): boolean {
   return activeEditorCount(roomName(spaceId, path)) > 0;
 }
 
-function vaultContentIsNewer(metaUpdated: string | undefined, collabUpdatedAt: string | null): boolean {
-  if (!metaUpdated || !collabUpdatedAt) return false;
-  return metaUpdated.slice(0, 10) > collabUpdatedAt.slice(0, 10);
+/**
+ * Is the vault newer than the stored Y state? Compares the exact time of the
+ * note's latest version against the last Y state save. It used to compare
+ * calendar days (`meta.updated` is a date), so any vault write made the same
+ * day as the last Y save lost to the stale Y state on the next load — and the
+ * store hook then wrote that stale doc back over the vault.
+ */
+export function vaultContentIsNewer(latestVersionAt: string | null, collabUpdatedAt: string | null): boolean {
+  if (!latestVersionAt || !collabUpdatedAt) return false;
+  const vault = Date.parse(latestVersionAt);
+  const collab = Date.parse(collabUpdatedAt);
+  if (!Number.isFinite(vault) || !Number.isFinite(collab)) return false;
+  return vault > collab;
 }
 
 export function collabEnabled(): boolean {
@@ -105,10 +115,11 @@ export function startCollabServer(): Hocuspocus | null {
       const { vault, brain } = buildCore();
       // Fetch everything the load needs in parallel — these were serial Supabase
       // round-trips and the editor blocks on this hook before first sync.
-      const [raw, stored, collabMeta] = await Promise.all([
+      const [raw, stored, collabMeta, latestVersionAt] = await Promise.all([
         vault.read(room.spaceId, room.path),
         loadCollabState(room.spaceId, room.path).catch(() => null),
         getCollabStateMeta(room.spaceId, room.path).catch(() => null),
+        latestNoteVersionAt(room.spaceId, room.path).catch(() => null),
       ]);
       const parsed = raw ? parseNote(raw, room.path) : null;
       const vaultBodyRaw = parsed
@@ -164,7 +175,7 @@ export function startCollabServer(): Hocuspocus | null {
       const liveRound = yDocToMarkdown(document).trim();
       if (liveRound === vaultRound) return;
 
-      if (!vaultContentIsNewer(parsed?.meta.updated, collabMeta?.updated_at ?? null)) {
+      if (!vaultContentIsNewer(latestVersionAt, collabMeta?.updated_at ?? null)) {
         const dup = repairCollabBody(liveRound);
         if (!dup.deduped) {
           console.log(
