@@ -14,7 +14,18 @@ export class SupabaseVault implements Vault {
 
   async read(spaceId: string, path: string): Promise<string | null> {
     const sb = serviceClient();
-    const { data, error } = await sb.storage.from(brainBucket()).download(this.key(spaceId, path));
+    // The vault is the SSOT and MUST be read-after-write consistent. Supabase
+    // Storage serves downloads through a CDN whose invalidation lags upserts
+    // by up to seconds per edge — long enough for a read right after a write
+    // to return the previous body (and for the collab store hook to diff
+    // against a stale base). A unique cacheNonce per read makes the URL a
+    // guaranteed CDN miss. Notes are small markdown, so skipping the cache is
+    // the right trade.
+    const { data, error } = await sb.storage
+      .from(brainBucket())
+      .download(this.key(spaceId, path), {
+        cacheNonce: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+      });
     if (error || !data) return null;
     return await data.text();
   }
@@ -26,6 +37,9 @@ export class SupabaseVault implements Vault {
       .upload(this.key(spaceId, path), new Blob([raw], { type: "text/markdown" }), {
         upsert: true,
         contentType: "text/markdown",
+        // Notes change constantly and are always read through SupabaseVault:
+        // never let the CDN or a browser hold a copy.
+        cacheControl: "0",
       });
     if (error) throw new Error(`vault write failed: ${error.message}`);
   }

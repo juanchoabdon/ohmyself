@@ -65,3 +65,21 @@ export async function getCollabStateMeta(
   if (error || !data?.updated_at) return null;
   return { updated_at: data.updated_at as string };
 }
+
+/**
+ * When the note last changed in the vault: `created_at` of its latest
+ * `note_versions` row (every vault write records one). onLoadDocument compares
+ * it with the Y state's `updated_at` to decide whether the vault is newer.
+ */
+export async function latestNoteVersionAt(spaceId: string, path: string): Promise<string | null> {
+  const { data, error } = await serviceClient()
+    .from("note_versions")
+    .select("created_at")
+    .eq("space_id", spaceId)
+    .eq("path", path)
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data?.created_at) return null;
+  return data.created_at as string;
+}

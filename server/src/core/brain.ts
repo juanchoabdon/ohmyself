@@ -378,6 +378,7 @@ export class Brain {
     if (raw == null) throw new NotFoundError(`no version ${version} for ${path}`);
     const { meta, body } = parseNote(raw, path);
     if (!allowed.includes(meta.visibility)) throw new NotFoundError(`no note at ${path}`);
+    const prevRaw = await this.vault.read(userId, path);
     meta.updated = todayISO();
     const next = serializeNote(meta, body);
     await this.vault.write(userId, path, next);
@@ -393,6 +394,14 @@ export class Brain {
       updated: meta.updated,
       summary: attr?.summary ?? `restore ${version}`,
     });
+    // A restore is a body write like any other: without this push, an open
+    // editor keeps the pre-restore doc and its next autosave undoes the restore.
+    {
+      const { pushBodyToCollab } = await import("../collab/sync.js");
+      const prev = prevRaw ? parseNote(prevRaw, path) : null;
+      const prevBody = prev ? stripRedundantTitleH1(prev.body, prev.meta.title) : undefined;
+      void pushBodyToCollab(userId, path, stripRedundantTitleH1(body, meta.title), prevBody);
+    }
     return { path, meta, body };
   }
 
@@ -467,9 +476,12 @@ export class Brain {
     });
     // Push vault body into the live Yjs room for open editors — skip the collab
     // autosave round-trip (`summary: "live edit"`) to avoid feedback loops.
+    // The previous body lets the push tell an idle open editor (live == prev,
+    // safe to replace) from unsaved human edits in flight (skip).
     if (notePatch.body !== undefined && attr?.summary !== "live edit") {
       const { pushBodyToCollab } = await import("../collab/sync.js");
-      void pushBodyToCollab(userId, path, body);
+      const prevBody = stripRedundantTitleH1(current.body, current.meta.title);
+      void pushBodyToCollab(userId, path, body, prevBody);
     }
     return { path, meta, body, revision: revision ?? undefined };
   }
