@@ -16,7 +16,10 @@
  * another round.
  *
  * Everything else (memories, journal entries, people, quick appends) still
- * writes in the moment; the gate is deliberately narrow.
+ * writes in the moment; the gate is deliberately narrow. Once a spec is
+ * approved, the owner has already said yes to it: changes to it, and
+ * amendments filed against it (`amends`), write directly and the agent hands
+ * the owner the link. Only a new, unapproved work doc waits for review.
  */
 
 import { createHash } from "node:crypto";
@@ -51,6 +54,9 @@ const WORK_DOC_FOLDERS: ReadonlySet<string> = new Set([
   "roadmaps",
 ]);
 
+/** File names that are navigation for a folder, not a document in it. */
+const INDEX_FILES: ReadonlySet<string> = new Set(["_index.md", "index.md", "readme.md"]);
+
 /** Appends shorter than this are edits, not a spec landing — they pass through. */
 const APPEND_GATE_MIN_CHARS = 400;
 
@@ -74,6 +80,8 @@ export interface DraftRequest {
   visibility?: string;
   /** Token echoed back by the agent after the owner confirmed. */
   confirmToken?: string;
+  /** The owner already approved the target (or the spec it amends). */
+  approved?: boolean;
 }
 
 function normalizeType(value: string | undefined): string {
@@ -82,6 +90,9 @@ function normalizeType(value: string | undefined): string {
 
 /** True when this destination is a product/engineering/planning document. */
 export function isWorkDoc(input: { type?: string; path?: string; kind?: string }): boolean {
+  if (normalizeType(input.type) === "index") return false;
+  const file = (input.path ?? "").toLowerCase().split("/").pop()?.trim() ?? "";
+  if (INDEX_FILES.has(file)) return false;
   if (WORK_DOC_TYPES.has(normalizeType(input.kind))) return true;
   if (WORK_DOC_TYPES.has(normalizeType(input.type))) return true;
   const segments = (input.path ?? "")
@@ -90,6 +101,25 @@ export function isWorkDoc(input: { type?: string; path?: string; kind?: string }
     .slice(0, -1)
     .map((s) => s.trim());
   return segments.some((s) => WORK_DOC_FOLDERS.has(s));
+}
+
+const APPROVED_WORDS: ReadonlySet<string> = new Set(["approved", "aprobado", "aprobada"]);
+
+/** `Status: approved` / `Estado: aprobada`, as a line or a Document control
+ *  table row (`| Status | approved |`), with or without bold markers. */
+const STATUS_LINE = /^[\s|>*_-]*(?:status|estado)[\s*_|]*[:|][\s*_|]*(approved|aprobad[oa])\b/im;
+
+/** True when the owner has already approved this note: the `approved` tag, a
+ *  `status: approved` frontmatter key, or a Status line in its Document control. */
+export function isApproved(note: {
+  tags?: string[];
+  extra?: Record<string, unknown>;
+  body?: string;
+}): boolean {
+  if ((note.tags ?? []).some((t) => APPROVED_WORDS.has(normalizeType(t)))) return true;
+  const status = note.extra?.status;
+  if (typeof status === "string" && APPROVED_WORDS.has(normalizeType(status))) return true;
+  return STATUS_LINE.test(note.body ?? "");
 }
 
 /** Salt so the token can't be forged by a model that knows the payload. */
@@ -145,6 +175,7 @@ export function reviewDraft(req: DraftRequest): DraftPreview | null {
   const body = (req.body ?? "").trim();
   if (!body) return null;
   if (!isWorkDoc({ type: req.type, path: req.path })) return null;
+  if (req.approved) return null;
   if (req.operation === "append" && body.length < APPEND_GATE_MIN_CHARS) return null;
 
   const expected = draftTokenFor(req);
@@ -180,6 +211,55 @@ export function reviewDraft(req: DraftRequest): DraftPreview | null {
       "5. If they ask for changes, send the edited body without a token to get a fresh preview.",
     ],
   };
+}
+
+/** The slice of a stored note the gate looks at. */
+export interface GateNote {
+  meta: { type?: string; title?: string; tags?: string[]; extra?: Record<string, unknown> };
+  body?: string;
+}
+
+export interface GateRequest extends Omit<DraftRequest, "operation" | "title" | "approved"> {
+  title?: string;
+  append?: boolean;
+  /** Path of the approved spec this new note amends. */
+  amends?: string;
+}
+
+/**
+ * Resolve the stored notes a write touches and decide whether it must wait for
+ * the owner. `read` returns the note at a path in the destination space, or
+ * null when there is none. Returns the preview to hand back, or null to write.
+ */
+export async function gateWrite(
+  req: GateRequest,
+  read: (path: string) => Promise<GateNote | null>,
+): Promise<DraftPreview | null> {
+  if (!req.body?.trim()) return null;
+  const declared = isWorkDoc({ type: req.type, path: req.path });
+  // Updates and appends only name a path, so the note's own type decides —
+  // Bonds files specs under engineering/ as well as under product/specs/.
+  if (!declared && req.type) return null;
+
+  const existing = await read(req.path).catch(() => null);
+  const type = req.type ?? existing?.meta.type;
+  if (!declared && !isWorkDoc({ type })) return null;
+  if (!isWorkDoc({ type, path: req.path })) return null;
+
+  const amended = req.amends?.trim() ? await read(req.amends.trim()).catch(() => null) : null;
+  const approved =
+    (existing ? isApproved({ ...existing.meta, body: existing.body }) : false) ||
+    (amended ? isApproved({ ...amended.meta, body: amended.body }) : false);
+
+  const operation: DraftOperation = req.append ? "append" : existing ? "overwrite" : "create";
+  const { amends: _amends, append: _append, ...rest } = req;
+  return reviewDraft({
+    ...rest,
+    type,
+    title: req.title ?? existing?.meta.title ?? req.path,
+    operation,
+    approved,
+  });
 }
 
 export interface DeleteRequest {
