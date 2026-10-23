@@ -67,12 +67,10 @@ import { buildPreviewUrl } from "../core/preview-url.js";
 import { getLinkContext } from "../core/link-intelligence.js";
 import { applyLintCull, applyLintMerge, applyLintRehome, getLintReport } from "../lint.js";
 import {
-  isWorkDoc,
   reviewDelete,
-  reviewDraft,
-  type DraftOperation,
+  gateWrite,
+  type GateRequest,
   type DraftPreview,
-  type DraftRequest,
 } from "./draft-gate.js";
 import { instrumentToolUsage } from "./telemetry.js";
 
@@ -85,7 +83,7 @@ const VisibilityEnum = z.enum(["public", "private", "secret"]);
  *  then for move_space_note + delete_space_note, then for media (add_media /
  *  get_media / list_media and the oms-asset: reference scheme). Kept stable
  *  even as the embedding model / reranker / planner change underneath. */
-const CONTRACT_VERSION = "2.17";
+const CONTRACT_VERSION = "2.18";
 
 /** Tools marked deprecated by contract v2. Empty until telemetry confirms an
  *  active tool has a stable replacement and no live callers — then it moves
@@ -191,7 +189,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         "",
         "MEDIA: notes can embed images, video and interactive HTML. In a body they appear as a `:::image` / `:::video` block whose `src` is `oms-asset:<id>`, or an `:::embed` block whose `url` is either an external link or an `oms-asset:<id>` HTML asset — references, not URLs; you cannot read the content from the markdown. To SEE an image, call get_media with that reference; it comes back as visual content you can reason about. Do that whenever the answer depends on what the image shows. To store one (a screenshot, a diagram, a photo — or a self-contained interactive HTML prototype built for the person), call add_media with base64 `data` or a `source_url`, plus `note_path` to embed it. list_media shows what exists. Never invent an oms-asset id.",
         "",
-        "WORK DOCS NEED CONFIRMATION: specs, PRDs, plans, RFCs and design docs are never written on the first call — in the personal brain or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft and a `confirm_token`. Show the owner the whole draft in the conversation (and write it to the suggested `local_file` if you have filesystem access), ask for an explicit yes, and END YOUR TURN. Only after they approve, call the same tool again with the identical body plus `confirm_token`. Never confirm on the owner's behalf, and never chain the preview and the confirmed write in one turn. If they ask for edits, resend the new body without a token.",
+        "NEW WORK DOCS NEED CONFIRMATION: a new spec, PRD, plan, RFC or design doc is never written on the first call — in the personal brain or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft and a `confirm_token`. Show the owner the whole draft in the conversation (and write it to the suggested `local_file` if you have filesystem access), ask for an explicit yes, and END YOUR TURN. Only after they approve, call the same tool again with the identical body plus `confirm_token`. Never confirm on the owner's behalf, and never chain the preview and the confirmed write in one turn. If they ask for edits, resend the new body without a token.",
+        "",
+        "APPROVED SPECS PUBLISH DIRECTLY: once a work doc is approved (tag `approved`, or `Status: approved` in its Document control), changes to it and amendments to it are written on the first call — no preview, no token. Update or append to the approved note as usual; for an amendment filed as its own note, pass `amends` with the approved spec's path on create. Then hand the owner the returned `url` so they can read what changed. Indexes (`_index.md`, type `index`) are never gated.",
         "",
         "AFTER WRITING: every write returns a `url` deep link to the note. Always surface that link to the owner so they can open what you just saved.",
         "",
@@ -241,6 +241,13 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     return { ...res, url: buildPreviewUrl(target, spaceId) };
   }
 
+  const amendsSchema = z
+    .string()
+    .optional()
+    .describe(
+      "path of the approved spec this note amends. When that note exists and is approved, the amendment writes directly instead of returning a draft preview.",
+    );
+
   const confirmTokenSchema = z
     .string()
     .optional()
@@ -250,32 +257,9 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
 
   /** Hold a work-doc write until the owner has seen the draft and approved it.
    *  Returns the preview to hand back, or null when the write may proceed. */
-  async function gateWorkDoc(
-    req: Omit<DraftRequest, "operation" | "title"> & {
-      title?: string;
-      append?: boolean;
-      scope?: Visibility[];
-    },
-  ): Promise<DraftPreview | null> {
-    if (!req.body?.trim()) return null;
-    const declared = isWorkDoc({ type: req.type, path: req.path });
-    // Updates and appends only name a path, so the note's own type decides —
-    // Bonds files specs under engineering/ as well as under product/specs/.
-    if (!declared && req.type) return null;
-
-    const existing = await brain
-      .readNote(req.spaceId, req.path, req.scope ?? allowed)
-      .catch(() => null);
-    const type = req.type ?? existing?.meta.type;
-    if (!declared && !isWorkDoc({ type })) return null;
-
-    const operation: DraftOperation = req.append ? "append" : existing ? "overwrite" : "create";
-    return reviewDraft({
-      ...req,
-      type,
-      title: req.title ?? existing?.meta.title ?? req.path,
-      operation,
-    });
+  async function gateWorkDoc(req: GateRequest & { scope?: Visibility[] }): Promise<DraftPreview | null> {
+    const { scope, ...gate } = req;
+    return gateWrite(gate, (path) => brain.readNote(req.spaceId, path, scope ?? allowed));
   }
 
   /**
@@ -568,7 +552,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
           navigate: "get_neighbors / get_backlinks / search_by_entity / timeline",
           write: "specific write tools when destination is known; write_brain to auto-route + dedupe; history + restore_version + activity for version timeline; palette (starters + component schemas) for rich embeds; preview_url for live web preview; link_context for graph hints",
           work_docs:
-            "specs / PRDs / plans / RFCs / design docs are never written on the first call, in the self space or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft, a suggested `local_file`, and a `confirm_token`. Show the owner the draft, get an explicit yes, end the turn, then call again with the identical body + confirm_token. Editing the draft invalidates the token.",
+            "new specs / PRDs / plans / RFCs / design docs are never written on the first call, in the self space or in a company wiki. The tool returns `status: draft_pending_confirmation` with the full draft, a suggested `local_file`, and a `confirm_token`. Show the owner the draft, get an explicit yes, end the turn, then call again with the identical body + confirm_token. Editing the draft invalidates the token. Changes to an approved spec (tag `approved` or `Status: approved`) and amendments created with `amends: <approved spec path>` write directly; hand the owner the link.",
           links: "every write returns a `url` deep link — always give it to the owner after saving",
           comments:
             "list_comments / add_comment / resolve_comment (and list_space_comments / add_space_comment / resolve_space_comment for company wikis) — talk to the person on a note without editing it. `quote` anchors a comment to an exact span, which shows as a highlight in the app; list_comments with no path returns every open thread, i.e. what still needs attention. Any space member can comment, including roles that cannot write notes.",
@@ -1137,7 +1121,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Create a company wiki note",
       description:
-        "Create a note inside a company wiki selected by its stable space slug. Requires owner/admin role and a writable connection. Never writes to the personal brain. Specs, PRDs and plans are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Create a note inside a company wiki selected by its stable space slug. Requires owner/admin role and a writable connection. Never writes to the personal brain. New specs, PRDs and plans are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes. An amendment to an approved spec, created with `amends`, writes directly.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -1148,10 +1132,11 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         tags: z.array(z.string()).optional(),
         links: z.array(z.string()).optional(),
         path: z.string().optional(),
+        amends: amendsSchema,
         confirm_token: confirmTokenSchema,
       },
     },
-    async ({ space, confirm_token, ...args }) => {
+    async ({ space, confirm_token, amends, ...args }) => {
       const s = findSpace(await companySpaces(), space);
       requireCompanyWrite(s);
       if (args.visibility && !s.allowed.includes(args.visibility)) {
@@ -1167,6 +1152,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         type: args.type,
         visibility: args.visibility,
         scope: s.allowed,
+        amends,
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
@@ -1180,7 +1166,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Update a company wiki note",
       description:
-        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection. Pass `base_revision` from read_space_note; on conflict returns latest `markdown` to merge before retry. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Update a note's body and/or frontmatter inside a company wiki. Requires owner/admin role and a writable connection. Pass `base_revision` from read_space_note; on conflict returns latest `markdown` to merge before retry. Rewriting a spec, PRD or plan that is not approved yet is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes. An approved spec updates directly.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -1230,7 +1216,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Append to a company wiki note",
       description:
-        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection. Pass `base_revision` from read_space_note; on conflict returns latest `markdown` to merge before retry. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Append text to a note inside a company wiki. Requires owner/admin role and a writable connection. Pass `base_revision` from read_space_note; on conflict returns latest `markdown` to merge before retry. Appending a substantial section to a spec, PRD or plan that is not approved yet is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes. An approved spec appends directly.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         space: z.string().describe("space slug from list_spaces"),
@@ -2145,7 +2131,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Create a note",
       description:
-        "Create a new markdown note. Path is derived from type+title unless provided. Prefer the high-level tools (update_identity, upsert_project, …) when they fit. Specs, PRDs and plans are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Create a new markdown note. Path is derived from type+title unless provided. Prefer the high-level tools (update_identity, upsert_project, …) when they fit. New specs, PRDs and plans are gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes. An amendment to an approved spec, created with `amends`, writes directly.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         type: z.string().describe("note type (identity, goal, project, person, journal, ...)"),
@@ -2156,6 +2142,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         links: z.array(z.string()).optional(),
         path: z.string().optional(),
         summary: z.string().max(80).optional().describe("intent shown on the timeline"),
+        amends: amendsSchema,
         confirm_token: confirmTokenSchema,
       },
     },
@@ -2164,7 +2151,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
       if (args.visibility && !allowed.includes(args.visibility)) {
         throw new ForbiddenError("cannot create a note above your scope");
       }
-      const { summary, confirm_token, ...input } = args;
+      const { summary, confirm_token, amends, ...input } = args;
       const cfg = await config();
       const pending = await gateWorkDoc({
         spaceId: auth.spaceId,
@@ -2173,6 +2160,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
         body: input.body,
         type: input.type,
         visibility: input.visibility,
+        amends,
         confirmToken: confirm_token,
       });
       if (pending) return text(pending);
@@ -2187,7 +2175,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Update a note",
       description:
-        "Update a note's body and/or frontmatter by path. Requires a writable scope. Pass `base_revision` from read_note; on conflict returns latest `markdown` to merge before retry. Rewriting a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Update a note's body and/or frontmatter by path. Requires a writable scope. Pass `base_revision` from read_note; on conflict returns latest `markdown` to merge before retry. Rewriting a spec, PRD or plan that is not approved yet is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes. An approved spec updates directly.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       inputSchema: {
         path: z.string(),
@@ -2231,7 +2219,7 @@ export async function buildMcpServer(auth: AuthContext): Promise<McpServer> {
     {
       title: "Append to a note",
       description:
-        "Append text to the end of a note's body by path. Pass `base_revision` from read_note; on conflict returns latest `markdown` to merge before retry. Appending a substantial section to a spec, PRD or plan is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes.",
+        "Append text to the end of a note's body by path. Pass `base_revision` from read_note; on conflict returns latest `markdown` to merge before retry. Appending a substantial section to a spec, PRD or plan that is not approved yet is gated: the first call returns a draft preview to show the owner, and only a second call carrying the returned `confirm_token` actually writes. An approved spec appends directly.",
       annotations: { readOnlyHint: false, destructiveHint: false },
       inputSchema: {
         path: z.string(),
